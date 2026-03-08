@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>C3X Config Manager</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg-shape bg-shape-a"></div>
+    <div class="bg-shape bg-shape-b"></div>
+
+    <header class="hero">
+      <div>
+        <h1>C3X Config Manager</h1>
+        <p>Manage C3X global and scenario settings without editing text syntax manually.</p>
+      </div>
+      <div class="mode-pill-group">
+        <button id="mode-global" class="mode-pill">Global Scope</button>
+        <button id="mode-scenario" class="mode-pill">Scenario Scope</button>
+      </div>
+    </header>
+
+    <section class="paths card">
+      <h2>Paths</h2>
+      <div class="path-grid">
+        <label class="path-row">
+          <span>C3X Folder</span>
+          <input id="c3x-path" type="text" placeholder="Path containing default.c3x_config.ini" />
+          <button id="pick-c3x">Browse</button>
+        </label>
+
+        <label class="path-row">
+          <span>Civ 3 Conquests Folder</span>
+          <input id="civ3-path" type="text" placeholder="Path to Conquests install" />
+          <button id="pick-civ3">Browse</button>
+        </label>
+
+        <label class="path-row" id="scenario-path-row">
+          <span>Scenario Folder</span>
+          <input id="scenario-path" type="text" placeholder="Folder for scenario.* config files" />
+          <button id="pick-scenario">Browse</button>
+        </label>
+      </div>
+
+      <div class="actions">
+        <button id="load-btn" class="primary">Load Configs</button>
+        <button id="save-btn" class="secondary">Save Current Scope</button>
+      </div>
+      <p id="status" class="status"></p>
+    </section>
+
+    <section class="workspace card hidden" id="workspace">
+      <nav class="tabs" id="tabs"></nav>
+      <div id="tab-content" class="tab-content"></div>
+    </section>
+
+    <template id="section-editor-template">
+      <div class="section-editor">
+        <div class="section-editor-header">
+          <h3></h3>
+          <span class="source-tag"></span>
+          <button class="add-section">Add Block</button>
+        </div>
+        <div class="section-list"></div>
+      </div>
+    </template>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>
