@@ -2,6 +2,7 @@ const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadBundle, saveBundle } = require('./src/configCore');
+const { getPreview } = require('./src/artPreview');
 
 const APP_SETTINGS_FILE = 'settings.json';
 
@@ -133,6 +134,16 @@ ipcMain.handle('manager:pick-directory', async () => {
   return result.filePaths[0];
 });
 
+ipcMain.handle('manager:pick-file', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile']
+  });
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+  return result.filePaths[0];
+});
+
 ipcMain.handle('manager:path-exists', async (_event, dirPath) => {
   return dirExists(dirPath);
 });
@@ -143,4 +154,12 @@ ipcMain.handle('manager:load-bundle', async (_event, payload) => {
 
 ipcMain.handle('manager:save-bundle', async (_event, payload) => {
   return saveBundle(payload);
+});
+
+ipcMain.handle('manager:get-preview', async (_event, payload) => {
+  try {
+    return getPreview(payload || {});
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });

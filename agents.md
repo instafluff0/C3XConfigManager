@@ -44,14 +44,78 @@ Scenario scope writes:
 - Natural Wonders: `scenario.districts_natural_wonders_config.txt`
 - Animations: `scenario.tile_animations.txt`
 
+## Runtime Architecture
+- Process split:
+  - Main process: `main.js`
+  - Renderer UI: `src/renderer.js`
+  - Config parsing/serialization: `src/configCore.js`
+  - Art decoding/previews: `src/artPreview.js`
+- IPC surface in preload:
+  - `getSettings`, `setSettings`
+  - `loadBundle`, `saveBundle`
+  - `getPreview`
+  - `pickDirectory`, `pickFile`, `pathExists`
+
+## Path Behavior
+- Settings are persisted in Electron `userData/settings.json`.
+- On app load, paths are inferred if missing:
+  - C3X path candidates include app-adjacent `C3X` folders and app/parent dirs containing `default.c3x_config.ini`.
+  - Conquests path defaults to app parent when that folder is named `Conquests`, or C3X parent when named `Conquests`.
+- If inferred/saved paths exist, app auto-loads configs.
+
+## UI/Editing Behavior
+- Mode labels in UI are:
+  - `Standard Game` (global)
+  - `Scenario`
+- Base C3X tab:
+  - Grouped by doc sections parsed from default config comments.
+  - Sticky search row.
+  - Full descriptions shown by default under each field.
+  - Typed editors where possible (booleans/selects/structured forms) instead of raw strings.
+- Structured base fields currently include:
+  - `limit_units_per_tile`
+  - perfume families (`production_perfume`, `perfume_specs`, `technology_perfume`, `government_perfume`)
+  - `building_prereqs_for_units`
+  - `buildings_generating_resources`
+  - `ai_multi_start_extra_palaces`
+- Section tabs (Districts, Wonder Districts, Natural Wonders, Tile Animations):
+  - Left list + detail editor.
+  - Adding new entries inserts at top (`unshift`).
+  - Title in left list syncs live when the name/title field changes.
+  - Known fields are schema-driven; unknown fields remain editable under `Advanced fields`.
+
+## Art Preview Behavior
+- Supported previews:
+  - Districts: PCX(s) from `img_paths`
+  - Wonder districts: PCX with crop for completed/construction cells
+  - Natural wonders: PCX cell + optional animation spec preview
+  - Tile animations: INI -> FLC preview
+- `src/artPreview.js` responsibilities:
+  - Decode 8-bit indexed PCX with 256-color palette.
+  - Decode FLC frames (`COLOR_256`, `BYTE_RUN`, `FLI_COPY`, `BLACK` chunks).
+  - Resolve art paths under C3X Art folders.
+  - Parse INI animation keys (`ATTACK1`, `DEFAULT`, `RUN`, `WALK`).
+- Renderer playback:
+  - FLC previews animate in canvas.
+  - Animations tab delay follows `frame_time_seconds`.
+  - Natural wonder animation delay can be parsed from spec (`frame_time_seconds=...`).
+  - Preview scaling preserves aspect ratio (non-stretched) with user size slider.
+
 ## Editing Guidelines
 - Preserve parser compatibility:
   - Base config lines must remain `key = value` with simple token values.
   - Sectioned files use `#District`, `#Wonder`, or `#Animation` markers and `key = value` lines.
 - Do not attempt to reinterpret Civ3 internals in this app. This app is a file manager.
-- Keep the current scope abstraction intact (global vs scenario), but surface base-config precedence caveat clearly (`custom` can override scenario).
+- Keep the current scope abstraction intact (`Standard Game` vs `Scenario`).
+- For list/bracketed fields, prefer structured controls over freeform string inputs whenever format is known.
+
+## Verification
+- Run:
+  - `node --check main.js`
+  - `node --check src/renderer.js`
+  - `node --check src/artPreview.js`
+  - `npm test`
 
 ## Future Enhancements
-- Add schema-driven editors for known keys with enums and validation.
 - Add scenario discovery by reading Civ3 scenario folders.
 - Add diff view against effective defaults.

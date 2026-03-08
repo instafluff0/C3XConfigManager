@@ -3,12 +3,27 @@ const state = {
   bundle: null,
   activeTab: 'base',
   baseFilter: '',
+  previewSize: 220,
+  tabContentScrollTop: 0,
+  sectionListScrollTop: {
+    districts: 0,
+    wonders: 0,
+    naturalWonders: 0,
+    animations: 0
+  },
+  sectionDetailScrollTop: {
+    districts: 0,
+    wonders: 0,
+    naturalWonders: 0,
+    animations: 0
+  },
   sectionSelection: {
     districts: 0,
     wonders: 0,
     naturalWonders: 0,
     animations: 0
-  }
+  },
+  previewCache: new Map()
 };
 
 const el = {
@@ -76,13 +91,25 @@ const SECTION_SCHEMAS = {
       { key: 'name', label: 'District Name', desc: 'Internal unique district name.', type: 'text', required: true },
       { key: 'display_name', label: 'Display Name', desc: 'Name shown in UI.', type: 'text' },
       { key: 'tooltip', label: 'Tooltip Text', desc: 'Shown on worker command hover.', type: 'text' },
-      { key: 'img_paths', label: 'Image Paths', desc: 'Comma list of district PCX files.', type: 'text' },
+      { key: 'img_paths', label: 'Image Paths', desc: 'List of district PCX files.', type: 'list' },
       { key: 'btn_tile_sheet_row', label: 'Button Tile Row', desc: 'Row index in district button sheet.', type: 'number' },
       { key: 'btn_tile_sheet_column', label: 'Button Tile Column', desc: 'Column index in district button sheet.', type: 'number' },
-      { key: 'advance_prereqs', label: 'Tech Prerequisites', desc: 'Comma list of advance names.', type: 'text' },
-      { key: 'dependent_improvs', label: 'Dependent Improvements', desc: 'Comma list of city improvements this district unlocks.', type: 'text' },
-      { key: 'buildable_on', label: 'Buildable Terrain', desc: 'Comma list of allowed terrain.', type: 'text' },
-      { key: 'buildable_adjacent_to', label: 'Adjacency Requirement', desc: 'Comma list of required adjacent terrain/city.', type: 'text' },
+      { key: 'advance_prereqs', label: 'Tech Prerequisites', desc: 'List of required advances.', type: 'list' },
+      { key: 'dependent_improvs', label: 'Dependent Improvements', desc: 'List of city improvements this district unlocks.', type: 'list' },
+      { key: 'buildable_on', label: 'Buildable Terrain', desc: 'Allowed terrain list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake'] },
+      { key: 'buildable_adjacent_to', label: 'Adjacency Requirement', desc: 'Required adjacent terrain/city list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake', 'city'] },
+      { key: 'buildable_on_overlays', label: 'Buildable Overlays', desc: 'Allowed overlays list.', type: 'list', options: ['irrigation', 'mine', 'fortress', 'barricade', 'outpost', 'radar-tower', 'airfield', 'jungle', 'forest', 'swamp'] },
+      { key: 'buildable_without_removal', label: 'Buildable Without Removal', desc: 'Overlays that do not require clearing.', type: 'list', options: ['jungle', 'forest', 'swamp'] },
+      { key: 'buildable_adjacent_to_overlays', label: 'Adjacent Overlays', desc: 'Required adjacent overlays.', type: 'list', options: ['irrigation', 'mine', 'fortress', 'barricade', 'outpost', 'radar-tower', 'airfield', 'jungle', 'forest', 'swamp', 'river'] },
+      { key: 'buildable_on_districts', label: 'Buildable On Districts', desc: 'District names that can be replaced.', type: 'list' },
+      { key: 'buildable_adjacent_to_districts', label: 'Adjacent Districts', desc: 'District names required adjacent.', type: 'list' },
+      { key: 'buildable_by_civs', label: 'Allowed Civs', desc: 'Civ names that may build this district.', type: 'list' },
+      { key: 'buildable_by_civ_traits', label: 'Allowed Traits', desc: 'Trait names that may build this district.', type: 'list' },
+      { key: 'buildable_by_civ_govs', label: 'Allowed Governments', desc: 'Government names that may build this district.', type: 'list' },
+      { key: 'buildable_by_civ_cultures', label: 'Allowed Cultures', desc: 'Culture names that may build this district.', type: 'list' },
+      { key: 'resource_prereqs', label: 'Resource Prerequisites', desc: 'Resource names required nearby.', type: 'list' },
+      { key: 'wonder_prereqs', label: 'Wonder Prerequisites', desc: 'Wonder names required by civ.', type: 'list' },
+      { key: 'natural_wonder_prereqs', label: 'Natural Wonder Prerequisites', desc: 'Natural wonder names required in territory.', type: 'list' },
       { key: 'allow_multiple', label: 'Allow Multiple', desc: 'Allow multiple copies per city.', type: 'bool' },
       { key: 'vary_img_by_era', label: 'Vary Art By Era', desc: 'Use era-specific rows in art.', type: 'bool' },
       { key: 'vary_img_by_culture', label: 'Vary Art By Culture', desc: 'Use culture-variant image set.', type: 'bool' },
@@ -108,8 +135,13 @@ const SECTION_SCHEMAS = {
     titleKey: 'name',
     fields: [
       { key: 'name', label: 'Wonder Name', desc: 'Must match the in-game wonder improvement name.', type: 'text', required: true },
-      { key: 'buildable_on', label: 'Buildable Terrain', desc: 'Comma list of allowed terrain.', type: 'text' },
-      { key: 'buildable_adjacent_to', label: 'Adjacency Requirement', desc: 'Comma list of adjacent terrain/city.', type: 'text' },
+      { key: 'buildable_on', label: 'Buildable Terrain', desc: 'Allowed terrain list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake'] },
+      { key: 'buildable_adjacent_to', label: 'Adjacency Requirement', desc: 'Adjacent terrain/city list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake', 'city'] },
+      { key: 'buildable_adjacent_to_overlays', label: 'Adjacent Overlays', desc: 'Required adjacent overlays.', type: 'list', options: ['irrigation', 'mine', 'fortress', 'barricade', 'outpost', 'radar-tower', 'airfield', 'jungle', 'forest', 'swamp', 'river'] },
+      { key: 'buildable_by_civs', label: 'Allowed Civs', desc: 'Civ names that may build this wonder district.', type: 'list' },
+      { key: 'buildable_by_civ_traits', label: 'Allowed Traits', desc: 'Trait names that may build this wonder district.', type: 'list' },
+      { key: 'buildable_by_civ_govs', label: 'Allowed Governments', desc: 'Government names that may build this wonder district.', type: 'list' },
+      { key: 'buildable_by_civ_cultures', label: 'Allowed Cultures', desc: 'Culture names that may build this wonder district.', type: 'list' },
       { key: 'buildable_only_on_rivers', label: 'River Required', desc: 'Require wonder tile to be on a river.', type: 'bool' },
       { key: 'img_path', label: 'Image Path', desc: 'District wonder art PCX file.', type: 'text' },
       { key: 'img_construct_row', label: 'Construct Row', desc: 'Construction art row index.', type: 'number', required: true },
@@ -168,14 +200,14 @@ const SECTION_SCHEMAS = {
       { key: 'resource_type', label: 'Resource Type', desc: 'Required for type=resource.', type: 'text' },
       { key: 'pcx_file', label: 'PCX File', desc: 'Required for type=pcx.', type: 'select', options: ['deltaRivers.pcx', 'floodplains.pcx', 'LMHills.pcx', 'Mountains.pcx', 'Mountains-snow.pcx', 'mtnRivers.pcx', 'Volcanos.pcx', 'Volcanos-snow.pcx', 'waterfalls.pcx', 'xhills.pcx'] },
       { key: 'pcx_index', label: 'PCX Index', desc: 'Required for type=pcx.', type: 'number' },
-      { key: 'terrain_types', label: 'Terrain Types', desc: 'Comma list; required for type=terrain.', type: 'text' },
-      { key: 'adjacent_to', label: 'Adjacent To', desc: 'Optional terrain:direction list.', type: 'text' },
+      { key: 'terrain_types', label: 'Terrain Types', desc: 'Terrain list; required for type=terrain.', type: 'list', options: [...TERRAIN_OPTIONS, 'land'] },
+      { key: 'adjacent_to', label: 'Adjacent To', desc: 'Optional terrain:direction list.', type: 'list' },
       { key: 'direction', label: 'Direction Override', desc: 'Optional fixed facing direction.', type: 'select', options: DIRECTION_OPTIONS },
       { key: 'x_offset', label: 'X Offset', desc: 'Horizontal pixel offset.', type: 'number' },
       { key: 'y_offset', label: 'Y Offset', desc: 'Vertical pixel offset.', type: 'number' },
       { key: 'frame_time_seconds', label: 'Frame Time', desc: 'Per-frame seconds.', type: 'text' },
-      { key: 'show_in_day_night_hours', label: 'Day/Night Hours', desc: 'Hour list/ranges where animation appears.', type: 'text' },
-      { key: 'show_in_seasons', label: 'Seasons', desc: 'Comma list: spring, summer, fall, winter.', type: 'text' }
+      { key: 'show_in_day_night_hours', label: 'Day/Night Hours', desc: 'Hour list/ranges where animation appears.', type: 'list' },
+      { key: 'show_in_seasons', label: 'Seasons', desc: 'Allowed seasons.', type: 'list', options: ['spring', 'summer', 'fall', 'winter'] }
     ],
     template: {
       name: 'New Animation',
@@ -225,11 +257,14 @@ function toFriendlyKey(key) {
   return key.split('_').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
 }
 
-function createBaseMeta(row) {
+function createBaseMeta(row, fieldDocs) {
   const meta = document.createElement('div');
-  meta.className = 'field-meta';
-  const desc = BASE_FIELD_DETAILS[row.key] || '';
-  meta.textContent = desc ? `${row.key} - ${desc}` : row.key;
+  meta.className = 'field-meta-block';
+  const desc = (fieldDocs && fieldDocs[row.key]) || BASE_FIELD_DETAILS[row.key] || '';
+  const line = document.createElement('div');
+  line.className = 'field-meta';
+  line.textContent = desc ? `${row.key} - ${desc}` : row.key;
+  meta.appendChild(line);
   return meta;
 }
 
@@ -285,58 +320,366 @@ function isStructuredBaseField(row) {
   return v.startsWith('[') && v.endsWith(']');
 }
 
+function parseNameAmountItems(value) {
+  return parseStructuredEntries(value).map((item) => {
+    const i = item.indexOf(':');
+    if (i < 0) return { name: item.trim(), amount: '' };
+    return {
+      name: item.slice(0, i).trim().replace(/^"(.*)"$/, '$1'),
+      amount: item.slice(i + 1).trim()
+    };
+  });
+}
+
+function serializeNameAmountItems(items) {
+  const entries = items
+    .map((it) => ({ name: String(it.name || '').trim(), amount: String(it.amount || '').trim() }))
+    .filter((it) => it.name && it.amount)
+    .map((it) => `${it.name.includes(' ') ? `"${it.name}"` : it.name}: ${it.amount}`);
+  return serializeStructuredEntries(entries);
+}
+
+function parseBuildingPrereqItems(value) {
+  return parseStructuredEntries(value).map((item) => {
+    const i = item.indexOf(':');
+    if (i < 0) return { building: item.trim(), units: [] };
+    const building = item.slice(0, i).trim().replace(/^"(.*)"$/, '$1');
+    const units = tokenizeListPreservingQuotes(item.slice(i + 1).replace(/\s+/g, ','))
+      .map((u) => u.replace(/^"(.*)"$/, '$1').trim())
+      .filter(Boolean);
+    return { building, units };
+  });
+}
+
+function serializeBuildingPrereqItems(items) {
+  const entries = items
+    .map((it) => ({ building: String(it.building || '').trim(), units: (it.units || []).map((u) => String(u || '').trim()).filter(Boolean) }))
+    .filter((it) => it.building && it.units.length > 0)
+    .map((it) => {
+      const building = it.building.includes(' ') ? `"${it.building}"` : it.building;
+      const units = it.units.map((u) => (u.includes(' ') ? `"${u}"` : u)).join(' ');
+      return `${building}: ${units}`;
+    });
+  return serializeStructuredEntries(entries);
+}
+
+function parseBuildingResourceItems(value) {
+  const FLAGS = ['local', 'no-tech-req', 'yields', 'show-bonus', 'hide-non-bonus'];
+  return parseStructuredEntries(value).map((item) => {
+    const i = item.indexOf(':');
+    if (i < 0) return { building: item.trim(), resource: '', flags: [] };
+    const building = item.slice(0, i).trim().replace(/^"(.*)"$/, '$1');
+    const rhs = tokenizeListPreservingQuotes(item.slice(i + 1).replace(/\s+/g, ',')).map((t) => t.replace(/^"(.*)"$/, '$1').trim()).filter(Boolean);
+    const resource = rhs.length > 0 ? rhs[rhs.length - 1] : '';
+    const flags = rhs.filter((t) => FLAGS.includes(t));
+    return { building, resource, flags };
+  });
+}
+
+function serializeBuildingResourceItems(items) {
+  const entries = items
+    .map((it) => ({
+      building: String(it.building || '').trim(),
+      resource: String(it.resource || '').trim(),
+      flags: Array.from(new Set((it.flags || []).map((f) => String(f || '').trim()).filter(Boolean)))
+    }))
+    .filter((it) => it.building && it.resource)
+    .map((it) => {
+      const b = it.building.includes(' ') ? `"${it.building}"` : it.building;
+      const r = it.resource.includes(' ') ? `"${it.resource}"` : it.resource;
+      return `${b}: ${[...it.flags, r].join(' ')}`;
+    });
+  return serializeStructuredEntries(entries);
+}
+
 function makeInputForBaseRow(row, onChange) {
-  if (isStructuredBaseField(row)) {
+  if (row.key === 'limit_units_per_tile') {
     const wrap = document.createElement('div');
     wrap.className = 'structured-list';
+    const raw = String(row.value || '').trim();
 
-    let entries = parseStructuredEntries(row.value);
-    if (entries.length === 0) {
-      entries = [''];
+    const mode = document.createElement('select');
+    [
+      { value: 'false', label: 'No Limit' },
+      { value: 'single', label: 'Single Value' },
+      { value: 'triple', label: 'Land / Sea / Air' }
+    ].forEach((m) => {
+      const o = document.createElement('option');
+      o.value = m.value;
+      o.textContent = m.label;
+      mode.appendChild(o);
+    });
+
+    const inputA = document.createElement('input');
+    inputA.placeholder = 'value';
+    const inputB = document.createElement('input');
+    inputB.placeholder = 'land';
+    const inputC = document.createElement('input');
+    inputC.placeholder = 'sea';
+    const inputD = document.createElement('input');
+    inputD.placeholder = 'air';
+
+    if (raw.startsWith('[') && raw.endsWith(']')) {
+      mode.value = 'triple';
+      const tokens = raw.slice(1, -1).trim().split(/\s+/);
+      inputB.value = tokens[0] || '';
+      inputC.value = tokens[1] || '';
+      inputD.value = tokens[2] || '';
+    } else if (raw === 'false' || raw === '') {
+      mode.value = 'false';
+    } else {
+      mode.value = 'single';
+      inputA.value = raw;
     }
 
-    const renderEntries = () => {
+    const recalc = () => {
+      if (mode.value === 'false') onChange('false');
+      else if (mode.value === 'single') onChange(String(inputA.value || '').trim());
+      else onChange(`[${String(inputB.value || '').trim()} ${String(inputC.value || '').trim()} ${String(inputD.value || '').trim()}]`);
+      rerender();
+    };
+
+    const rerender = () => {
       wrap.innerHTML = '';
-      entries.forEach((entry, idx) => {
+      wrap.appendChild(mode);
+      if (mode.value === 'single') wrap.appendChild(inputA);
+      if (mode.value === 'triple') {
+        const rowWrap = document.createElement('div');
+        rowWrap.className = 'kv-row';
+        rowWrap.appendChild(inputB);
+        rowWrap.appendChild(inputC);
+        rowWrap.appendChild(inputD);
+        wrap.appendChild(rowWrap);
+      }
+    };
+
+    mode.addEventListener('change', recalc);
+    inputA.addEventListener('input', recalc);
+    inputB.addEventListener('input', recalc);
+    inputC.addEventListener('input', recalc);
+    inputD.addEventListener('input', recalc);
+    rerender();
+    recalc();
+    return wrap;
+  }
+
+  const renderSimpleList = (entries) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'structured-list';
+    let items = entries.length > 0 ? entries : [''];
+    const rerender = () => {
+      wrap.innerHTML = '';
+      items.forEach((item, idx) => {
         const line = document.createElement('div');
         line.className = 'kv-row compact';
-
         const input = document.createElement('input');
-        input.type = 'text';
         input.placeholder = 'item';
-        input.value = entry;
+        input.value = item;
         input.addEventListener('input', () => {
-          entries[idx] = input.value;
-          onChange(serializeStructuredEntries(entries));
+          items[idx] = input.value;
+          onChange(serializeStructuredEntries(items));
         });
-
         const del = document.createElement('button');
         del.textContent = 'Remove';
         del.addEventListener('click', () => {
-          entries.splice(idx, 1);
-          if (entries.length === 0) entries.push('');
-          onChange(serializeStructuredEntries(entries));
-          renderEntries();
+          items.splice(idx, 1);
+          if (items.length === 0) items.push('');
+          onChange(serializeStructuredEntries(items));
+          rerender();
         });
-
         line.appendChild(input);
         line.appendChild(del);
         wrap.appendChild(line);
       });
-
       const add = document.createElement('button');
       add.textContent = 'Add Item';
       add.addEventListener('click', () => {
-        entries.push('');
-        onChange(serializeStructuredEntries(entries));
-        renderEntries();
+        items.push('');
+        onChange(serializeStructuredEntries(items));
+        rerender();
       });
       wrap.appendChild(add);
     };
-
-    onChange(serializeStructuredEntries(entries));
-    renderEntries();
+    rerender();
     return wrap;
+  };
+
+  if (row.key === 'production_perfume' || row.key === 'perfume_specs' || row.key === 'technology_perfume' || row.key === 'government_perfume') {
+    const wrap = document.createElement('div');
+    wrap.className = 'structured-list';
+    let items = parseNameAmountItems(row.value);
+    if (items.length === 0) items = [{ name: '', amount: '' }];
+    const rerender = () => {
+      wrap.innerHTML = '';
+      items.forEach((item, idx) => {
+        const line = document.createElement('div');
+        line.className = 'kv-row';
+        const name = document.createElement('input');
+        name.placeholder = 'name';
+        name.value = item.name;
+        name.addEventListener('input', () => {
+          items[idx].name = name.value;
+          onChange(serializeNameAmountItems(items));
+        });
+        const amount = document.createElement('input');
+        amount.placeholder = 'amount (e.g. 20 or -50%)';
+        amount.value = item.amount;
+        amount.addEventListener('input', () => {
+          items[idx].amount = amount.value;
+          onChange(serializeNameAmountItems(items));
+        });
+        const del = document.createElement('button');
+        del.textContent = 'Remove';
+        del.addEventListener('click', () => {
+          items.splice(idx, 1);
+          if (items.length === 0) items.push({ name: '', amount: '' });
+          onChange(serializeNameAmountItems(items));
+          rerender();
+        });
+        line.appendChild(name);
+        line.appendChild(amount);
+        line.appendChild(del);
+        wrap.appendChild(line);
+      });
+      const add = document.createElement('button');
+      add.textContent = 'Add Item';
+      add.addEventListener('click', () => {
+        items.push({ name: '', amount: '' });
+        rerender();
+      });
+      wrap.appendChild(add);
+    };
+    onChange(serializeNameAmountItems(items));
+    rerender();
+    return wrap;
+  }
+
+  if (row.key === 'building_prereqs_for_units') {
+    const wrap = document.createElement('div');
+    wrap.className = 'structured-list';
+    let items = parseBuildingPrereqItems(row.value);
+    if (items.length === 0) items = [{ building: '', units: [] }];
+    const rerender = () => {
+      wrap.innerHTML = '';
+      items.forEach((item, idx) => {
+        const block = document.createElement('div');
+        block.className = 'structured-card';
+        const b = document.createElement('input');
+        b.placeholder = 'building';
+        b.value = item.building;
+        b.addEventListener('input', () => {
+          items[idx].building = b.value;
+          onChange(serializeBuildingPrereqItems(items));
+        });
+        const u = document.createElement('input');
+        u.placeholder = 'units (comma list)';
+        u.value = item.units.join(', ');
+        u.addEventListener('input', () => {
+          items[idx].units = tokenizeListPreservingQuotes(u.value);
+          onChange(serializeBuildingPrereqItems(items));
+        });
+        const del = document.createElement('button');
+        del.textContent = 'Remove';
+        del.addEventListener('click', () => {
+          items.splice(idx, 1);
+          if (items.length === 0) items.push({ building: '', units: [] });
+          onChange(serializeBuildingPrereqItems(items));
+          rerender();
+        });
+        block.appendChild(b);
+        block.appendChild(u);
+        block.appendChild(del);
+        wrap.appendChild(block);
+      });
+      const add = document.createElement('button');
+      add.textContent = 'Add Item';
+      add.addEventListener('click', () => {
+        items.push({ building: '', units: [] });
+        rerender();
+      });
+      wrap.appendChild(add);
+    };
+    onChange(serializeBuildingPrereqItems(items));
+    rerender();
+    return wrap;
+  }
+
+  if (row.key === 'buildings_generating_resources') {
+    const FLAGS = ['local', 'no-tech-req', 'yields', 'show-bonus', 'hide-non-bonus'];
+    const wrap = document.createElement('div');
+    wrap.className = 'structured-list';
+    let items = parseBuildingResourceItems(row.value);
+    if (items.length === 0) items = [{ building: '', resource: '', flags: [] }];
+    const rerender = () => {
+      wrap.innerHTML = '';
+      items.forEach((item, idx) => {
+        const block = document.createElement('div');
+        block.className = 'structured-card';
+
+        const b = document.createElement('input');
+        b.placeholder = 'building';
+        b.value = item.building;
+        b.addEventListener('input', () => {
+          items[idx].building = b.value;
+          onChange(serializeBuildingResourceItems(items));
+        });
+        block.appendChild(b);
+
+        const r = document.createElement('input');
+        r.placeholder = 'resource';
+        r.value = item.resource;
+        r.addEventListener('input', () => {
+          items[idx].resource = r.value;
+          onChange(serializeBuildingResourceItems(items));
+        });
+        block.appendChild(r);
+
+        const flagRow = document.createElement('div');
+        flagRow.className = 'flag-row';
+        FLAGS.forEach((flag) => {
+          const label = document.createElement('label');
+          const check = document.createElement('input');
+          check.type = 'checkbox';
+          check.checked = item.flags.includes(flag);
+          check.addEventListener('change', () => {
+            const set = new Set(items[idx].flags);
+            if (check.checked) set.add(flag);
+            else set.delete(flag);
+            items[idx].flags = Array.from(set);
+            onChange(serializeBuildingResourceItems(items));
+          });
+          label.appendChild(check);
+          label.appendChild(document.createTextNode(flag));
+          flagRow.appendChild(label);
+        });
+        block.appendChild(flagRow);
+
+        const del = document.createElement('button');
+        del.textContent = 'Remove';
+        del.addEventListener('click', () => {
+          items.splice(idx, 1);
+          if (items.length === 0) items.push({ building: '', resource: '', flags: [] });
+          onChange(serializeBuildingResourceItems(items));
+          rerender();
+        });
+        block.appendChild(del);
+        wrap.appendChild(block);
+      });
+      const add = document.createElement('button');
+      add.textContent = 'Add Item';
+      add.addEventListener('click', () => {
+        items.push({ building: '', resource: '', flags: [] });
+        rerender();
+      });
+      wrap.appendChild(add);
+    };
+    onChange(serializeBuildingResourceItems(items));
+    rerender();
+    return wrap;
+  }
+
+  if (isStructuredBaseField(row)) {
+    return renderSimpleList(parseStructuredEntries(row.value));
   }
 
   if (row.type === 'boolean') {
@@ -389,35 +732,35 @@ function renderBaseTab(tab) {
   helper.textContent = 'C3X core settings for this mode. Most fields are typed; plain text appears only when a setting is truly free-form.';
   wrap.appendChild(helper);
 
-  if (isScenarioMode()) {
-    const warning = document.createElement('p');
-    warning.className = 'warning';
-    warning.textContent = 'C3X precedence for this tab: default -> scenario -> custom. Global custom may still override scenario values.';
-    wrap.appendChild(warning);
-  }
-
   const filterRow = document.createElement('div');
   filterRow.className = 'filter-row';
   const filterInput = document.createElement('input');
   filterInput.type = 'text';
   filterInput.placeholder = 'Filter settings...';
   filterInput.value = state.baseFilter;
-  filterInput.addEventListener('input', () => {
-    state.baseFilter = filterInput.value;
-    renderActiveTab();
-  });
   filterRow.appendChild(filterInput);
   wrap.appendChild(filterRow);
 
   const table = document.createElement('div');
   table.className = 'base-table';
+  const rowElements = [];
+  const groups = new Map();
+  for (const row of tab.rows) {
+    const sectionName = (tab.sectionByKey && tab.sectionByKey[row.key]) || 'General';
+    if (!groups.has(sectionName)) {
+      const group = document.createElement('div');
+      group.className = 'base-group';
+      const title = document.createElement('h4');
+      title.className = 'base-group-title';
+      title.textContent = sectionName;
+      group.appendChild(title);
+      const rowsWrap = document.createElement('div');
+      rowsWrap.className = 'base-group-rows';
+      group.appendChild(rowsWrap);
+      table.appendChild(group);
+      groups.set(sectionName, { group, rowsWrap, rowCount: 0 });
+    }
 
-  const needle = state.baseFilter.trim().toLowerCase();
-  const filteredRows = needle
-    ? tab.rows.filter((r) => r.key.toLowerCase().includes(needle))
-    : tab.rows;
-
-  for (const row of filteredRows) {
     const r = document.createElement('div');
     r.className = 'base-row';
 
@@ -428,7 +771,7 @@ function renderBaseTab(tab) {
     keyTitle.className = 'base-key';
     keyTitle.textContent = toFriendlyKey(row.key);
     keyWrap.appendChild(keyTitle);
-    keyWrap.appendChild(createBaseMeta(row));
+    keyWrap.appendChild(createBaseMeta(row, tab.fieldDocs));
 
     r.appendChild(keyWrap);
 
@@ -437,8 +780,25 @@ function renderBaseTab(tab) {
     });
     r.appendChild(input);
 
-    table.appendChild(r);
+    const groupInfo = groups.get(sectionName);
+    groupInfo.rowsWrap.appendChild(r);
+    groupInfo.rowCount += 1;
+    rowElements.push({ key: row.key.toLowerCase(), el: r, group: groupInfo.group });
   }
+
+  const applyFilter = () => {
+    const needle = filterInput.value.trim().toLowerCase();
+    state.baseFilter = filterInput.value;
+    rowElements.forEach((entry) => {
+      entry.el.style.display = !needle || entry.key.includes(needle) ? '' : 'none';
+    });
+    groups.forEach((g) => {
+      const hasVisible = Array.from(g.rowsWrap.children).some((child) => child.style.display !== 'none');
+      g.group.style.display = hasVisible ? '' : 'none';
+    });
+  };
+  filterInput.addEventListener('input', applyFilter);
+  applyFilter();
 
   wrap.appendChild(table);
   return wrap;
@@ -461,6 +821,184 @@ function setMultiFieldValues(section, key, values) {
     if (value !== '') {
       section.fields.push({ key, value });
     }
+  }
+}
+
+function getFieldValue(section, key) {
+  const f = section.fields.find((x) => x.key === key);
+  return f ? String(f.value || '').trim() : '';
+}
+
+function getFieldValuesRaw(section, key) {
+  return section.fields.filter((x) => x.key === key).map((x) => String(x.value || '').trim()).filter(Boolean);
+}
+
+function getCropDimensions(section, defaults) {
+  const customW = Number.parseInt(getFieldValue(section, 'custom_width') || '', 10);
+  const customH = Number.parseInt(getFieldValue(section, 'custom_height') || '', 10);
+  return {
+    w: Number.isFinite(customW) && customW > 0 ? customW : defaults.w,
+    h: Number.isFinite(customH) && customH > 0 ? customH : defaults.h
+  };
+}
+
+function fromBase64ToUint8(base64) {
+  const bin = atob(base64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function parseFrameSecondsFromSpec(spec) {
+  const m = String(spec || '').match(/(?:^|[;\s])frame_time_seconds\s*[:=]\s*([0-9]*\.?[0-9]+)/i);
+  if (!m) return null;
+  const v = Number.parseFloat(m[1]);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  return v;
+}
+
+function getPreviewDelayMs(tabKey, section, title) {
+  if (tabKey === 'animations' && title === 'Animation FLC') {
+    const seconds = Number.parseFloat(getFieldValue(section, 'frame_time_seconds'));
+    if (Number.isFinite(seconds) && seconds > 0) return Math.max(16, Math.round(seconds * 1000));
+  }
+  if (tabKey === 'naturalWonders' && title === 'Animation') {
+    const spec = getFieldValuesRaw(section, 'animation')[0] || '';
+    const seconds = parseFrameSecondsFromSpec(spec);
+    if (seconds) return Math.max(16, Math.round(seconds * 1000));
+  }
+  return 100;
+}
+
+function renderRgbaPreview(container, preview, title, delayMsProvider) {
+  const card = document.createElement('div');
+  card.className = 'preview-card';
+  const h = document.createElement('div');
+  h.className = 'preview-title';
+  h.textContent = title;
+  card.appendChild(h);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = preview.width;
+  canvas.height = preview.height;
+  canvas.className = 'preview-canvas';
+  canvas.style.width = `${state.previewSize}px`;
+  canvas.style.height = 'auto';
+  const ctx = canvas.getContext('2d');
+
+  if (preview.animated && Array.isArray(preview.framesBase64) && preview.framesBase64.length > 0) {
+    const frames = preview.framesBase64.map((b64) =>
+      new ImageData(new Uint8ClampedArray(fromBase64ToUint8(b64)), preview.width, preview.height)
+    );
+    let frameIdx = 0;
+    const drawNext = () => {
+      if (!canvas.isConnected) return;
+      ctx.putImageData(frames[frameIdx], 0, 0);
+      frameIdx = (frameIdx + 1) % frames.length;
+      const delay = Math.max(16, Number(delayMsProvider ? delayMsProvider() : 100) || 100);
+      window.setTimeout(drawNext, delay);
+    };
+    drawNext();
+  } else if (preview.rgbaBase64) {
+    const rgba = fromBase64ToUint8(preview.rgbaBase64);
+    const data = new ImageData(new Uint8ClampedArray(rgba), preview.width, preview.height);
+    ctx.putImageData(data, 0, 0);
+  }
+  card.appendChild(canvas);
+
+  const meta = document.createElement('div');
+  meta.className = 'preview-meta';
+  const motion = preview.animated ? 'animated' : 'static';
+  meta.textContent = `${preview.width}x${preview.height} - ${motion} - ${preview.sourcePath.split(/[\\\\/]/).pop()}`;
+  card.appendChild(meta);
+  container.appendChild(card);
+}
+
+async function loadPreviewsForSection(tabKey, section, previewWrap) {
+  const cacheKey = JSON.stringify({ tabKey, fields: section.fields, c3xPath: state.settings.c3xPath });
+  if (state.previewCache.has(cacheKey)) {
+    const cached = state.previewCache.get(cacheKey);
+    cached.forEach((p) => renderRgbaPreview(previewWrap, p.preview, p.title, () => getPreviewDelayMs(tabKey, section, p.title)));
+    return;
+  }
+
+  const tasks = [];
+  if (tabKey === 'districts') {
+    const imgPaths = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths'));
+    imgPaths.slice(0, 3).forEach((name, idx) => {
+      tasks.push({
+        title: `Art ${idx + 1}`,
+        request: { kind: 'district', c3xPath: state.settings.c3xPath, fileName: name.trim().replace(/^\"|\"$/g, '') }
+      });
+    });
+  } else if (tabKey === 'wonders') {
+    const fileName = getFieldValue(section, 'img_path') || 'Wonders.pcx';
+    const row = parseInt(getFieldValue(section, 'img_row') || '0', 10) || 0;
+    const col = parseInt(getFieldValue(section, 'img_column') || '0', 10) || 0;
+    const crop = getCropDimensions(section, { w: 128, h: 64 });
+    tasks.push({
+      title: 'Completed Wonder',
+      request: {
+        kind: 'wonder',
+        c3xPath: state.settings.c3xPath,
+        fileName,
+        crop: { row, col, w: crop.w, h: crop.h }
+      }
+    });
+    const cr = parseInt(getFieldValue(section, 'img_construct_row') || '0', 10) || 0;
+    const cc = parseInt(getFieldValue(section, 'img_construct_column') || '0', 10) || 0;
+    tasks.push({
+      title: 'Construction',
+      request: {
+        kind: 'wonder',
+        c3xPath: state.settings.c3xPath,
+        fileName,
+        crop: { row: cr, col: cc, w: crop.w, h: crop.h }
+      }
+    });
+  } else if (tabKey === 'naturalWonders') {
+    const fileName = getFieldValue(section, 'img_path');
+    const row = parseInt(getFieldValue(section, 'img_row') || '0', 10) || 0;
+    const col = parseInt(getFieldValue(section, 'img_column') || '0', 10) || 0;
+    const crop = getCropDimensions(section, { w: 128, h: 96 });
+    tasks.push({
+      title: 'Natural Wonder',
+      request: {
+        kind: 'naturalWonder',
+        c3xPath: state.settings.c3xPath,
+        fileName,
+        crop: { row, col, w: crop.w, h: crop.h }
+      }
+    });
+    getFieldValuesRaw(section, 'animation').slice(0, 1).forEach((spec) => {
+      tasks.push({
+        title: 'Animation',
+        request: { kind: 'naturalWonderAnimationSpec', c3xPath: state.settings.c3xPath, animationSpec: spec }
+      });
+    });
+  } else if (tabKey === 'animations') {
+    const iniPath = getFieldValue(section, 'ini_path');
+    tasks.push({
+      title: 'Animation FLC',
+      request: { kind: 'animationIni', c3xPath: state.settings.c3xPath, iniPath }
+    });
+  }
+
+  const resolved = [];
+  for (const task of tasks) {
+    try {
+      const res = await window.c3xManager.getPreview(task.request);
+      if (res && res.ok) {
+        renderRgbaPreview(previewWrap, res, task.title, () => getPreviewDelayMs(tabKey, section, task.title));
+        resolved.push({ title: task.title, preview: res });
+      }
+    } catch (_err) {
+      // Ignore preview failure
+    }
+  }
+
+  if (resolved.length > 0) {
+    state.previewCache.set(cacheKey, resolved);
   }
 }
 
@@ -503,6 +1041,29 @@ function createFieldInput(schemaField, value, onChange) {
     return select;
   }
 
+  const isPathField = schemaField.key.includes('path');
+  if (isPathField) {
+    const wrap = document.createElement('div');
+    wrap.className = 'path-input-with-btn';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = value || '';
+    input.placeholder = schemaField.required ? 'required' : '';
+    input.addEventListener('input', () => onChange(input.value));
+    const browse = document.createElement('button');
+    browse.type = 'button';
+    browse.textContent = '...';
+    browse.addEventListener('click', async () => {
+      const filePath = await window.c3xManager.pickFile();
+      if (!filePath) return;
+      input.value = filePath;
+      onChange(filePath);
+    });
+    wrap.appendChild(input);
+    wrap.appendChild(browse);
+    return wrap;
+  }
+
   const input = document.createElement('input');
   input.type = schemaField.type === 'number' ? 'number' : 'text';
   input.value = value || '';
@@ -511,7 +1072,7 @@ function createFieldInput(schemaField, value, onChange) {
   return input;
 }
 
-function renderKnownField(section, schemaField) {
+function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
   const row = document.createElement('div');
   row.className = 'form-row';
 
@@ -520,50 +1081,106 @@ function renderKnownField(section, schemaField) {
   label.textContent = schemaField.label + (schemaField.required ? ' *' : '');
   row.appendChild(label);
 
+  const longDoc = (fieldDocs && fieldDocs[schemaField.key]) || '';
+  const fullDesc = longDoc || schemaField.desc || '';
   const meta = document.createElement('div');
-  meta.className = 'field-meta';
-  meta.textContent = schemaField.desc ? `${schemaField.key} - ${schemaField.desc}` : schemaField.key;
+  meta.className = 'field-meta-block';
+  const metaText = document.createElement('div');
+  metaText.className = 'field-meta';
+  metaText.textContent = schemaField.key;
+  meta.appendChild(metaText);
+  if (fullDesc) {
+    const desc = document.createElement('div');
+    desc.className = 'field-description';
+    desc.textContent = fullDesc;
+    meta.appendChild(desc);
+  }
   row.appendChild(meta);
 
   const values = getFieldValues(section, schemaField.key);
 
-  if (schemaField.multi) {
+  if (schemaField.multi || schemaField.type === 'list') {
     const multiWrap = document.createElement('div');
     multiWrap.className = 'multi-value-group';
 
-    const list = values.length > 0 ? values : [''];
+    const list = (schemaField.type === 'list' && !schemaField.multi)
+      ? (values[0] ? tokenizeListPreservingQuotes(values[0]) : [''])
+      : (values.length > 0 ? values : ['']);
     list.forEach((current, idx) => {
       const line = document.createElement('div');
       line.className = 'kv-row compact';
 
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.placeholder = 'item';
-      input.value = current;
+      let input;
+      if (schemaField.options && schemaField.options.length > 0) {
+        input = document.createElement('select');
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = '(not set)';
+        input.appendChild(empty);
+        schemaField.options.forEach((opt) => {
+          const o = document.createElement('option');
+          o.value = opt;
+          o.textContent = opt;
+          input.appendChild(o);
+        });
+        input.value = current || '';
+      } else {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = 'item';
+        input.value = current;
+      }
       input.addEventListener('input', () => {
         const next = [...list];
         next[idx] = input.value;
-        setMultiFieldValues(section, schemaField.key, next);
+        if (schemaField.type === 'list' && !schemaField.multi)
+          setSingleFieldValue(section, schemaField.key, next.join(', '));
+        else
+          setMultiFieldValues(section, schemaField.key, next);
+        if (onValueChange) onValueChange(schemaField.key, next.join(', '));
       });
 
       const del = document.createElement('button');
       del.textContent = 'Remove';
-      del.addEventListener('click', () => {
-        const next = [...list];
-        next.splice(idx, 1);
-        setMultiFieldValues(section, schemaField.key, next);
+        del.addEventListener('click', () => {
+          const next = [...list];
+          next.splice(idx, 1);
+        if (schemaField.type === 'list' && !schemaField.multi)
+          setSingleFieldValue(section, schemaField.key, next.join(', '));
+        else
+          setMultiFieldValues(section, schemaField.key, next);
         renderActiveTab();
       });
 
-      line.appendChild(input);
+      if (schemaField.key.includes('path') && !schemaField.options) {
+        const browse = document.createElement('button');
+        browse.textContent = '...';
+        browse.type = 'button';
+        browse.addEventListener('click', async () => {
+          const filePath = await window.c3xManager.pickFile();
+          if (!filePath) return;
+          input.value = filePath;
+          const next = [...list];
+          next[idx] = filePath;
+          setMultiFieldValues(section, schemaField.key, next);
+        });
+        line.appendChild(input);
+        line.appendChild(browse);
+      } else {
+        line.appendChild(input);
+      }
       line.appendChild(del);
       multiWrap.appendChild(line);
     });
 
     const add = document.createElement('button');
-    add.textContent = `Add ${schemaField.label}`;
+    add.textContent = 'Add Item';
     add.addEventListener('click', () => {
-      setMultiFieldValues(section, schemaField.key, [...list, '']);
+      const next = [...list, ''];
+      if (schemaField.type === 'list' && !schemaField.multi)
+        setSingleFieldValue(section, schemaField.key, next.join(', '));
+      else
+        setMultiFieldValues(section, schemaField.key, next);
       renderActiveTab();
     });
 
@@ -574,6 +1191,7 @@ function renderKnownField(section, schemaField) {
 
   const input = createFieldInput(schemaField, values[0] || '', (newValue) => {
     setSingleFieldValue(section, schemaField.key, String(newValue || '').trim());
+    if (onValueChange) onValueChange(schemaField.key, String(newValue || '').trim());
   });
   row.appendChild(input);
 
@@ -687,13 +1305,20 @@ function renderSectionTab(tab, tabKey) {
 
   const listPane = document.createElement('div');
   listPane.className = 'entry-list-pane';
+  listPane.scrollTop = state.sectionListScrollTop[tabKey] || 0;
+  listPane.addEventListener('scroll', () => {
+    state.sectionListScrollTop[tabKey] = listPane.scrollTop;
+  });
   tab.model.sections.forEach((section, sectionIndex) => {
     const itemBtn = document.createElement('button');
     itemBtn.className = 'entry-list-item';
+    itemBtn.dataset.index = String(sectionIndex);
     itemBtn.classList.toggle('active', sectionIndex === selectedIndex);
     itemBtn.type = 'button';
-    itemBtn.innerHTML = `<strong>${getSectionTitle(section, schema, sectionIndex)}</strong><span>${schema.entityName} ${sectionIndex + 1}</span>`;
+    itemBtn.innerHTML = `<strong>${getSectionTitle(section, schema, sectionIndex)}</strong>`;
     itemBtn.addEventListener('click', () => {
+      state.tabContentScrollTop = el.tabContent.scrollTop;
+      state.sectionListScrollTop[tabKey] = listPane.scrollTop;
       state.sectionSelection[tabKey] = sectionIndex;
       renderActiveTab();
     });
@@ -703,6 +1328,10 @@ function renderSectionTab(tab, tabKey) {
 
   const detailPane = document.createElement('div');
   detailPane.className = 'entry-detail-pane';
+  detailPane.scrollTop = state.sectionDetailScrollTop[tabKey] || 0;
+  detailPane.addEventListener('scroll', () => {
+    state.sectionDetailScrollTop[tabKey] = detailPane.scrollTop;
+  });
 
   if (tab.model.sections.length === 0) {
     const empty = document.createElement('div');
@@ -717,6 +1346,7 @@ function renderSectionTab(tab, tabKey) {
     const section = tab.model.sections[selectedIndex];
     const card = document.createElement('div');
     card.className = 'section-card';
+    card.style.setProperty('--preview-size', `${state.previewSize}px`);
 
     const top = document.createElement('div');
     top.className = 'section-top';
@@ -732,10 +1362,50 @@ function renderSectionTab(tab, tabKey) {
     top.appendChild(removeSectionBtn);
     card.appendChild(top);
 
+    const previewTools = document.createElement('div');
+    previewTools.className = 'preview-tools';
+    const sizeLabel = document.createElement('label');
+    sizeLabel.className = 'preview-size-label';
+    sizeLabel.textContent = 'Preview Size';
+    const sizeValue = document.createElement('span');
+    sizeValue.className = 'preview-size-value';
+    sizeValue.textContent = `${state.previewSize}px`;
+    const sizeSlider = document.createElement('input');
+    sizeSlider.type = 'range';
+    sizeSlider.min = '120';
+    sizeSlider.max = '420';
+    sizeSlider.step = '10';
+    sizeSlider.value = String(state.previewSize);
+    sizeSlider.addEventListener('input', () => {
+      state.previewSize = Number.parseInt(sizeSlider.value, 10) || 220;
+      sizeValue.textContent = `${state.previewSize}px`;
+      card.style.setProperty('--preview-size', `${state.previewSize}px`);
+      card.querySelectorAll('canvas.preview-canvas').forEach((c) => {
+        c.style.width = `${state.previewSize}px`;
+        c.style.height = 'auto';
+      });
+    });
+    previewTools.appendChild(sizeLabel);
+    previewTools.appendChild(sizeSlider);
+    previewTools.appendChild(sizeValue);
+    card.appendChild(previewTools);
+
+    const previewWrap = document.createElement('div');
+    previewWrap.className = 'preview-wrap';
+    card.appendChild(previewWrap);
+    loadPreviewsForSection(tabKey, section, previewWrap);
+
     const form = document.createElement('div');
     form.className = 'form-grid';
     schema.fields.forEach((schemaField) => {
-      form.appendChild(renderKnownField(section, schemaField));
+      form.appendChild(renderKnownField(section, schemaField, tab.fieldDocs, (key, value) => {
+        if (key === schema.titleKey) {
+          const titleEl = listPane.querySelector(`.entry-list-item[data-index="${selectedIndex}"] strong`);
+          if (titleEl) {
+            titleEl.textContent = value || `${schema.entityName}`;
+          }
+        }
+      }));
     });
     card.appendChild(form);
     card.appendChild(renderAdvancedFields(section, schemaKeys));
@@ -776,6 +1446,7 @@ function renderTabs() {
 }
 
 function renderActiveTab() {
+  state.tabContentScrollTop = el.tabContent.scrollTop;
   el.tabContent.innerHTML = '';
   const tab = state.bundle.tabs[state.activeTab];
   if (!tab) {
@@ -787,6 +1458,7 @@ function renderActiveTab() {
   } else {
     el.tabContent.appendChild(renderSectionTab(tab, state.activeTab));
   }
+  el.tabContent.scrollTop = state.tabContentScrollTop || 0;
 }
 
 async function loadBundleAndRender() {

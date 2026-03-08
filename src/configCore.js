@@ -83,6 +83,123 @@ function parseIniLines(text) {
   return { rows, map };
 }
 
+function normalizeIniSectionName(raw) {
+  const cleaned = raw.replace(/^\[+|\]+$/g, '').replace(/=/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return null;
+  if (cleaned.length > 56) return null;
+  if (!/[A-Za-z]/.test(cleaned)) return null;
+  if (/^NOTE$/i.test(cleaned)) return null;
+  return cleaned.replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function parseIniSectionMap(text) {
+  const sectionByKey = {};
+  const sectionOrder = [];
+  const seen = new Set();
+  if (!text) {
+    return { sectionByKey, sectionOrder };
+  }
+
+  const lines = text.split(/\r?\n/);
+  let currentSection = 'General';
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      const section = normalizeIniSectionName(trimmed);
+      if (section) {
+        currentSection = section;
+      }
+      continue;
+    }
+
+    const keyMatch = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (keyMatch) {
+      const key = keyMatch[1];
+      sectionByKey[key] = currentSection;
+      if (!seen.has(currentSection)) {
+        seen.add(currentSection);
+        sectionOrder.push(currentSection);
+      }
+    }
+  }
+
+  return { sectionByKey, sectionOrder };
+}
+
+function normalizeDocLine(line) {
+  return line.replace(/\s+/g, ' ').trim();
+}
+
+function parseIniFieldDocs(text) {
+  const docs = {};
+  if (!text) {
+    return docs;
+  }
+
+  const lines = text.split(/\r?\n/);
+  let commentBuffer = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith(';')) {
+      const body = normalizeDocLine(trimmed.replace(/^;\s?/, ''));
+      if (body) {
+        commentBuffer.push(body);
+      }
+      continue;
+    }
+
+    const keyMatch = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (keyMatch) {
+      const key = keyMatch[1];
+      if (commentBuffer.length > 0 && !docs[key]) {
+        docs[key] = commentBuffer.join(' ');
+      }
+    }
+
+    if (!trimmed || trimmed.startsWith('[') || keyMatch) {
+      commentBuffer = [];
+    }
+  }
+  return docs;
+}
+
+function parseSectionFieldDocs(text) {
+  const docs = {};
+  if (!text) {
+    return docs;
+  }
+
+  const lines = text.split(/\r?\n/);
+  let activeKey = null;
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    if (!trimmed.startsWith(';')) {
+      activeKey = null;
+      continue;
+    }
+    const body = normalizeDocLine(trimmed.replace(/^;\s?/, ''));
+    if (!body) {
+      activeKey = null;
+      continue;
+    }
+
+    const start = body.match(/^-+\s*([A-Za-z0-9_]+)\s*:\s*(.*)$/);
+    if (start) {
+      const key = start[1];
+      const desc = start[2].trim();
+      docs[key] = desc;
+      activeKey = key;
+      continue;
+    }
+
+    if (activeKey && !/^-+\s*[A-Za-z0-9_]+\s*:/.test(body)) {
+      docs[activeKey] = `${docs[activeKey]} ${body}`.trim();
+    }
+  }
+
+  return docs;
+}
+
 function inferBaseType(value) {
   const v = String(value).trim().toLowerCase();
   if (v === 'true' || v === 'false') {
@@ -317,11 +434,14 @@ function loadBundle(payload) {
     title: FILE_SPECS.base.title,
     effectiveSource: filePaths.base.effectiveSource,
     targetPath: filePaths.base.targetPath,
+    fieldDocs: parseIniFieldDocs(defaultBaseText),
+    ...parseIniSectionMap(defaultBaseText),
     ...buildBaseModel(defaultBaseText, scenarioBaseText, customBaseText, mode, targetBaseText)
   };
 
   for (const kind of ['districts', 'wonders', 'naturalWonders', 'animations']) {
     const spec = FILE_SPECS[kind];
+    const defaultText = readTextIfExists(filePaths[kind].defaultPath) || '';
     const targetText = readTextIfExists(filePaths[kind].targetPath);
     const fallbackText = readTextIfExists(filePaths[kind].effectivePath) || '';
     const text = targetText ?? fallbackText;
@@ -331,6 +451,7 @@ function loadBundle(payload) {
       effectiveSource: filePaths[kind].effectiveSource,
       targetPath: filePaths[kind].targetPath,
       marker: spec.sectionMarker,
+      fieldDocs: parseSectionFieldDocs(defaultText),
       model: parseSectionedConfig(text, spec.sectionMarker)
     };
   }
@@ -378,6 +499,9 @@ module.exports = {
   parseSectionedConfig,
   serializeSectionedConfig,
   serializeBaseConfig,
+  parseIniFieldDocs,
+  parseIniSectionMap,
+  parseSectionFieldDocs,
   resolvePaths,
   loadBundle,
   saveBundle
