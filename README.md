@@ -1,9 +1,9 @@
 # C3X Config Manager
 
-Electron app for managing C3X configuration files with a scoped model:
+Electron app for managing C3X configuration files with two modes:
 
-- `Global Scope`: writes `custom.c3x_config.ini` and `user.*` config files in the C3X folder.
-- `Scenario Scope`: writes `scenario.*` config files in the selected scenario folder.
+- `Standard Game`: writes `custom.c3x_config.ini` and `user.*` config files in the C3X folder.
+- `Scenario`: writes `scenario.*` config files in the selected scenario folder.
 
 ## Run
 

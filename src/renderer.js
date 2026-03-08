@@ -2,7 +2,13 @@ const state = {
   settings: null,
   bundle: null,
   activeTab: 'base',
-  baseFilter: ''
+  baseFilter: '',
+  sectionSelection: {
+    districts: 0,
+    wonders: 0,
+    naturalWonders: 0,
+    animations: 0
+  }
 };
 
 const el = {
@@ -23,35 +29,71 @@ const el = {
   tabContent: document.getElementById('tab-content')
 };
 
+const DIRECTION_OPTIONS = ['northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest', 'north'];
+const TERRAIN_OPTIONS = ['desert', 'plains', 'grassland', 'jungle', 'tundra', 'floodplain', 'swamp', 'hill', 'mountain', 'forest', 'volcano', 'snow-forest', 'snow-mountain', 'snow-volcano', 'coast', 'sea', 'ocean'];
+const TAB_ICONS = {
+  base: 'icon-c3x',
+  districts: 'icon-district',
+  wonders: 'icon-wonder',
+  naturalWonders: 'icon-natural',
+  animations: 'icon-anim'
+};
+
+const BASE_ENUM_OPTIONS = {
+  draw_lines_using_gdi_plus: ['never', 'wine', 'always'],
+  double_minimap_size: ['never', 'always', 'high-def'],
+  unit_cycle_search_criteria: ['standard', 'similar-near-start', 'similar-near-destination'],
+  day_night_cycle_mode: ['off', 'timer', 'user-time', 'every-turn', 'specified'],
+  seasonal_cycle_mode: ['off', 'timer', 'user-season', 'every-turn', 'on-day-night-hour', 'specified']
+};
+
+const BASE_STRUCTURED_LIST_FIELDS = new Set([
+  'limit_units_per_tile',
+  'production_perfume',
+  'perfume_specs',
+  'technology_perfume',
+  'government_perfume',
+  'building_prereqs_for_units',
+  'buildings_generating_resources',
+  'ai_multi_start_extra_palaces'
+]);
+
+const BASE_FIELD_DETAILS = {
+  enable_districts: 'Master toggle for district systems.',
+  enable_wonder_districts: 'Enables the wonder district layer.',
+  enable_natural_wonders: 'Enables natural wonder systems and placement.',
+  enable_custom_animations: 'Enables tile animation configs.',
+  minimum_natural_wonder_separation: 'Minimum tile distance between natural wonders.',
+  draw_lines_using_gdi_plus: 'Line rendering strategy.'
+};
+
 const SECTION_SCHEMAS = {
   districts: {
     marker: '#District',
+    entityName: 'District',
     titleKey: 'name',
     fields: [
-      { key: 'name', label: 'Name', type: 'text', required: true },
-      { key: 'display_name', label: 'Display Name', type: 'text' },
-      { key: 'tooltip', label: 'Tooltip', type: 'text' },
-      { key: 'img_paths', label: 'Image Paths (comma list)', type: 'text' },
-      { key: 'img_column_count', label: 'Image Column Count', type: 'number' },
-      { key: 'btn_tile_sheet_row', label: 'Button Tile Row', type: 'number' },
-      { key: 'btn_tile_sheet_column', label: 'Button Tile Column', type: 'number' },
-      { key: 'advance_prereqs', label: 'Advance Prereqs (comma list)', type: 'text' },
-      { key: 'dependent_improvs', label: 'Dependent Improvements (comma list)', type: 'text' },
-      { key: 'buildable_on', label: 'Buildable On (comma list)', type: 'text' },
-      { key: 'buildable_adjacent_to', label: 'Buildable Adjacent To (comma list)', type: 'text' },
-      { key: 'defense_bonus_percent', label: 'Defense Bonus', type: 'text' },
-      { key: 'culture_bonus', label: 'Culture Bonus', type: 'text' },
-      { key: 'science_bonus', label: 'Science Bonus', type: 'text' },
-      { key: 'food_bonus', label: 'Food Bonus', type: 'text' },
-      { key: 'gold_bonus', label: 'Gold Bonus', type: 'text' },
-      { key: 'shield_bonus', label: 'Shield Bonus', type: 'text' },
-      { key: 'happiness_bonus', label: 'Happiness Bonus', type: 'text' },
-      { key: 'allow_multiple', label: 'Allow Multiple', type: 'bool' },
-      { key: 'heal_units_in_one_turn', label: 'Heal Units In One Turn', type: 'bool' },
-      { key: 'vary_img_by_era', label: 'Vary Image By Era', type: 'bool' },
-      { key: 'vary_img_by_culture', label: 'Vary Image By Culture', type: 'bool' },
-      { key: 'align_to_coast', label: 'Align To Coast', type: 'bool' },
-      { key: 'draw_over_resources', label: 'Draw Over Resources', type: 'bool' }
+      { key: 'name', label: 'District Name', desc: 'Internal unique district name.', type: 'text', required: true },
+      { key: 'display_name', label: 'Display Name', desc: 'Name shown in UI.', type: 'text' },
+      { key: 'tooltip', label: 'Tooltip Text', desc: 'Shown on worker command hover.', type: 'text' },
+      { key: 'img_paths', label: 'Image Paths', desc: 'Comma list of district PCX files.', type: 'text' },
+      { key: 'btn_tile_sheet_row', label: 'Button Tile Row', desc: 'Row index in district button sheet.', type: 'number' },
+      { key: 'btn_tile_sheet_column', label: 'Button Tile Column', desc: 'Column index in district button sheet.', type: 'number' },
+      { key: 'advance_prereqs', label: 'Tech Prerequisites', desc: 'Comma list of advance names.', type: 'text' },
+      { key: 'dependent_improvs', label: 'Dependent Improvements', desc: 'Comma list of city improvements this district unlocks.', type: 'text' },
+      { key: 'buildable_on', label: 'Buildable Terrain', desc: 'Comma list of allowed terrain.', type: 'text' },
+      { key: 'buildable_adjacent_to', label: 'Adjacency Requirement', desc: 'Comma list of required adjacent terrain/city.', type: 'text' },
+      { key: 'allow_multiple', label: 'Allow Multiple', desc: 'Allow multiple copies per city.', type: 'bool' },
+      { key: 'vary_img_by_era', label: 'Vary Art By Era', desc: 'Use era-specific rows in art.', type: 'bool' },
+      { key: 'vary_img_by_culture', label: 'Vary Art By Culture', desc: 'Use culture-variant image set.', type: 'bool' },
+      { key: 'draw_over_resources', label: 'Draw Over Resources', desc: 'Draw district art above map resources.', type: 'bool' },
+      { key: 'defense_bonus_percent', label: 'Defense Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' },
+      { key: 'culture_bonus', label: 'Culture Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' },
+      { key: 'science_bonus', label: 'Science Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' },
+      { key: 'food_bonus', label: 'Food Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' },
+      { key: 'gold_bonus', label: 'Gold Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' },
+      { key: 'shield_bonus', label: 'Shield Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' },
+      { key: 'happiness_bonus', label: 'Happiness Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' }
     ],
     template: {
       name: 'New District',
@@ -62,24 +104,19 @@ const SECTION_SCHEMAS = {
   },
   wonders: {
     marker: '#Wonder',
+    entityName: 'Wonder District',
     titleKey: 'name',
     fields: [
-      { key: 'name', label: 'Wonder Name', type: 'text', required: true },
-      { key: 'buildable_on', label: 'Buildable On (comma list)', type: 'text' },
-      { key: 'buildable_adjacent_to', label: 'Buildable Adjacent To', type: 'text' },
-      { key: 'buildable_only_on_rivers', label: 'Buildable Only On Rivers', type: 'bool' },
-      { key: 'img_path', label: 'Image Path', type: 'text' },
-      { key: 'img_construct_row', label: 'Construct Row', type: 'number', required: true },
-      { key: 'img_construct_column', label: 'Construct Column', type: 'number', required: true },
-      { key: 'img_row', label: 'Completed Row', type: 'number', required: true },
-      { key: 'img_column', label: 'Completed Column', type: 'number', required: true },
-      { key: 'enable_img_alt_dir', label: 'Enable Alt Direction Art', type: 'bool' },
-      { key: 'img_alt_dir_construct_row', label: 'Alt Construct Row', type: 'number' },
-      { key: 'img_alt_dir_construct_column', label: 'Alt Construct Column', type: 'number' },
-      { key: 'img_alt_dir_row', label: 'Alt Completed Row', type: 'number' },
-      { key: 'img_alt_dir_column', label: 'Alt Completed Column', type: 'number' },
-      { key: 'custom_width', label: 'Custom Width', type: 'number' },
-      { key: 'custom_height', label: 'Custom Height', type: 'number' }
+      { key: 'name', label: 'Wonder Name', desc: 'Must match the in-game wonder improvement name.', type: 'text', required: true },
+      { key: 'buildable_on', label: 'Buildable Terrain', desc: 'Comma list of allowed terrain.', type: 'text' },
+      { key: 'buildable_adjacent_to', label: 'Adjacency Requirement', desc: 'Comma list of adjacent terrain/city.', type: 'text' },
+      { key: 'buildable_only_on_rivers', label: 'River Required', desc: 'Require wonder tile to be on a river.', type: 'bool' },
+      { key: 'img_path', label: 'Image Path', desc: 'District wonder art PCX file.', type: 'text' },
+      { key: 'img_construct_row', label: 'Construct Row', desc: 'Construction art row index.', type: 'number', required: true },
+      { key: 'img_construct_column', label: 'Construct Column', desc: 'Construction art column index.', type: 'number', required: true },
+      { key: 'img_row', label: 'Completed Row', desc: 'Completed wonder art row index.', type: 'number', required: true },
+      { key: 'img_column', label: 'Completed Column', desc: 'Completed wonder art column index.', type: 'number', required: true },
+      { key: 'enable_img_alt_dir', label: 'Enable Alt Direction Art', desc: 'Use alternate directional art set.', type: 'bool' }
     ],
     template: {
       name: 'New Wonder',
@@ -92,24 +129,25 @@ const SECTION_SCHEMAS = {
   },
   naturalWonders: {
     marker: '#Wonder',
+    entityName: 'Natural Wonder',
     titleKey: 'name',
     fields: [
-      { key: 'name', label: 'Natural Wonder Name', type: 'text', required: true },
-      { key: 'terrain_type', label: 'Terrain Type', type: 'text', required: true },
-      { key: 'adjacent_to', label: 'Adjacent To', type: 'text' },
-      { key: 'adjacency_dir', label: 'Adjacency Direction', type: 'text' },
-      { key: 'img_path', label: 'Image Path', type: 'text', required: true },
-      { key: 'img_row', label: 'Image Row', type: 'number', required: true },
-      { key: 'img_column', label: 'Image Column', type: 'number', required: true },
-      { key: 'culture_bonus', label: 'Culture Bonus', type: 'number' },
-      { key: 'science_bonus', label: 'Science Bonus', type: 'number' },
-      { key: 'food_bonus', label: 'Food Bonus', type: 'number' },
-      { key: 'gold_bonus', label: 'Gold Bonus', type: 'number' },
-      { key: 'shield_bonus', label: 'Shield Bonus', type: 'number' },
-      { key: 'happiness_bonus', label: 'Happiness Bonus', type: 'number' },
-      { key: 'impassible', label: 'Impassible', type: 'bool' },
-      { key: 'impassible_to_wheeled', label: 'Impassible To Wheeled', type: 'bool' },
-      { key: 'animation', label: 'Animation Entry', type: 'text', multi: true }
+      { key: 'name', label: 'Wonder Name', desc: 'Unique natural wonder identifier.', type: 'text', required: true },
+      { key: 'terrain_type', label: 'Terrain Type', desc: 'Primary terrain for this wonder.', type: 'select', options: TERRAIN_OPTIONS, required: true },
+      { key: 'adjacent_to', label: 'Adjacent To', desc: 'Optional adjacency terrain or river.', type: 'select', options: ['any', 'river', ...TERRAIN_OPTIONS] },
+      { key: 'adjacency_dir', label: 'Adjacency Direction', desc: 'Optional direction for adjacency check.', type: 'select', options: DIRECTION_OPTIONS },
+      { key: 'img_path', label: 'Image Path', desc: 'Natural wonder PCX filename.', type: 'text', required: true },
+      { key: 'img_row', label: 'Image Row', desc: 'Sprite row index in PCX.', type: 'number', required: true },
+      { key: 'img_column', label: 'Image Column', desc: 'Sprite column index in PCX.', type: 'number', required: true },
+      { key: 'culture_bonus', label: 'Culture Bonus', desc: 'Worked-tile culture bonus.', type: 'number' },
+      { key: 'science_bonus', label: 'Science Bonus', desc: 'Worked-tile science bonus.', type: 'number' },
+      { key: 'food_bonus', label: 'Food Bonus', desc: 'Worked-tile food bonus.', type: 'number' },
+      { key: 'gold_bonus', label: 'Gold Bonus', desc: 'Worked-tile gold bonus.', type: 'number' },
+      { key: 'shield_bonus', label: 'Shield Bonus', desc: 'Worked-tile shield bonus.', type: 'number' },
+      { key: 'happiness_bonus', label: 'Happiness Bonus', desc: 'Worked-tile happiness bonus.', type: 'number' },
+      { key: 'impassible', label: 'Impassible', desc: 'Disallow movement through tile.', type: 'bool' },
+      { key: 'impassible_to_wheeled', label: 'Impassible To Wheeled', desc: 'Disallow wheeled movement unless connected.', type: 'bool' },
+      { key: 'animation', label: 'Animation Item', desc: 'Natural wonder animation spec string.', type: 'text', multi: true }
     ],
     template: {
       name: 'New Natural Wonder',
@@ -121,22 +159,23 @@ const SECTION_SCHEMAS = {
   },
   animations: {
     marker: '#Animation',
+    entityName: 'Tile Animation',
     titleKey: 'name',
     fields: [
-      { key: 'name', label: 'Animation Name', type: 'text', required: true },
-      { key: 'ini_path', label: 'INI Path', type: 'text', required: true },
-      { key: 'type', label: 'Type', type: 'select', options: ['terrain', 'resource', 'pcx', 'coastal-wave'], required: true },
-      { key: 'resource_type', label: 'Resource Type', type: 'text' },
-      { key: 'pcx_file', label: 'PCX File', type: 'text' },
-      { key: 'pcx_index', label: 'PCX Index', type: 'number' },
-      { key: 'terrain_types', label: 'Terrain Types', type: 'text' },
-      { key: 'adjacent_to', label: 'Adjacent To', type: 'text' },
-      { key: 'direction', label: 'Direction', type: 'text' },
-      { key: 'x_offset', label: 'X Offset', type: 'number' },
-      { key: 'y_offset', label: 'Y Offset', type: 'number' },
-      { key: 'frame_time_seconds', label: 'Frame Time Seconds', type: 'text' },
-      { key: 'show_in_day_night_hours', label: 'Show In Day/Night Hours', type: 'text' },
-      { key: 'show_in_seasons', label: 'Show In Seasons', type: 'text' }
+      { key: 'name', label: 'Animation Name', desc: 'Unique animation identifier.', type: 'text', required: true },
+      { key: 'ini_path', label: 'INI Path', desc: 'Relative to Art/Animations/.', type: 'text', required: true },
+      { key: 'type', label: 'Animation Type', desc: 'Rule type controlling where this animation can appear.', type: 'select', options: ['terrain', 'resource', 'pcx', 'coastal-wave'], required: true },
+      { key: 'resource_type', label: 'Resource Type', desc: 'Required for type=resource.', type: 'text' },
+      { key: 'pcx_file', label: 'PCX File', desc: 'Required for type=pcx.', type: 'select', options: ['deltaRivers.pcx', 'floodplains.pcx', 'LMHills.pcx', 'Mountains.pcx', 'Mountains-snow.pcx', 'mtnRivers.pcx', 'Volcanos.pcx', 'Volcanos-snow.pcx', 'waterfalls.pcx', 'xhills.pcx'] },
+      { key: 'pcx_index', label: 'PCX Index', desc: 'Required for type=pcx.', type: 'number' },
+      { key: 'terrain_types', label: 'Terrain Types', desc: 'Comma list; required for type=terrain.', type: 'text' },
+      { key: 'adjacent_to', label: 'Adjacent To', desc: 'Optional terrain:direction list.', type: 'text' },
+      { key: 'direction', label: 'Direction Override', desc: 'Optional fixed facing direction.', type: 'select', options: DIRECTION_OPTIONS },
+      { key: 'x_offset', label: 'X Offset', desc: 'Horizontal pixel offset.', type: 'number' },
+      { key: 'y_offset', label: 'Y Offset', desc: 'Vertical pixel offset.', type: 'number' },
+      { key: 'frame_time_seconds', label: 'Frame Time', desc: 'Per-frame seconds.', type: 'text' },
+      { key: 'show_in_day_night_hours', label: 'Day/Night Hours', desc: 'Hour list/ranges where animation appears.', type: 'text' },
+      { key: 'show_in_seasons', label: 'Seasons', desc: 'Comma list: spring, summer, fall, winter.', type: 'text' }
     ],
     template: {
       name: 'New Animation',
@@ -161,6 +200,8 @@ function setMode(mode) {
   el.modeGlobal.classList.toggle('active', mode === 'global');
   el.modeScenario.classList.toggle('active', mode === 'scenario');
   el.scenarioPathRow.classList.toggle('hidden', mode !== 'scenario');
+  document.body.classList.toggle('mode-standard', mode === 'global');
+  document.body.classList.toggle('mode-scenario', mode === 'scenario');
 }
 
 function syncSettingsFromInputs() {
@@ -180,18 +221,149 @@ function prettySourceLabel(source) {
   return source.replace('+', ' -> ');
 }
 
+function toFriendlyKey(key) {
+  return key.split('_').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+}
+
+function createBaseMeta(row) {
+  const meta = document.createElement('div');
+  meta.className = 'field-meta';
+  const desc = BASE_FIELD_DETAILS[row.key] || '';
+  meta.textContent = desc ? `${row.key} - ${desc}` : row.key;
+  return meta;
+}
+
+function createIcon(className) {
+  const icon = document.createElement('span');
+  icon.className = `tab-icon ${className || ''}`.trim();
+  return icon;
+}
+
+function tokenizeListPreservingQuotes(text) {
+  const items = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      cur += ch;
+      continue;
+    }
+    if (!inQuotes && (ch === ',' || ch === '\n' || ch === '\r')) {
+      const t = cur.trim();
+      if (t) items.push(t);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  const tail = cur.trim();
+  if (tail) items.push(tail);
+  return items;
+}
+
+function parseStructuredEntries(value) {
+  let v = String(value || '').trim();
+  if (v.startsWith('[') && v.endsWith(']')) {
+    v = v.slice(1, -1).trim();
+  }
+  if (!v) return [];
+  return tokenizeListPreservingQuotes(v);
+}
+
+function serializeStructuredEntries(entries) {
+  const cleaned = entries.map((e) => String(e || '').trim()).filter(Boolean);
+  return cleaned.length > 0 ? `[${cleaned.join(', ')}]` : '';
+}
+
+function isStructuredBaseField(row) {
+  if (BASE_STRUCTURED_LIST_FIELDS.has(row.key)) {
+    return true;
+  }
+  const v = String(row.value || '').trim();
+  return v.startsWith('[') && v.endsWith(']');
+}
+
 function makeInputForBaseRow(row, onChange) {
+  if (isStructuredBaseField(row)) {
+    const wrap = document.createElement('div');
+    wrap.className = 'structured-list';
+
+    let entries = parseStructuredEntries(row.value);
+    if (entries.length === 0) {
+      entries = [''];
+    }
+
+    const renderEntries = () => {
+      wrap.innerHTML = '';
+      entries.forEach((entry, idx) => {
+        const line = document.createElement('div');
+        line.className = 'kv-row compact';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = 'item';
+        input.value = entry;
+        input.addEventListener('input', () => {
+          entries[idx] = input.value;
+          onChange(serializeStructuredEntries(entries));
+        });
+
+        const del = document.createElement('button');
+        del.textContent = 'Remove';
+        del.addEventListener('click', () => {
+          entries.splice(idx, 1);
+          if (entries.length === 0) entries.push('');
+          onChange(serializeStructuredEntries(entries));
+          renderEntries();
+        });
+
+        line.appendChild(input);
+        line.appendChild(del);
+        wrap.appendChild(line);
+      });
+
+      const add = document.createElement('button');
+      add.textContent = 'Add Item';
+      add.addEventListener('click', () => {
+        entries.push('');
+        onChange(serializeStructuredEntries(entries));
+        renderEntries();
+      });
+      wrap.appendChild(add);
+    };
+
+    onChange(serializeStructuredEntries(entries));
+    renderEntries();
+    return wrap;
+  }
+
   if (row.type === 'boolean') {
     const select = document.createElement('select');
     const t = document.createElement('option');
     t.value = 'true';
-    t.textContent = 'true';
+    t.textContent = 'Enabled';
     const f = document.createElement('option');
     f.value = 'false';
-    f.textContent = 'false';
+    f.textContent = 'Disabled';
     select.appendChild(t);
     select.appendChild(f);
     select.value = String(row.value).trim().toLowerCase() === 'false' ? 'false' : 'true';
+    select.addEventListener('change', () => onChange(select.value));
+    return select;
+  }
+
+  const enumOptions = BASE_ENUM_OPTIONS[row.key];
+  if (enumOptions && enumOptions.length > 0) {
+    const select = document.createElement('select');
+    enumOptions.forEach((opt) => {
+      const o = document.createElement('option');
+      o.value = opt;
+      o.textContent = opt;
+      select.appendChild(o);
+    });
+    select.value = row.value;
     select.addEventListener('change', () => onChange(select.value));
     return select;
   }
@@ -207,19 +379,20 @@ function renderBaseTab(tab) {
   const wrap = document.createElement('div');
 
   const header = document.createElement('div');
-  header.className = 'section-editor-header';
-  header.innerHTML = `<h3>${tab.title}</h3><span class="source-tag">effective: ${prettySourceLabel(tab.effectiveSource)}</span>`;
+  header.className = 'section-editor-header sticky';
+  header.appendChild(createIcon(TAB_ICONS.base));
+  header.insertAdjacentHTML('beforeend', `<h3>${tab.title}</h3><span class="source-tag">effective: ${prettySourceLabel(tab.effectiveSource)}</span>`);
   wrap.appendChild(header);
 
   const helper = document.createElement('p');
   helper.className = 'hint';
-  helper.textContent = 'These are the effective base settings for this scope. Edit values directly; saving writes only non-default overrides for this scope.';
+  helper.textContent = 'C3X core settings for this mode. Most fields are typed; plain text appears only when a setting is truly free-form.';
   wrap.appendChild(helper);
 
   if (isScenarioMode()) {
     const warning = document.createElement('p');
     warning.className = 'warning';
-    warning.textContent = 'Base config precedence in C3X is default -> scenario -> custom. Global custom keys can still override scenario keys.';
+    warning.textContent = 'C3X precedence for this tab: default -> scenario -> custom. Global custom may still override scenario values.';
     wrap.appendChild(warning);
   }
 
@@ -227,7 +400,7 @@ function renderBaseTab(tab) {
   filterRow.className = 'filter-row';
   const filterInput = document.createElement('input');
   filterInput.type = 'text';
-  filterInput.placeholder = 'Filter settings by key...';
+  filterInput.placeholder = 'Filter settings...';
   filterInput.value = state.baseFilter;
   filterInput.addEventListener('input', () => {
     state.baseFilter = filterInput.value;
@@ -248,10 +421,16 @@ function renderBaseTab(tab) {
     const r = document.createElement('div');
     r.className = 'base-row';
 
-    const key = document.createElement('div');
-    key.className = 'base-key';
-    key.textContent = row.key;
-    r.appendChild(key);
+    const keyWrap = document.createElement('div');
+    keyWrap.className = 'base-key-wrap';
+
+    const keyTitle = document.createElement('div');
+    keyTitle.className = 'base-key';
+    keyTitle.textContent = toFriendlyKey(row.key);
+    keyWrap.appendChild(keyTitle);
+    keyWrap.appendChild(createBaseMeta(row));
+
+    r.appendChild(keyWrap);
 
     const input = makeInputForBaseRow(row, (newValue) => {
       row.value = String(newValue);
@@ -290,7 +469,7 @@ function getSectionTitle(section, schema, index) {
   if (titleField && titleField.value) {
     return titleField.value;
   }
-  return `${schema.marker} ${index + 1}`;
+  return `${schema.entityName} ${index + 1}`;
 }
 
 function createFieldInput(schemaField, value, onChange) {
@@ -299,7 +478,7 @@ function createFieldInput(schemaField, value, onChange) {
     ['1', '0'].forEach((v) => {
       const o = document.createElement('option');
       o.value = v;
-      o.textContent = v === '1' ? 'Enabled (1)' : 'Disabled (0)';
+      o.textContent = v === '1' ? 'Enabled' : 'Disabled';
       select.appendChild(o);
     });
     select.value = String(value || '').trim() === '0' ? '0' : '1';
@@ -311,7 +490,7 @@ function createFieldInput(schemaField, value, onChange) {
     const select = document.createElement('select');
     const empty = document.createElement('option');
     empty.value = '';
-    empty.textContent = '(none)';
+    empty.textContent = '(not set)';
     select.appendChild(empty);
     (schemaField.options || []).forEach((opt) => {
       const o = document.createElement('option');
@@ -337,11 +516,14 @@ function renderKnownField(section, schemaField) {
   row.className = 'form-row';
 
   const label = document.createElement('label');
-  label.textContent = schemaField.label;
-  if (schemaField.required) {
-    label.textContent += ' *';
-  }
+  label.className = 'field-label';
+  label.textContent = schemaField.label + (schemaField.required ? ' *' : '');
   row.appendChild(label);
+
+  const meta = document.createElement('div');
+  meta.className = 'field-meta';
+  meta.textContent = schemaField.desc ? `${schemaField.key} - ${schemaField.desc}` : schemaField.key;
+  row.appendChild(meta);
 
   const values = getFieldValues(section, schemaField.key);
 
@@ -352,10 +534,11 @@ function renderKnownField(section, schemaField) {
     const list = values.length > 0 ? values : [''];
     list.forEach((current, idx) => {
       const line = document.createElement('div');
-      line.className = 'kv-row';
+      line.className = 'kv-row compact';
 
       const input = document.createElement('input');
       input.type = 'text';
+      input.placeholder = 'item';
       input.value = current;
       input.addEventListener('input', () => {
         const next = [...list];
@@ -364,7 +547,7 @@ function renderKnownField(section, schemaField) {
       });
 
       const del = document.createElement('button');
-      del.textContent = 'Delete';
+      del.textContent = 'Remove';
       del.addEventListener('click', () => {
         const next = [...list];
         next.splice(idx, 1);
@@ -378,7 +561,7 @@ function renderKnownField(section, schemaField) {
     });
 
     const add = document.createElement('button');
-    add.textContent = 'Add Value';
+    add.textContent = `Add ${schemaField.label}`;
     add.addEventListener('click', () => {
       setMultiFieldValues(section, schemaField.key, [...list, '']);
       renderActiveTab();
@@ -402,7 +585,7 @@ function renderAdvancedFields(section, schemaKeys) {
   wrap.className = 'advanced-wrap';
 
   const summary = document.createElement('summary');
-  summary.textContent = 'Advanced fields (rarely needed)';
+  summary.textContent = 'Advanced fields';
   wrap.appendChild(summary);
 
   const unknownFields = section.fields.filter((f) => !schemaKeys.has(f.key));
@@ -411,11 +594,11 @@ function renderAdvancedFields(section, schemaKeys) {
   list.className = 'kv-grid';
   unknownFields.forEach((field, idx) => {
     const row = document.createElement('div');
-    row.className = 'kv-row';
+    row.className = 'kv-row compact';
 
     const keyInput = document.createElement('input');
     keyInput.value = field.key || '';
-    keyInput.placeholder = 'key';
+    keyInput.placeholder = 'config key';
     keyInput.addEventListener('input', () => {
       field.key = keyInput.value;
     });
@@ -428,7 +611,7 @@ function renderAdvancedFields(section, schemaKeys) {
     });
 
     const del = document.createElement('button');
-    del.textContent = 'Delete';
+    del.textContent = 'Remove';
     del.addEventListener('click', () => {
       const allUnknown = section.fields.filter((f) => !schemaKeys.has(f.key));
       const target = allUnknown[idx];
@@ -466,75 +649,106 @@ function createSectionFromTemplate(tabKey) {
   return section;
 }
 
+function addSection(tab, tabKey) {
+  tab.model.sections.unshift(createSectionFromTemplate(tabKey));
+  state.sectionSelection[tabKey] = 0;
+  renderActiveTab();
+}
+
 function renderSectionTab(tab, tabKey) {
   const schema = SECTION_SCHEMAS[tabKey];
   const wrap = document.createElement('div');
   wrap.className = 'section-editor';
 
   const header = document.createElement('div');
-  header.className = 'section-editor-header';
-  header.innerHTML = `<h3>${tab.title}</h3><span class="source-tag">effective: ${prettySourceLabel(tab.effectiveSource)}</span>`;
+  header.className = 'section-editor-header sticky';
+  header.appendChild(createIcon(TAB_ICONS[tabKey]));
+  header.insertAdjacentHTML('beforeend', `<h3>${tab.title}</h3><span class="source-tag">effective: ${prettySourceLabel(tab.effectiveSource)}</span>`);
 
   const addSectionBtn = document.createElement('button');
-  addSectionBtn.textContent = 'Add Block';
+  addSectionBtn.textContent = `Add ${schema.entityName}`;
   addSectionBtn.className = 'add-section';
-  addSectionBtn.addEventListener('click', () => {
-    tab.model.sections.push(createSectionFromTemplate(tabKey));
-    renderActiveTab();
-  });
+  addSectionBtn.addEventListener('click', () => addSection(tab, tabKey));
 
   header.appendChild(addSectionBtn);
   wrap.appendChild(header);
 
   const helper = document.createElement('p');
   helper.className = 'hint';
-  helper.textContent = `Structured editor for ${tab.title}. This writes ${isScenarioMode() ? 'scenario.*' : 'user/custom.*'} files directly.`;
+  helper.textContent = `${tab.title} editor. Saving writes ${isScenarioMode() ? 'scenario.*' : 'user.*'} files for this tab.`;
   wrap.appendChild(helper);
 
-  const list = document.createElement('div');
-  list.className = 'section-list';
-
   const schemaKeys = new Set(schema.fields.map((f) => f.key));
+  const selectedIndex = Math.max(0, Math.min(state.sectionSelection[tabKey] || 0, Math.max(0, tab.model.sections.length - 1)));
+  state.sectionSelection[tabKey] = selectedIndex;
 
+  const layout = document.createElement('div');
+  layout.className = 'entry-layout';
+
+  const listPane = document.createElement('div');
+  listPane.className = 'entry-list-pane';
   tab.model.sections.forEach((section, sectionIndex) => {
+    const itemBtn = document.createElement('button');
+    itemBtn.className = 'entry-list-item';
+    itemBtn.classList.toggle('active', sectionIndex === selectedIndex);
+    itemBtn.type = 'button';
+    itemBtn.innerHTML = `<strong>${getSectionTitle(section, schema, sectionIndex)}</strong><span>${schema.entityName} ${sectionIndex + 1}</span>`;
+    itemBtn.addEventListener('click', () => {
+      state.sectionSelection[tabKey] = sectionIndex;
+      renderActiveTab();
+    });
+    listPane.appendChild(itemBtn);
+  });
+  layout.appendChild(listPane);
+
+  const detailPane = document.createElement('div');
+  detailPane.className = 'entry-detail-pane';
+
+  if (tab.model.sections.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'section-card';
+    empty.innerHTML = `<p class="hint">No ${schema.entityName.toLowerCase()} entries yet.</p>`;
+    const addFirst = document.createElement('button');
+    addFirst.textContent = `Add ${schema.entityName}`;
+    addFirst.addEventListener('click', () => addSection(tab, tabKey));
+    empty.appendChild(addFirst);
+    detailPane.appendChild(empty);
+  } else {
+    const section = tab.model.sections[selectedIndex];
     const card = document.createElement('div');
     card.className = 'section-card';
 
     const top = document.createElement('div');
     top.className = 'section-top';
-
-    const title = document.createElement('strong');
-    title.textContent = getSectionTitle(section, schema, sectionIndex);
+    top.innerHTML = `<strong>${getSectionTitle(section, schema, selectedIndex)}</strong>`;
 
     const removeSectionBtn = document.createElement('button');
-    removeSectionBtn.textContent = 'Remove Block';
+    removeSectionBtn.textContent = `Remove ${schema.entityName}`;
     removeSectionBtn.addEventListener('click', () => {
-      tab.model.sections.splice(sectionIndex, 1);
+      tab.model.sections.splice(selectedIndex, 1);
+      state.sectionSelection[tabKey] = Math.max(0, selectedIndex - 1);
       renderActiveTab();
     });
-
-    top.appendChild(title);
     top.appendChild(removeSectionBtn);
     card.appendChild(top);
 
     const form = document.createElement('div');
     form.className = 'form-grid';
-
     schema.fields.forEach((schemaField) => {
       form.appendChild(renderKnownField(section, schemaField));
     });
-
     card.appendChild(form);
     card.appendChild(renderAdvancedFields(section, schemaKeys));
-    list.appendChild(card);
-  });
+    detailPane.appendChild(card);
+  }
 
-  wrap.appendChild(list);
+  layout.appendChild(detailPane);
+  wrap.appendChild(layout);
 
   if (isScenarioMode()) {
     const warning = document.createElement('p');
     warning.className = 'warning';
-    warning.textContent = 'In Scenario Scope, this file type fully replaces user/default definitions in C3X.';
+    warning.textContent = 'This tab is replacement-based in Scenario mode: scenario file replaces user/default content.';
     wrap.appendChild(warning);
   }
 
@@ -547,7 +761,10 @@ function renderTabs() {
   Object.entries(state.bundle.tabs).forEach(([key, tab]) => {
     const button = document.createElement('button');
     button.className = 'tab-btn';
-    button.textContent = tab.title;
+    button.appendChild(createIcon(TAB_ICONS[key]));
+    const text = document.createElement('span');
+    text.textContent = tab.title;
+    button.appendChild(text);
     button.classList.toggle('active', state.activeTab === key);
     button.addEventListener('click', () => {
       state.activeTab = key;
@@ -582,7 +799,7 @@ async function loadBundleAndRender() {
   }
 
   if (state.settings.mode === 'scenario' && !state.settings.scenarioPath) {
-    setStatus('Set Scenario Folder in Scenario Scope.', true);
+    setStatus('Set Scenario Folder in Scenario mode.', true);
     return;
   }
 
@@ -646,6 +863,17 @@ async function wireBrowseButton(button, input) {
   });
 }
 
+async function shouldAutoLoad() {
+  const hasC3x = await window.c3xManager.pathExists(state.settings.c3xPath);
+  if (!hasC3x) {
+    return false;
+  }
+  if (state.settings.mode !== 'scenario') {
+    return true;
+  }
+  return await window.c3xManager.pathExists(state.settings.scenarioPath);
+}
+
 async function init() {
   state.settings = await window.c3xManager.getSettings();
   fillInputsFromSettings();
@@ -669,6 +897,10 @@ async function init() {
   wireBrowseButton(el.pickScenario, el.scenarioPath);
 
   setStatus('Choose paths, then load configs.');
+
+  if (await shouldAutoLoad()) {
+    await loadBundleAndRender();
+  }
 }
 
 init();

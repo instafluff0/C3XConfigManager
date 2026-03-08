@@ -7,7 +7,7 @@ const FILE_SPECS = {
     userName: 'custom.c3x_config.ini',
     scenarioName: 'scenario.c3x_config.ini',
     sectionMarker: null,
-    title: 'Base Config'
+    title: 'C3X'
   },
   districts: {
     defaultName: 'default.districts_config.txt',
@@ -237,7 +237,7 @@ function serializeSectionedConfig(model, marker) {
 function serializeBaseConfig(baseRows, defaultMap, mode) {
   const lines = [];
   lines.push('; Managed by C3X Config Manager');
-  lines.push(`; Scope: ${mode}`);
+  lines.push(`; Mode: ${mode}`);
   lines.push('');
 
   for (const row of baseRows) {

@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('c3xManager', {
   getSettings: () => ipcRenderer.invoke('manager:get-settings'),
   setSettings: (settings) => ipcRenderer.invoke('manager:set-settings', settings),
   pickDirectory: () => ipcRenderer.invoke('manager:pick-directory'),
+  pathExists: (dirPath) => ipcRenderer.invoke('manager:path-exists', dirPath),
   loadBundle: (payload) => ipcRenderer.invoke('manager:load-bundle', payload),
   saveBundle: (payload) => ipcRenderer.invoke('manager:save-bundle', payload)
 });

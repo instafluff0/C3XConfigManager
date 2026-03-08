@@ -5,6 +5,51 @@ const { loadBundle, saveBundle } = require('./src/configCore');
 
 const APP_SETTINGS_FILE = 'settings.json';
 
+function dirExists(dirPath) {
+  try {
+    return !!dirPath && fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory();
+  } catch (_err) {
+    return false;
+  }
+}
+
+function looksLikeC3xFolder(dirPath) {
+  return dirExists(dirPath) && fs.existsSync(path.join(dirPath, 'default.c3x_config.ini'));
+}
+
+function inferDefaultPaths(existing) {
+  const next = { ...existing };
+
+  if (!looksLikeC3xFolder(next.c3xPath)) {
+    const c3xCandidates = [
+      path.join(__dirname, 'C3X'),
+      path.join(path.dirname(__dirname), 'C3X'),
+      __dirname,
+      path.dirname(__dirname)
+    ];
+    const foundC3x = c3xCandidates.find((p) => looksLikeC3xFolder(p));
+    if (foundC3x) {
+      next.c3xPath = foundC3x;
+    }
+  }
+
+  if (!dirExists(next.civ3ConquestsPath)) {
+    const appParent = path.dirname(__dirname);
+    if (path.basename(appParent).toLowerCase() === 'conquests') {
+      next.civ3ConquestsPath = appParent;
+    } else if (path.basename(__dirname).toLowerCase() === 'conquests') {
+      next.civ3ConquestsPath = __dirname;
+    } else if (looksLikeC3xFolder(next.c3xPath)) {
+      const c3xParent = path.dirname(next.c3xPath);
+      if (path.basename(c3xParent).toLowerCase() === 'conquests') {
+        next.civ3ConquestsPath = c3xParent;
+      }
+    }
+  }
+
+  return next;
+}
+
 function getSettingsPath() {
   return path.join(app.getPath('userData'), APP_SETTINGS_FILE);
 }
@@ -65,7 +110,12 @@ ipcMain.handle('manager:get-settings', async () => {
     scenarioPath: '',
     mode: 'global'
   };
-  return readJsonIfExists(getSettingsPath(), defaults);
+  const saved = readJsonIfExists(getSettingsPath(), defaults);
+  const inferred = inferDefaultPaths(saved);
+  if (JSON.stringify(saved) !== JSON.stringify(inferred)) {
+    writeJson(getSettingsPath(), inferred);
+  }
+  return inferred;
 });
 
 ipcMain.handle('manager:set-settings', async (_event, settings) => {
@@ -81,6 +131,10 @@ ipcMain.handle('manager:pick-directory', async () => {
     return null;
   }
   return result.filePaths[0];
+});
+
+ipcMain.handle('manager:path-exists', async (_event, dirPath) => {
+  return dirExists(dirPath);
 });
 
 ipcMain.handle('manager:load-bundle', async (_event, payload) => {
