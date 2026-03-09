@@ -224,6 +224,9 @@ ipcMain.handle('manager:pick-file', async (_event, options) => {
   if (options && Array.isArray(options.filters) && options.filters.length > 0) {
     dialogOptions.filters = options.filters;
   }
+  if (options && typeof options.defaultPath === 'string' && options.defaultPath.trim()) {
+    dialogOptions.defaultPath = options.defaultPath.trim();
+  }
   const result = await dialog.showOpenDialog(dialogOptions);
   if (result.canceled || result.filePaths.length === 0) {
     return null;

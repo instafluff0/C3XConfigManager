@@ -119,6 +119,37 @@ public class BiqBridge {
         return out.toString();
     }
 
+    private static String canonicalFieldKey(String raw) {
+        if (raw == null) return "";
+        return raw.toLowerCase().replaceAll("[^a-z0-9]", "");
+    }
+
+    private static String aliasCanonicalFieldKey(String canonical) {
+        if (canonical == null) return "";
+        // Known typo in Civ3 English dump for this field.
+        if (canonical.equals("disapperanceprobability")) return "disappearanceprobability";
+        return canonical;
+    }
+
+    private static Method findSetterByCanonicalFieldKey(Class<?> clazz, String fieldKey) {
+        String requested = aliasCanonicalFieldKey(canonicalFieldKey(fieldKey));
+        if (requested.isEmpty()) return null;
+        Method partialMatch = null;
+        for (Method m : clazz.getMethods()) {
+            if (!m.getName().startsWith("set")) continue;
+            if (m.getParameterCount() != 1) continue;
+            String setterKey = canonicalFieldKey(toSnakeLowerFromSetterName(m.getName()));
+            if (setterKey.isEmpty()) continue;
+            if (setterKey.equals(requested)) {
+                return m;
+            }
+            if (partialMatch == null && (setterKey.contains(requested) || requested.contains(setterKey))) {
+                partialMatch = m;
+            }
+        }
+        return partialMatch;
+    }
+
     private static Set<String> writableBaseKeysForRecord(BIQSection rec) {
         Set<String> keys = new TreeSet<>();
         if (rec == null) return keys;
@@ -156,14 +187,28 @@ public class BiqBridge {
         return null;
     }
 
-    private static BIQSection findRecordByCivilopedia(List<?> records, String civilopediaKey) {
+    private static BIQSection findRecordByRef(List<?> records, String recordRef) {
         if (records == null) return null;
-        String key = civilopediaKey == null ? "" : civilopediaKey.trim().toUpperCase();
+        String key = recordRef == null ? "" : recordRef.trim();
+        String upper = key.toUpperCase();
+        if (upper.startsWith("@INDEX:")) {
+            String idxRaw = key.substring("@INDEX:".length()).trim();
+            try {
+                int idx = Integer.parseInt(idxRaw);
+                if (idx >= 0 && idx < records.size()) {
+                    Object obj = records.get(idx);
+                    if (obj instanceof BIQSection) return (BIQSection) obj;
+                }
+            } catch (Throwable ignored) {
+                // fall through to civilopedia lookup
+            }
+        }
+        String civKey = upper;
         for (Object obj : records) {
             if (!(obj instanceof BIQSection)) continue;
             BIQSection rec = (BIQSection) obj;
             String recKey = rec.getCivilopediaEntry();
-            if (recKey != null && recKey.trim().toUpperCase().equals(key)) {
+            if (recKey != null && recKey.trim().toUpperCase().equals(civKey)) {
                 return rec;
             }
         }
@@ -187,7 +232,7 @@ public class BiqBridge {
                 continue;
             }
             String sectionCode = parts[0].trim();
-            String civKey = parts[1].trim();
+            String recordRef = parts[1].trim();
             String fieldKey = parts[2].trim();
             String rawValue = new String(Base64.getDecoder().decode(parts[3].trim()), StandardCharsets.UTF_8);
             Section section;
@@ -199,10 +244,10 @@ public class BiqBridge {
                 continue;
             }
             List<?> records = io.getSection(section);
-            BIQSection rec = findRecordByCivilopedia(records, civKey);
+            BIQSection rec = findRecordByRef(records, recordRef);
             if (rec == null) {
                 skipped++;
-                warnings.append("missing record ").append(civKey).append(" in ").append(sectionCode).append("; ");
+                warnings.append("missing record ").append(recordRef).append(" in ").append(sectionCode).append("; ");
                 continue;
             }
             String setterName = toSetterName(fieldKey);
@@ -212,8 +257,11 @@ public class BiqBridge {
             }
             Method setter = findSetter(rec.getClass(), setterName);
             if (setter == null) {
+                setter = findSetterByCanonicalFieldKey(rec.getClass(), fieldKey);
+            }
+            if (setter == null) {
                 skipped++;
-                warnings.append("no setter ").append(setterName).append(" for ").append(civKey).append("; ");
+                warnings.append("no setter for field ").append(fieldKey).append(" in ").append(recordRef).append("; ");
                 continue;
             }
             Object converted = convertValue(setter.getParameterTypes()[0], rawValue);

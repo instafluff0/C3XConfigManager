@@ -37,7 +37,7 @@ const state = {
   referenceSearchCaret: {},
   referenceSearchFocusedTab: null,
   referenceNotice: null,
-  biqSectionSelection: 0,
+  biqSectionSelectionByTab: {},
   biqRecordSelection: {},
   biqMapZoom: 6,
   biqMapLayer: 'terrain',
@@ -64,11 +64,22 @@ const state = {
   navHistoryIndex: -1,
   isApplyingHistory: false,
   civilopediaEditorOpen: {},
-  civilopediaPreviewVisible: {}
+  civilopediaPreviewVisible: {},
+  referenceSectionNavCleanup: null
 };
 const richTooltip = {
   node: null,
   active: false
+};
+const artFocus = {
+  node: null,
+  canvas: null,
+  title: null,
+  meta: null,
+  zoomLabel: null,
+  preview: null,
+  slot: null,
+  zoom: 1
 };
 
 const el = {
@@ -118,7 +129,15 @@ const TAB_ICONS = {
   resources: 'icon-resource',
   improvements: 'icon-improv',
   governments: 'icon-gov',
+  gameConcepts: 'icon-c3x',
   map: 'icon-civ',
+  scenarioSettings: 'icon-gov',
+  players: 'icon-civ',
+  terrain: 'icon-natural',
+  terrainPedia: 'icon-natural',
+  workerActions: 'icon-natural',
+  world: 'icon-resource',
+  rules: 'icon-c3x',
   base: 'icon-c3x',
   districts: 'icon-district',
   wonders: 'icon-wonder',
@@ -126,7 +145,7 @@ const TAB_ICONS = {
   animations: 'icon-anim'
 };
 const TAB_GROUPS = [
-  { label: 'CIV 3', keys: ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'map'] },
+  { label: 'CIV 3', keys: ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts', 'map', 'scenarioSettings', 'players', 'terrain', 'world', 'rules', 'terrainPedia', 'workerActions'] },
   { label: 'C3X', keys: ['base', 'districts', 'wonders', 'naturalWonders', 'animations'] }
 ];
 const BIQ_TERRAIN_ATLAS_FILES = [
@@ -176,7 +195,27 @@ const BASE_FIELD_DETAILS = {
   minimum_natural_wonder_separation: 'Minimum tile distance between natural wonders.',
   draw_lines_using_gdi_plus: 'Line rendering strategy.'
 };
-const EDITABLE_TAB_KEYS = ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units'];
+const EDITABLE_TAB_KEYS = [
+  'base',
+  'districts',
+  'wonders',
+  'naturalWonders',
+  'animations',
+  'civilizations',
+  'technologies',
+  'resources',
+  'improvements',
+  'governments',
+  'units',
+  'gameConcepts',
+  'terrainPedia',
+  'workerActions',
+  'scenarioSettings',
+  'players',
+  'terrain',
+  'world',
+  'rules'
+];
 
 const SECTION_SCHEMAS = {
   districts: {
@@ -664,7 +703,7 @@ function captureViewSnapshot() {
     referenceSelection: cloneStateMap(state.referenceSelection),
     referenceFilter: cloneStateMap(state.referenceFilter),
     referenceImprovementKind: cloneStateMap(state.referenceImprovementKind),
-    biqSectionSelection: Number(state.biqSectionSelection || 0),
+    biqSectionSelectionByTab: cloneStateMap(state.biqSectionSelectionByTab),
     biqRecordSelection: cloneStateMap(state.biqRecordSelection),
     biqMapSelectedTile: Number(state.biqMapSelectedTile || -1),
     biqMapLayer: String(state.biqMapLayer || 'terrain'),
@@ -731,7 +770,7 @@ function applyViewSnapshot(snapshot) {
   state.referenceSelection = cloneStateMap(snapshot.referenceSelection);
   state.referenceFilter = cloneStateMap(snapshot.referenceFilter);
   state.referenceImprovementKind = cloneStateMap(snapshot.referenceImprovementKind);
-  state.biqSectionSelection = Number.isFinite(snapshot.biqSectionSelection) ? snapshot.biqSectionSelection : 0;
+  state.biqSectionSelectionByTab = cloneStateMap(snapshot.biqSectionSelectionByTab);
   state.biqRecordSelection = cloneStateMap(snapshot.biqRecordSelection);
   state.biqMapSelectedTile = Number.isFinite(snapshot.biqMapSelectedTile) ? snapshot.biqMapSelectedTile : -1;
   state.biqMapLayer = String(snapshot.biqMapLayer || 'terrain');
@@ -1313,7 +1352,8 @@ function renderBaseTab(tab) {
   const filterRow = document.createElement('div');
   filterRow.className = 'filter-row';
   const filterInput = document.createElement('input');
-  filterInput.type = 'text';
+  filterInput.type = 'search';
+  filterInput.classList.add('app-search-input');
   filterInput.placeholder = 'Filter settings...';
   filterInput.value = state.baseFilter;
   filterRow.appendChild(filterInput);
@@ -1774,14 +1814,98 @@ function formatReferenceList(values) {
   return values.join(', ');
 }
 
+function toSlashPath(value) {
+  return String(value || '').replace(/\\/g, '/');
+}
+
+function inferScenarioDirFromInput(inputPath) {
+  const raw = toSlashPath(inputPath).trim();
+  if (!raw) return '';
+  if (/\.biq$/i.test(raw)) {
+    const idx = raw.lastIndexOf('/');
+    return idx > 0 ? raw.slice(0, idx) : '';
+  }
+  return raw;
+}
+
+function toPediaRelativeAssetPath(absPath) {
+  const full = toSlashPath(absPath).trim();
+  if (!full) return '';
+  const civ3Root = toSlashPath(state.settings && state.settings.civ3Path || '');
+  const scenarioDir = inferScenarioDirFromInput(state.settings && state.settings.scenarioPath || '');
+  const roots = [];
+  if (scenarioDir) roots.push(scenarioDir);
+  if (civ3Root) {
+    roots.push(`${civ3Root}/Conquests`);
+    roots.push(`${civ3Root}/civ3PTW`);
+    roots.push(civ3Root);
+  }
+  for (const root of roots) {
+    const r = toSlashPath(root).replace(/\/+$/, '');
+    if (!r) continue;
+    if (full === r) return '';
+    if (full.startsWith(`${r}/`)) {
+      return full.slice(r.length + 1);
+    }
+  }
+  return full;
+}
+
+function normalizeRelativePath(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/^\.?[\\/]+/, '')
+    .replace(/\\/g, '/');
+}
+
+function getParentPath(rawPath) {
+  const p = toSlashPath(rawPath).replace(/\/+$/, '');
+  const idx = p.lastIndexOf('/');
+  if (idx <= 0) return '';
+  return p.slice(0, idx);
+}
+
+async function resolveExistingAssetPath(assetPath) {
+  const rel = normalizeRelativePath(assetPath);
+  if (!rel) return '';
+  const roots = [];
+  const scenarioDir = inferScenarioDirFromInput(state.settings && state.settings.scenarioPath || '');
+  const civ3Root = toSlashPath(state.settings && state.settings.civ3Path || '');
+  if (scenarioDir) roots.push(scenarioDir);
+  if (civ3Root) {
+    roots.push(`${civ3Root}/Conquests`);
+    roots.push(`${civ3Root}/civ3PTW`);
+    roots.push(civ3Root);
+  }
+  for (const root of roots) {
+    const abs = `${root.replace(/\/+$/, '')}/${rel}`;
+    try {
+      if (await window.c3xManager.pathExists(abs)) return abs;
+    } catch (_err) {
+      // ignore
+    }
+  }
+  return '';
+}
+
 function formatSourceInfo(meta, fallbackLabel = 'Unknown') {
   const src = meta || {};
   const source = String(src.source || fallbackLabel);
   const readPath = String(src.readPath || '').trim();
   const writePath = String(src.writePath || '').trim();
-  const readLine = readPath ? `Read: ${compactPathFromCiv3Root(readPath)}` : 'Read: (not available)';
-  const writeLine = writePath ? `Write: ${compactPathFromCiv3Root(writePath)}` : 'Write: (not editable yet)';
-  return `${source}\n${readLine}\n${writeLine}`;
+  const readCompact = readPath ? compactPathFromCiv3Root(readPath) : '';
+  const writeCompact = writePath ? compactPathFromCiv3Root(writePath) : '';
+  const lines = [`Source: ${source}`];
+  if (readCompact && writeCompact && readCompact !== writeCompact) {
+    lines.push(`File: ${readCompact}`);
+    lines.push(`Save File: ${writeCompact}`);
+  } else if (readCompact || writeCompact) {
+    lines.push(`File: ${readCompact || writeCompact}`);
+  } else {
+    lines.push('File: (not available)');
+  }
+  return lines.join('\n');
 }
 
 function ensureRichTooltipNode() {
@@ -1796,7 +1920,33 @@ function ensureRichTooltipNode() {
 
 function showRichTooltip(text, x, y) {
   const node = ensureRichTooltipNode();
-  node.textContent = text;
+  const lines = String(text || '').split('\n').map((line) => line.trim()).filter(Boolean);
+  node.innerHTML = '';
+  const rows = [];
+  lines.forEach((line) => {
+    const colon = line.indexOf(':');
+    if (colon > 0) {
+      rows.push({
+        key: line.slice(0, colon).trim(),
+        value: line.slice(colon + 1).trim()
+      });
+    } else {
+      rows.push({ key: 'Info', value: line });
+    }
+  });
+  rows.forEach((row) => {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'rich-tooltip-row';
+    const keyEl = document.createElement('span');
+    keyEl.className = 'rich-tooltip-key';
+    keyEl.textContent = `${row.key}:`;
+    const valueEl = document.createElement('span');
+    valueEl.className = 'rich-tooltip-value';
+    valueEl.textContent = row.value || '(none)';
+    rowEl.appendChild(keyEl);
+    rowEl.appendChild(valueEl);
+    node.appendChild(rowEl);
+  });
   node.classList.remove('hidden');
   const pad = 14;
   const rect = node.getBoundingClientRect();
@@ -1959,6 +2109,103 @@ const BIQ_FIELD_HIDDEN = {
   ]),
   eras: new Set(['question_mark'])
 };
+
+const BIQ_STRUCTURE_FIELD_HIDDEN = {
+  all: new Set(['byte_length', 'data_length', 'datalength', 'note', 'civilopediaentry']),
+  GAME: new Set(['playable_civ_ids']),
+  LEAD: new Set(['numberofdifferentstartunits', 'numberofstartingtechnologies']),
+  RULE: new Set([]),
+  TERR: new Set([]),
+  TFRM: new Set([]),
+  WSIZ: new Set([]),
+  WCHR: new Set([]),
+  ERAS: new Set([]),
+  DIFF: new Set([]),
+  ESPN: new Set([]),
+  CTZN: new Set([]),
+  CULT: new Set([]),
+  EXPR: new Set([]),
+  FLAV: new Set([])
+};
+
+const BIQ_SECTION_TO_REFERENCE_TAB = {
+  RACE: 'civilizations',
+  TECH: 'technologies',
+  GOOD: 'resources',
+  BLDG: 'improvements',
+  GOVT: 'governments',
+  PRTO: 'units'
+};
+
+const BIQ_SECTION_FRIENDLY_NAMES = {
+  GAME: 'Scenario Setup',
+  LEAD: 'Players',
+  TERR: 'Terrain Types',
+  TFRM: 'Worker Jobs',
+  WSIZ: 'World Sizes',
+  WCHR: 'World Characteristics',
+  ERAS: 'Eras',
+  RULE: 'Core Rules',
+  DIFF: 'Difficulty Levels',
+  ESPN: 'Espionage',
+  CTZN: 'Citizens',
+  CULT: 'Culture',
+  EXPR: 'Experience',
+  FLAV: 'AI Flavors'
+};
+
+function getFriendlyBiqSectionTitle(section) {
+  const code = String((section && section.code) || '').toUpperCase();
+  return BIQ_SECTION_FRIENDLY_NAMES[code] || String((section && section.title) || code || 'Section');
+}
+
+function makeBiqSectionIndexOptions(sectionCode, oneBased = false) {
+  const code = String(sectionCode || '').toUpperCase();
+  const biq = state.bundle && state.bundle.biq;
+  const sections = biq && Array.isArray(biq.sections) ? biq.sections : [];
+  const section = sections.find((s) => String(s.code || '').toUpperCase() === code);
+  if (!section || !Array.isArray(section.records)) return [];
+  const targetTabKey = BIQ_SECTION_TO_REFERENCE_TAB[code] || '';
+  const targetTab = targetTabKey && state.bundle && state.bundle.tabs && state.bundle.tabs[targetTabKey];
+  const targetEntries = targetTab && Array.isArray(targetTab.entries) ? targetTab.entries : [];
+  const entryByIndex = new Map();
+  targetEntries.forEach((entry, fallbackIdx) => {
+    const biqIndex = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
+    entryByIndex.set(biqIndex, entry);
+  });
+  return section.records.map((rec, idx) => ({
+    value: String(oneBased ? (idx + 1) : idx),
+    label: String(rec.name || `${code} ${idx + 1}`),
+    entry: entryByIndex.get(idx) || null
+  }));
+}
+
+function getBiqStructureRefSpec(sectionCode, baseKey) {
+  const code = String(sectionCode || '').toUpperCase();
+  const base = String(baseKey || '').toLowerCase();
+  const unitRefKeys = new Set(['advancedbarbarian', 'basicbarbarian', 'barbarianseaunit', 'battlecreatedunit', 'buildarmyunit', 'scout', 'slave', 'startunit1', 'startunit2', 'flagunit']);
+  if ((code === 'GAME' || code === 'RULE') && unitRefKeys.has(base)) return { section: 'PRTO', oneBased: false };
+  if ((code === 'GAME' || code === 'RULE') && base === 'defaultmoneyresource') return { section: 'GOOD', oneBased: false };
+  if ((code === 'GAME' || code === 'RULE') && base === 'defaultdifficultylevel') return { section: 'DIFF', oneBased: false };
+  if (code === 'GAME' && base.startsWith('playable_civ')) return { section: 'RACE', oneBased: false };
+  if (code === 'LEAD' && base === 'civ') return { section: 'RACE', oneBased: false };
+  if (code === 'LEAD' && base === 'government') return { section: 'GOVT', oneBased: false };
+  if (code === 'LEAD' && base === 'initialera') return { section: 'ERAS', oneBased: false };
+  if (code === 'TERR' && base === 'workerjob') return { section: 'TFRM', oneBased: false };
+  if (code === 'TERR' && base === 'pollutioneffect') return { section: 'TERR', oneBased: false };
+  if (code === 'CTZN' && base === 'prerequisite') return { section: 'TECH', oneBased: false };
+  return null;
+}
+
+function shouldHideBiqStructureField(sectionCode, field) {
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const canon = base.replace(/[^a-z0-9]/g, '');
+  if (!base) return true;
+  if (BIQ_STRUCTURE_FIELD_HIDDEN.all.has(base) || BIQ_STRUCTURE_FIELD_HIDDEN.all.has(canon)) return true;
+  const sectionHidden = BIQ_STRUCTURE_FIELD_HIDDEN[String(sectionCode || '').toUpperCase()];
+  if (sectionHidden && (sectionHidden.has(base) || sectionHidden.has(canon))) return true;
+  return false;
+}
 
 const REFERENCE_RULE_SCHEMAS = {
   resources: {
@@ -2195,6 +2442,7 @@ function createReferencePicker(config) {
   menu.className = 'tech-picker-menu hidden';
   const search = document.createElement('input');
   search.type = 'search';
+  search.classList.add('app-search-input');
   search.className = 'tech-picker-search';
   search.placeholder = searchPlaceholder;
   menu.appendChild(search);
@@ -2375,13 +2623,47 @@ function mapCivilopediaKeyToTabKey(civilopediaKey) {
   if (key.startsWith('BLDG_')) return 'improvements';
   if (key.startsWith('GOVT_')) return 'governments';
   if (key.startsWith('PRTO_')) return 'units';
+  if (key.startsWith('GCON_')) return 'gameConcepts';
+  if (key.startsWith('TERR_') || key.startsWith('TFRM_')) return 'terrain';
   return null;
+}
+
+function findTerrainRecordSelectionByCivilopediaKey(civilopediaKey) {
+  const key = String(civilopediaKey || '').trim().toUpperCase();
+  if (!key) return null;
+  const terrainTab = state.bundle && state.bundle.tabs && state.bundle.tabs.terrain;
+  if (!terrainTab || !Array.isArray(terrainTab.sections)) return null;
+  const targetSectionCode = key.startsWith('TFRM_') ? 'TFRM' : (key.startsWith('TERR_') ? 'TERR' : '');
+  if (!targetSectionCode) return null;
+  const sectionIndex = terrainTab.sections.findIndex((section) => String(section && section.code || '').toUpperCase() === targetSectionCode);
+  if (sectionIndex < 0) return null;
+  const section = terrainTab.sections[sectionIndex];
+  const records = Array.isArray(section && section.records) ? section.records : [];
+  const recordIndex = records.findIndex((record) => {
+    const fields = Array.isArray(record && record.fields) ? record.fields : [];
+    const civField = fields.find((f) => String((f && (f.baseKey || f.key)) || '').toLowerCase() === 'civilopediaentry');
+    const value = String(civField && civField.value || '').trim().toUpperCase();
+    return value === key;
+  });
+  if (recordIndex < 0) return null;
+  return { section, sectionIndex, recordIndex };
 }
 
 function navigateToCivilopediaKey(civilopediaKey) {
   if (!state.bundle || !state.bundle.tabs) return false;
   const tabKey = mapCivilopediaKeyToTabKey(civilopediaKey);
-  if (!tabKey || !state.bundle.tabs[tabKey] || !Array.isArray(state.bundle.tabs[tabKey].entries)) return false;
+  if (!tabKey || !state.bundle.tabs[tabKey]) return false;
+  if (tabKey === 'terrain') {
+    const hit = findTerrainRecordSelectionByCivilopediaKey(civilopediaKey);
+    if (!hit) return false;
+    navigateWithHistory(() => {
+      state.activeTab = 'terrain';
+      state.biqSectionSelectionByTab.terrain = hit.sectionIndex;
+      state.biqRecordSelection[hit.section.id] = hit.recordIndex;
+    }, { preserveTabScroll: false });
+    return true;
+  }
+  if (!Array.isArray(state.bundle.tabs[tabKey].entries)) return false;
   const target = String(civilopediaKey || '').toUpperCase();
   const entries = state.bundle.tabs[tabKey].entries;
   const idx = entries.findIndex((entry) => String(entry.civilopediaKey || '').toUpperCase() === target);
@@ -2511,6 +2793,7 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   linkPanel.className = 'civilopedia-link-panel hidden';
   const linkSearch = document.createElement('input');
   linkSearch.type = 'search';
+  linkSearch.classList.add('app-search-input');
   linkSearch.placeholder = 'Search Civopedia key or name...';
   linkSearch.className = 'civilopedia-link-search';
   linkPanel.appendChild(linkSearch);
@@ -2532,7 +2815,7 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   block.appendChild(editor);
 
   const tokenOptions = [];
-  const tabs = ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units'];
+  const tabs = ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts'];
   tabs.forEach((tabKey) => {
     const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
     if (!tab || !Array.isArray(tab.entries)) return;
@@ -2624,6 +2907,475 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   return block;
 }
 
+function getPreviewRequestForArtSlot(slot) {
+  if (!slot || !slot.path) return null;
+  return {
+    kind: 'civilopediaIcon',
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths(),
+    assetPath: slot.path
+  };
+}
+
+function loadArtSlotPreview(slot, holder, size = 86) {
+  holder.innerHTML = '';
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  canvas.className = 'entry-thumb-canvas';
+  holder.appendChild(canvas);
+  if (!slot || !slot.path) return;
+  const request = getPreviewRequestForArtSlot(slot);
+  if (!request) return;
+  window.c3xManager.getPreview(request)
+    .then((res) => {
+      if (!res || !res.ok || !holder.isConnected) return;
+      const w = Math.max(1, Number(res.width) || size);
+      const h = Math.max(1, Number(res.height) || size);
+      canvas.width = w;
+      canvas.height = h;
+      drawPreviewFrameToCanvas(res, canvas);
+    })
+    .catch(() => {});
+}
+
+function getPreviewRgba(preview) {
+  if (!preview) return null;
+  if (preview.rgbaBase64) return fromBase64ToUint8(preview.rgbaBase64);
+  if (Array.isArray(preview.framesBase64) && preview.framesBase64[0]) return fromBase64ToUint8(preview.framesBase64[0]);
+  return null;
+}
+
+function ensureArtFocusNode() {
+  if (artFocus.node && artFocus.node.isConnected) return artFocus.node;
+  const overlay = document.createElement('div');
+  overlay.className = 'art-focus-overlay hidden';
+  overlay.innerHTML = `
+    <div class="art-focus-panel">
+      <div class="art-focus-header">
+        <div class="art-focus-header-text">
+          <strong id="art-focus-title">Art Preview</strong>
+          <span id="art-focus-meta" class="hint"></span>
+        </div>
+        <div class="art-focus-controls">
+          <button type="button" class="ghost" data-act="zoom-out">-</button>
+          <button type="button" class="ghost" data-act="zoom-reset">100%</button>
+          <button type="button" class="ghost" data-act="zoom-in">+</button>
+          <button type="button" class="ghost" data-act="close">Close</button>
+        </div>
+      </div>
+      <div class="art-focus-canvas-wrap">
+        <canvas id="art-focus-canvas"></canvas>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  artFocus.node = overlay;
+  const panel = overlay.querySelector('.art-focus-panel');
+  artFocus.canvas = overlay.querySelector('#art-focus-canvas');
+  artFocus.title = overlay.querySelector('#art-focus-title');
+  artFocus.meta = overlay.querySelector('#art-focus-meta');
+  artFocus.zoomLabel = overlay.querySelector('[data-act="zoom-reset"]');
+  const closeOverlay = () => overlay.classList.add('hidden');
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) {
+      closeOverlay();
+    }
+  });
+  if (panel) {
+    panel.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+    });
+  }
+  const closeBtn = overlay.querySelector('[data-act="close"]');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeOverlay();
+    });
+  }
+  overlay.querySelector('[data-act="zoom-in"]').addEventListener('click', () => setArtFocusZoom(artFocus.zoom * 1.2));
+  overlay.querySelector('[data-act="zoom-out"]').addEventListener('click', () => setArtFocusZoom(artFocus.zoom / 1.2));
+  overlay.querySelector('[data-act="zoom-reset"]').addEventListener('click', () => setArtFocusZoom(1));
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && artFocus.node && !artFocus.node.classList.contains('hidden')) {
+      closeOverlay();
+    }
+  });
+  return overlay;
+}
+
+function renderArtFocusCanvas() {
+  if (!artFocus.preview || !artFocus.canvas) return;
+  const rgba = getPreviewRgba(artFocus.preview);
+  if (!rgba) return;
+  const width = Number(artFocus.preview.width) || 1;
+  const height = Number(artFocus.preview.height) || 1;
+  const canvas = artFocus.canvas;
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
+  canvas.style.width = `${Math.max(1, Math.round(width * artFocus.zoom))}px`;
+  canvas.style.height = `${Math.max(1, Math.round(height * artFocus.zoom))}px`;
+  if (artFocus.zoomLabel) {
+    artFocus.zoomLabel.textContent = `${Math.round(artFocus.zoom * 100)}%`;
+  }
+}
+
+function setArtFocusZoom(nextZoom) {
+  artFocus.zoom = Math.max(0.25, Math.min(8, Number(nextZoom) || 1));
+  renderArtFocusCanvas();
+}
+
+function openArtFocusPreview(slot) {
+  if (!slot || !slot.path) return;
+  const overlay = ensureArtFocusNode();
+  if (artFocus.title) artFocus.title.textContent = slot.label || 'Art Preview';
+  if (artFocus.meta) artFocus.meta.textContent = slot.path;
+  overlay.classList.remove('hidden');
+  const request = getPreviewRequestForArtSlot(slot);
+  if (!request) return;
+  window.c3xManager.getPreview(request)
+    .then((res) => {
+      if (!res || !res.ok) return;
+      artFocus.preview = res;
+      artFocus.slot = slot;
+      artFocus.zoom = 1;
+      renderArtFocusCanvas();
+    })
+    .catch(() => {});
+}
+
+function buildReferenceArtSlots(tabKey, entry) {
+  const slots = [];
+  const supportsIconArt = new Set(['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units']);
+  if (!supportsIconArt.has(tabKey)) {
+    return slots;
+  }
+  const icons = Array.isArray(entry && entry.iconPaths) ? entry.iconPaths : [];
+  const iconCount = icons.length > 0 ? Math.max(2, icons.length) : 0;
+  for (let i = 0; i < iconCount; i += 1) {
+    const label = i === 0 ? 'Civilopedia Large' : i === 1 ? 'Civilopedia Small' : `Icon ${i + 1}`;
+    slots.push({ group: 'iconPaths', index: i, label, path: String(icons[i] || '') });
+  }
+  if (tabKey === 'civilizations') {
+    const race = Array.isArray(entry && entry.racePaths) ? entry.racePaths : [];
+    const raceCount = Math.max(2, race.length);
+    for (let i = 0; i < raceCount; i += 1) {
+      const label = i === 0 ? 'Advisor Portrait' : i === 1 ? 'Victory Portrait' : `Race Art ${i + 1}`;
+      slots.push({ group: 'racePaths', index: i, label, path: String(race[i] || '') });
+    }
+  }
+  return slots;
+}
+
+function setReferenceArtSlotPath(entry, slot, nextPathRaw) {
+  if (!entry || !slot) return;
+  const nextPath = normalizeRelativePath(toPediaRelativeAssetPath(nextPathRaw || ''));
+  const key = slot.group === 'racePaths' ? 'racePaths' : 'iconPaths';
+  const arr = Array.isArray(entry[key]) ? [...entry[key]] : [];
+  arr[slot.index] = nextPath;
+  while (arr.length > 0 && !String(arr[arr.length - 1] || '').trim()) arr.pop();
+  entry[key] = arr;
+}
+
+function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged }) {
+  const card = document.createElement('div');
+  card.className = 'art-slot-card';
+  if (!editable) card.classList.add('read-only');
+  const title = document.createElement('div');
+  title.className = 'art-slot-title';
+  title.textContent = slot.label;
+  card.appendChild(title);
+  const visual = document.createElement('div');
+  visual.className = 'art-slot-visual';
+  card.appendChild(visual);
+  loadArtSlotPreview(slot, visual, 128);
+  const meta = document.createElement('div');
+  meta.className = 'art-slot-meta';
+  meta.textContent = slot.path ? slot.path : 'Click or drop PCX to set';
+  card.appendChild(meta);
+  const actions = document.createElement('div');
+  actions.className = 'art-slot-actions';
+  const viewBtn = document.createElement('button');
+  viewBtn.type = 'button';
+  viewBtn.className = 'ghost';
+  viewBtn.textContent = 'View';
+  viewBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    openArtFocusPreview(slot);
+  });
+  actions.appendChild(viewBtn);
+  const replaceBtn = document.createElement('button');
+  replaceBtn.type = 'button';
+  replaceBtn.className = 'ghost';
+  replaceBtn.textContent = 'Replace';
+  actions.appendChild(replaceBtn);
+  card.appendChild(actions);
+  attachRichTooltip(card, `Source: PediaIcons\nFile: ${slot.path || '(not set)'}\nSlot: ${slot.label}`);
+
+  const setPathAndRefresh = (absolutePathOrRelative) => {
+    rememberUndoSnapshot();
+    setReferenceArtSlotPath(entry, slot, absolutePathOrRelative);
+    setDirty(true);
+    if (onChanged) onChanged();
+  };
+
+  if (editable) {
+    replaceBtn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const resolved = await resolveExistingAssetPath(slot.path);
+      const fallbackDir = resolved ? getParentPath(resolved) : '';
+      const filePath = await window.c3xManager.pickFile({
+        filters: [{ name: 'PCX Images', extensions: ['pcx', 'png', 'bmp'] }],
+        defaultPath: resolved || fallbackDir || undefined
+      });
+      if (!filePath) return;
+      setPathAndRefresh(filePath);
+    });
+    card.addEventListener('click', () => {
+      openArtFocusPreview(slot);
+    });
+    card.addEventListener('dragover', (ev) => {
+      ev.preventDefault();
+      card.classList.add('drag-over');
+    });
+    card.addEventListener('dragleave', () => {
+      card.classList.remove('drag-over');
+    });
+    card.addEventListener('drop', (ev) => {
+      ev.preventDefault();
+      card.classList.remove('drag-over');
+      const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+      const droppedPath = file && file.path ? String(file.path) : '';
+      if (!droppedPath) return;
+      setPathAndRefresh(droppedPath);
+    });
+  } else {
+    replaceBtn.disabled = true;
+    card.addEventListener('click', () => {
+      openArtFocusPreview(slot);
+    });
+  }
+  return card;
+}
+
+function slugifySectionId(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'section';
+}
+
+function buildReferenceSectionNav({ tabKey, textCol, navCol }) {
+  if (!textCol || !navCol) return;
+  const sections = [];
+  const usedIds = new Set();
+  const makeId = (base) => {
+    let id = `${tabKey}-${slugifySectionId(base)}`;
+    let i = 2;
+    while (usedIds.has(id) || document.getElementById(id)) {
+      id = `${tabKey}-${slugifySectionId(base)}-${i}`;
+      i += 1;
+    }
+    usedIds.add(id);
+    return id;
+  };
+
+  const topCards = Array.from(textCol.querySelectorAll(':scope > .source-section'));
+  topCards.forEach((card) => {
+    const heading = card.querySelector('.section-top strong');
+    const title = String(heading && heading.textContent || '').trim();
+    if (!title) return;
+    const id = makeId(title);
+    card.id = id;
+    sections.push({ id, label: title, level: 0 });
+    if (title.toLowerCase().startsWith('rules')) {
+      const groupCards = Array.from(card.querySelectorAll('.rule-group-card'));
+      groupCards.forEach((groupCard) => {
+        const groupTitle = String((groupCard.querySelector('.rule-group-title') || {}).textContent || '').trim();
+        if (!groupTitle) return;
+        const groupId = makeId(`${title}-${groupTitle}`);
+        groupCard.id = groupId;
+        sections.push({ id: groupId, label: groupTitle, level: 1 });
+        const rows = Array.from(groupCard.querySelectorAll('.rule-row'));
+        rows.forEach((row) => {
+          const label = String((row.querySelector('label') || {}).textContent || '').trim();
+          if (!label) return;
+          const fieldId = makeId(`${groupTitle}-${label}`);
+          row.id = fieldId;
+          sections.push({ id: fieldId, label, level: 2 });
+        });
+      });
+    }
+  });
+
+  if (sections.length === 0) return;
+
+  const nav = document.createElement('nav');
+  nav.className = 'reference-section-nav';
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.classList.add('app-search-input');
+  search.className = 'reference-section-nav-search';
+  search.placeholder = 'Search sections or fields...';
+  nav.appendChild(search);
+
+  const list = document.createElement('div');
+  list.className = 'reference-section-nav-list';
+  const btnById = new Map();
+  sections.forEach((sec) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `reference-section-nav-item level-${sec.level}`;
+    btn.textContent = sec.label;
+    btn.dataset.targetId = sec.id;
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(sec.id);
+      if (!target) return;
+      setActive(sec.id);
+      const scrollTarget = el.tabContent;
+      const rootRect = scrollTarget.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const topOffset = 92;
+      const nextTop = scrollTarget.scrollTop + (targetRect.top - rootRect.top) - topOffset;
+      const clampedTop = Math.max(0, nextTop);
+      scrollTarget.scrollTo({ top: clampedTop, behavior: 'smooth' });
+      let ticks = 0;
+      let stableTicks = 0;
+      let lastTop = scrollTarget.scrollTop;
+      const animateOnArrival = () => {
+        target.classList.remove('nav-jump-highlight');
+        // Force reflow so repeated clicks retrigger the animation.
+        void target.offsetWidth;
+        target.classList.add('nav-jump-highlight');
+        window.setTimeout(() => {
+          target.classList.remove('nav-jump-highlight');
+        }, 1200);
+      };
+      const waitForScrollSettle = () => {
+        ticks += 1;
+        const curTop = scrollTarget.scrollTop;
+        const nearTarget = Math.abs(curTop - clampedTop) <= 2;
+        if (Math.abs(curTop - lastTop) <= 0.5) stableTicks += 1;
+        else stableTicks = 0;
+        lastTop = curTop;
+        if (nearTarget || stableTicks >= 4 || ticks >= 120) {
+          animateOnArrival();
+          return;
+        }
+        window.requestAnimationFrame(waitForScrollSettle);
+      };
+      window.requestAnimationFrame(waitForScrollSettle);
+    });
+    list.appendChild(btn);
+    btnById.set(sec.id, btn);
+  });
+  nav.appendChild(list);
+  navCol.appendChild(nav);
+  const applySearchFilter = () => {
+    const needle = String(search.value || '').trim().toLowerCase();
+    let visibleCount = 0;
+    btnById.forEach((btn) => {
+      const text = String(btn.textContent || '').toLowerCase();
+      const show = !needle || text.includes(needle);
+      btn.classList.toggle('hidden', !show);
+      if (show) visibleCount += 1;
+    });
+    list.classList.toggle('empty', visibleCount === 0);
+  };
+  search.addEventListener('input', applySearchFilter);
+  applySearchFilter();
+
+  const setActive = (id) => {
+    btnById.forEach((btn, key) => {
+      btn.classList.toggle('active', key === id);
+    });
+  };
+  let navSelectionLocked = false;
+  const findActiveId = () => {
+    const rootRect = el.tabContent.getBoundingClientRect();
+    const anchor = rootRect.top + 152;
+    let best = sections[0] && sections[0].id;
+    let containingId = '';
+    let containingTop = -Infinity;
+    let aboveId = best;
+    let aboveTop = -Infinity;
+    sections.forEach((sec) => {
+      const node = document.getElementById(sec.id);
+      if (!node) return;
+      const rect = node.getBoundingClientRect();
+      const top = rect.top;
+      const bottom = rect.bottom;
+      if (top <= anchor && bottom >= anchor && top > containingTop) {
+        containingTop = top;
+        containingId = sec.id;
+      }
+      if (top <= anchor && top > aboveTop) {
+        aboveTop = top;
+        aboveId = sec.id;
+      }
+    });
+    if (containingId) return containingId;
+    if (aboveId) return aboveId;
+    return best;
+  };
+
+  const syncActive = () => {
+    if (navSelectionLocked) return;
+    const activeId = findActiveId();
+    if (activeId) setActive(activeId);
+  };
+  syncActive();
+
+  if (state.referenceSectionNavCleanup) {
+    try { state.referenceSectionNavCleanup(); } catch (_err) {}
+  }
+  const scrollTarget = el.tabContent;
+  const onScroll = () => syncActive();
+  const unlockNavSelection = () => {
+    if (!navSelectionLocked) return;
+    navSelectionLocked = false;
+    syncActive();
+  };
+  const onWheel = () => unlockNavSelection();
+  const onTouchMove = () => unlockNavSelection();
+  const onPointerDown = () => unlockNavSelection();
+  const onKeyDown = (ev) => {
+    const k = String(ev && ev.key || '');
+    if ([
+      'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+      'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar'
+    ].includes(k)) {
+      unlockNavSelection();
+    }
+  };
+  sections.forEach((sec) => {
+    const btn = btnById.get(sec.id);
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      navSelectionLocked = true;
+      setActive(sec.id);
+    });
+  });
+  scrollTarget.addEventListener('scroll', onScroll, { passive: true });
+  scrollTarget.addEventListener('wheel', onWheel, { passive: true });
+  scrollTarget.addEventListener('touchmove', onTouchMove, { passive: true });
+  scrollTarget.addEventListener('pointerdown', onPointerDown, { passive: true });
+  document.addEventListener('keydown', onKeyDown);
+  state.referenceSectionNavCleanup = () => {
+    scrollTarget.removeEventListener('scroll', onScroll);
+    scrollTarget.removeEventListener('wheel', onWheel);
+    scrollTarget.removeEventListener('touchmove', onTouchMove);
+    scrollTarget.removeEventListener('pointerdown', onPointerDown);
+    document.removeEventListener('keydown', onKeyDown);
+  };
+}
+
 function renderReferenceTab(tab, tabKey) {
   const wrap = document.createElement('div');
   wrap.className = 'section-editor';
@@ -2654,7 +3406,8 @@ function renderReferenceTab(tab, tabKey) {
   const controls = document.createElement('div');
   controls.className = 'reference-filter-row';
   const search = document.createElement('input');
-  search.type = 'text';
+  search.type = 'search';
+  search.classList.add('app-search-input');
   search.placeholder = `Search ${tab.title}...`;
   search.value = state.referenceFilter[tabKey] || '';
   controls.appendChild(search);
@@ -2782,23 +3535,18 @@ function renderReferenceTab(tab, tabKey) {
     detailLayout.className = 'reference-detail-layout';
     const textCol = document.createElement('div');
     textCol.className = 'reference-text-col';
-    const artCol = document.createElement('div');
-    artCol.className = 'reference-art-col';
+    const navCol = document.createElement('div');
+    navCol.className = 'reference-nav-col';
     card.appendChild(detailLayout);
     detailLayout.appendChild(textCol);
-    detailLayout.appendChild(artCol);
-
-    const previewWrap = document.createElement('div');
-    previewWrap.className = 'preview-wrap compact';
-    artCol.appendChild(previewWrap);
-    loadPreviewsForReferenceEntry(tabKey, entry, previewWrap);
+    detailLayout.appendChild(navCol);
 
     const identityMeta = document.createElement('div');
     identityMeta.className = 'section-card source-section';
     const deferredInfoBlocks = [];
     const identityTitle = document.createElement('div');
     identityTitle.className = 'section-top';
-    identityTitle.innerHTML = '<strong>Identity</strong>';
+    identityTitle.innerHTML = '<strong>Identity & Art</strong>';
     identityMeta.appendChild(identityTitle);
     const identityGrid = document.createElement('div');
     identityGrid.className = 'kv-grid';
@@ -2811,9 +3559,12 @@ function renderReferenceTab(tab, tabKey) {
     depsLine.className = 'field-meta';
     const techCtx = buildIdentityTechContext(tabKey, entry);
     const identityValues = formatIdentityTechValues(techCtx);
-    depsLine.innerHTML = `<strong>${techCtx.label}:</strong>${referenceEditable && techCtx.fields.length > 0 ? '' : ` ${formatReferenceList(identityValues)}`}`;
-    attachRichTooltip(depsLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
-    identityGrid.appendChild(depsLine);
+    const hasIdentityTechInfo = techCtx.fields.length > 0 || identityValues.length > 0;
+    if (hasIdentityTechInfo) {
+      depsLine.innerHTML = `<strong>${techCtx.label}:</strong>${referenceEditable && techCtx.fields.length > 0 ? '' : ` ${formatReferenceList(identityValues)}`}`;
+      attachRichTooltip(depsLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
+      identityGrid.appendChild(depsLine);
+    }
     if (referenceEditable && techCtx.editable && techCtx.fields.length > 0) {
       const techEditRow = document.createElement('div');
       techEditRow.className = 'rule-control';
@@ -2830,42 +3581,50 @@ function renderReferenceTab(tab, tabKey) {
       identityGrid.appendChild(techEditRow);
     }
     identityMeta.appendChild(identityGrid);
-    textCol.appendChild(identityMeta);
-
-    const artMeta = document.createElement('div');
-    artMeta.className = 'section-card source-section';
-    const artTitle = document.createElement('div');
-    artTitle.className = 'section-top';
-    artTitle.innerHTML = '<strong>Art & Icons</strong>';
-    attachRichTooltip(artTitle, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.iconPaths, 'PediaIcons'));
-    artMeta.appendChild(artTitle);
     const artGrid = document.createElement('div');
     artGrid.className = 'kv-grid';
-    const animationLine = document.createElement('div');
-    animationLine.className = 'field-meta';
-    animationLine.innerHTML = `<strong>Animation:</strong> ${entry.animationName || '(none)'}`;
-    attachRichTooltip(animationLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.animationName, 'PediaIcons'));
-    artGrid.appendChild(animationLine);
-    const iconLine = document.createElement('div');
-    iconLine.className = 'field-meta';
-    iconLine.innerHTML = `<strong>Icon Paths:</strong> ${formatReferenceList(entry.iconPaths)}`;
-    attachRichTooltip(iconLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.iconPaths, 'PediaIcons'));
-    artGrid.appendChild(iconLine);
-    if (tabKey === 'civilizations') {
-      const civMeta = document.createElement('div');
-      civMeta.className = 'field-meta';
-      civMeta.innerHTML = `<strong>Race Paths:</strong> ${formatReferenceList(entry.racePaths)}`;
-      artGrid.appendChild(civMeta);
+    const artSlots = buildReferenceArtSlots(tabKey, entry);
+    if (artSlots.length > 0) {
+      const artHint = document.createElement('p');
+      artHint.className = 'hint';
+      artHint.textContent = referenceEditable
+        ? 'Click artwork to replace it, or drag and drop a PCX directly onto a tile.'
+        : 'Preview artwork used by this entry.';
+      artGrid.appendChild(artHint);
     }
-    artMeta.appendChild(artGrid);
-    deferredInfoBlocks.push(artMeta);
+    const artSlotsWrap = document.createElement('div');
+    artSlotsWrap.className = 'art-slot-grid';
+    artSlots.forEach((slot) => {
+      const cardSlot = makeArtSlotCard({
+        tabKey,
+        entry,
+        slot,
+        editable: referenceEditable,
+        onChanged: () => renderActiveTab({ preserveTabScroll: true })
+      });
+      artSlotsWrap.appendChild(cardSlot);
+    });
+    if (artSlots.length > 0) {
+      artGrid.appendChild(artSlotsWrap);
+    }
+    if (tabKey === 'units') {
+      const animationLine = document.createElement('div');
+      animationLine.className = 'field-meta';
+      animationLine.innerHTML = `<strong>Animation:</strong> ${entry.animationName || '(none)'}`;
+      attachRichTooltip(animationLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.animationName, 'PediaIcons'));
+      artGrid.appendChild(animationLine);
+    }
+    if (artSlots.length > 0 || tabKey === 'units') {
+      identityMeta.appendChild(artGrid);
+    }
+    textCol.appendChild(identityMeta);
 
     if (Array.isArray(entry.biqFields) && entry.biqFields.length > 0) {
       const rulesMeta = document.createElement('div');
       rulesMeta.className = 'section-card source-section';
       const rulesTitle = document.createElement('div');
       rulesTitle.className = 'section-top';
-      rulesTitle.innerHTML = `<strong>Rules (BIQ)</strong><span class="hint">From BIQ section: ${entry.biqSectionCode || '(unknown)'}</span>`;
+      rulesTitle.innerHTML = `<strong>Rules</strong><span class="hint">From BIQ section: ${entry.biqSectionCode || '(unknown)'}</span>`;
       attachRichTooltip(rulesTitle, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
       rulesMeta.appendChild(rulesTitle);
       const rulesGrid = document.createElement('div');
@@ -3053,6 +3812,7 @@ function renderReferenceTab(tab, tabKey) {
       textCol.appendChild(textBlock);
     }
     deferredInfoBlocks.forEach((block) => textCol.appendChild(block));
+    buildReferenceSectionNav({ tabKey, textCol, navCol });
 
     detailPane.appendChild(card);
   }
@@ -3075,22 +3835,52 @@ function renderReferenceTab(tab, tabKey) {
   return wrap;
 }
 
+function getBiqRecordFieldValueByBaseKey(record, baseKey) {
+  const target = String(baseKey || '').toLowerCase();
+  if (!record || !Array.isArray(record.fields) || !target) return '';
+  const hit = record.fields.find((field) => String((field && (field.baseKey || field.key)) || '').toLowerCase() === target);
+  return String(hit && hit.value || '').trim();
+}
+
+function normalizeTerrainCivilopediaKey(sectionCode, record) {
+  const code = String(sectionCode || '').toUpperCase();
+  const prefix = code === 'TFRM' ? 'TFRM_' : (code === 'TERR' ? 'TERR_' : '');
+  if (!prefix) return '';
+  const raw = getBiqRecordFieldValueByBaseKey(record, 'civilopediaentry').toUpperCase();
+  if (raw && raw.startsWith(prefix)) return raw;
+  if (raw) {
+    const normalizedRaw = raw.replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '');
+    if (normalizedRaw) return normalizedRaw.startsWith(prefix) ? normalizedRaw : `${prefix}${normalizedRaw}`;
+  }
+  const fallback = String(record && record.name || '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Za-z0-9_]/g, '')
+    .toUpperCase();
+  return fallback ? `${prefix}${fallback}` : '';
+}
+
+function getTerrainCivilopediaEntryForRecord(tab, sectionCode, record) {
+  const terrainMeta = tab && tab.civilopedia;
+  if (!terrainMeta) return null;
+  const targetKey = normalizeTerrainCivilopediaKey(sectionCode, record);
+  if (!targetKey) return null;
+  const group = String(sectionCode || '').toUpperCase() === 'TFRM'
+    ? (terrainMeta.workerActions && terrainMeta.workerActions.entries)
+    : (terrainMeta.terrain && terrainMeta.terrain.entries);
+  const entries = Array.isArray(group) ? group : [];
+  return entries.find((entry) => String(entry && entry.civilopediaKey || '').toUpperCase() === targetKey) || null;
+}
+
 function renderBiqTab(tab) {
   const wrap = document.createElement('div');
   wrap.className = 'section-editor';
 
   const header = document.createElement('div');
   header.className = 'section-editor-header sticky';
-  header.appendChild(createIcon(TAB_ICONS.map));
-  header.insertAdjacentHTML('beforeend', `<h3>${tab.title || 'BIQ'}</h3><span class="source-tag">read-only</span>`);
+  header.appendChild(createIcon(TAB_ICONS[state.activeTab] || TAB_ICONS.map));
+  header.insertAdjacentHTML('beforeend', `<h3>${tab.title || 'BIQ'}</h3><span class="source-tag">${tab.readOnly ? 'read-only' : 'editable (scenario)'}</span>`);
   wrap.appendChild(header);
-
-  const helper = document.createElement('p');
-  helper.className = 'hint';
-  helper.textContent = tab.sourcePath
-    ? `Source: ${tab.sourcePath}`
-    : 'No BIQ source selected.';
-  wrap.appendChild(helper);
 
   if (tab.bridgeError) {
     const warn = document.createElement('p');
@@ -3116,25 +3906,32 @@ function renderBiqTab(tab) {
     return wrap;
   }
 
-  state.biqSectionSelection = Math.max(0, Math.min(state.biqSectionSelection || 0, sections.length - 1));
-  const selected = sections[state.biqSectionSelection];
+  const selectionKey = String((tab && tab.key) || state.activeTab || 'biq');
+  const currentIndex = Number(state.biqSectionSelectionByTab[selectionKey] || 0);
+  const selectedSectionIndex = Math.max(0, Math.min(currentIndex, sections.length - 1));
+  state.biqSectionSelectionByTab[selectionKey] = selectedSectionIndex;
+  const selected = sections[selectedSectionIndex];
 
-  const subtabRow = document.createElement('div');
-  subtabRow.className = 'biq-subtabs';
-  sections.forEach((section, idx) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'biq-subtab-btn';
-    btn.classList.toggle('active', idx === state.biqSectionSelection);
-    btn.textContent = `${section.code} (${section.count})`;
-    btn.addEventListener('click', () => {
-      navigateWithHistory(() => {
-        state.biqSectionSelection = idx;
-      }, { preserveTabScroll: true });
+  if (sections.length > 1) {
+    const subtabRow = document.createElement('div');
+    subtabRow.className = 'biq-subtabs';
+    sections.forEach((section, idx) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'biq-subtab-btn';
+      btn.classList.toggle('active', idx === selectedSectionIndex);
+      btn.textContent = getFriendlyBiqSectionTitle(section);
+      attachRichTooltip(btn, `Section: ${getFriendlyBiqSectionTitle(section)}\nCode: ${section.code}`);
+      btn.addEventListener('click', () => {
+        navigateWithHistory(() => {
+          state.tabContentScrollTop = el.tabContent.scrollTop;
+          state.biqSectionSelectionByTab[selectionKey] = idx;
+        }, { preserveTabScroll: true });
+      });
+      subtabRow.appendChild(btn);
     });
-    subtabRow.appendChild(btn);
-  });
-  wrap.appendChild(subtabRow);
+    wrap.appendChild(subtabRow);
+  }
 
   const records = Array.isArray(selected.records) ? selected.records : [];
 
@@ -3149,12 +3946,12 @@ function renderBiqTab(tab) {
   );
   state.biqRecordSelection[selected.id] = selectedRecordIndex;
 
-  const title = document.createElement('p');
-  title.className = 'hint';
-  title.textContent = selected.recordsTruncated
-    ? `${selected.title} (${selected.code}) - showing first ${records.length} of ${selected.count} records`
-    : `${selected.title} (${selected.code}) - ${records.length} record(s)`;
-  wrap.appendChild(title);
+  if (selected.recordsTruncated) {
+    const title = document.createElement('p');
+    title.className = 'hint';
+    title.textContent = `Showing first ${records.length} records for performance.`;
+    wrap.appendChild(title);
+  }
 
   const layout = document.createElement('div');
   layout.className = 'entry-layout';
@@ -3185,21 +3982,165 @@ function renderBiqTab(tab) {
     detailPane.appendChild(empty);
   } else {
     const record = records[selectedRecordIndex];
+    const terrainPediaEntry = (selected.code === 'TERR' || selected.code === 'TFRM')
+      ? getTerrainCivilopediaEntryForRecord(tab, selected.code, record)
+      : null;
     const card = document.createElement('div');
     card.className = 'section-card';
-    card.innerHTML = `<div class="section-top"><strong>${record.name || `Record ${record.index + 1}`}</strong></div>`;
-    const rows = document.createElement('div');
-    rows.className = 'kv-grid';
-    (record.fields || []).forEach((field) => {
-      const line = document.createElement('div');
-      line.className = 'field-meta';
-      const strong = document.createElement('strong');
-      strong.textContent = `${field.label || field.key}: `;
-      line.appendChild(strong);
-      line.appendChild(document.createTextNode(String(field.value || '')));
-      rows.appendChild(line);
-    });
-    card.appendChild(rows);
+    card.innerHTML = `<div class="section-top"><strong>${record.name || `Record ${record.index + 1}`}</strong><span class="hint">${selected.code} | #${record.index + 1}</span></div>`;
+
+    if (terrainPediaEntry) {
+      const sourceBadge = document.createElement('div');
+      sourceBadge.className = 'hint';
+      sourceBadge.style.marginBottom = '6px';
+      sourceBadge.textContent = selected.code === 'TFRM'
+        ? 'Worker Action Civilopedia linked to this BIQ record.'
+        : 'Terrain Civilopedia linked to this BIQ record.';
+      card.appendChild(sourceBadge);
+      if (isScenarioMode()) {
+        card.appendChild(createCivilopediaEditorBlock({
+          entry: terrainPediaEntry,
+          fieldKey: 'overview',
+          titleText: 'Overview',
+          sourceMeta: terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.overview,
+          emptyText: 'Overview text'
+        }));
+        card.appendChild(createCivilopediaEditorBlock({
+          entry: terrainPediaEntry,
+          fieldKey: 'description',
+          titleText: 'Civilopedia',
+          sourceMeta: terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.description,
+          emptyText: 'Civilopedia description'
+        }));
+      } else {
+        if (terrainPediaEntry.overview) {
+          const overviewBlock = document.createElement('div');
+          overviewBlock.className = 'section-card source-section';
+          overviewBlock.style.marginTop = '8px';
+          const title = document.createElement('div');
+          title.className = 'section-top';
+          const left = document.createElement('strong');
+          left.textContent = 'Overview';
+          title.appendChild(left);
+          attachRichTooltip(title, formatSourceInfo(terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.overview, 'Civilopedia'));
+          overviewBlock.appendChild(title);
+          renderCivilopediaRichText(overviewBlock, terrainPediaEntry.overview);
+          card.appendChild(overviewBlock);
+        }
+        const textBlock = document.createElement('div');
+        textBlock.className = 'section-card source-section';
+        textBlock.style.marginTop = '8px';
+        const descTitle = document.createElement('div');
+        descTitle.className = 'section-top';
+        const descLeft = document.createElement('strong');
+        descLeft.textContent = 'Civilopedia';
+        descTitle.appendChild(descLeft);
+        attachRichTooltip(descTitle, formatSourceInfo(terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.description, 'Civilopedia'));
+        textBlock.appendChild(descTitle);
+        renderCivilopediaRichText(textBlock, terrainPediaEntry.description || '(No Civilopedia body found)');
+        card.appendChild(textBlock);
+      }
+    }
+
+    const fields = (record.fields || []).filter((field) => !shouldHideBiqStructureField(selected.code, field));
+    if (fields.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = 'No user-facing fields for this record.';
+      card.appendChild(empty);
+    } else {
+      const rows = document.createElement('div');
+      rows.className = 'kv-grid';
+      fields.forEach((field) => {
+        const row = document.createElement('div');
+        row.className = 'rule-row';
+        const label = document.createElement('label');
+        label.className = 'field-meta';
+        label.textContent = String(field.label || field.key);
+        attachRichTooltip(
+          label,
+          `Source: BIQ\nFile: ${compactPathFromCiv3Root(tab.sourcePath || '') || '(not available)'}\nSection: ${selected.title || selected.code}\nSection Code: ${selected.code}\nField: ${field.baseKey || field.key}\nRecord: ${record.index + 1}`
+        );
+        row.appendChild(label);
+
+        const controlWrap = document.createElement('div');
+        controlWrap.className = 'rule-control';
+        const editable = !tab.readOnly;
+        const baseKey = String(field.baseKey || field.key || '').toLowerCase();
+        const refSpec = getBiqStructureRefSpec(selected.code, baseKey);
+        const refOptions = refSpec ? makeBiqSectionIndexOptions(refSpec.section, !!refSpec.oneBased) : [];
+        const refTargetTabKey = refSpec ? (BIQ_SECTION_TO_REFERENCE_TAB[String(refSpec.section || '').toUpperCase()] || '') : '';
+        const parsed = parseIntFromDisplayValue(field.value);
+        const rawText = String(field.value || '').trim();
+        const looksNumeric = parsed != null && !/[A-Za-z]/.test(rawText.replace(/\(-?\d+\)\s*$/, ''));
+        const boolRaw = rawText.toLowerCase();
+        const looksBoolean = boolRaw === 'true' || boolRaw === 'false';
+
+        if (editable) {
+          if (refOptions.length > 0) {
+            const picker = createReferencePicker({
+              options: refOptions,
+              targetTabKey: refTargetTabKey,
+              currentValue: parsed == null ? '-1' : String(parsed),
+              searchPlaceholder: `Search ${String(refSpec.section || '').toUpperCase()}...`,
+              noneLabel: '(none)',
+              onSelect: (value) => {
+                rememberUndoSnapshot();
+                field.value = String(value);
+                setDirty(true);
+              }
+            });
+            controlWrap.appendChild(picker);
+          } else if (looksBoolean) {
+            const toggle = document.createElement('label');
+            toggle.className = 'bool-toggle';
+            const check = document.createElement('input');
+            check.type = 'checkbox';
+            check.checked = boolRaw === 'true';
+            const text = document.createElement('span');
+            text.textContent = check.checked ? 'Enabled' : 'Disabled';
+            check.addEventListener('change', () => {
+              rememberUndoSnapshot();
+              field.value = check.checked ? 'true' : 'false';
+              text.textContent = check.checked ? 'Enabled' : 'Disabled';
+              setDirty(true);
+            });
+            toggle.appendChild(check);
+            toggle.appendChild(text);
+            controlWrap.appendChild(toggle);
+          } else if (looksNumeric) {
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.value = parsed == null ? '' : String(parsed);
+            input.addEventListener('input', () => {
+              rememberUndoSnapshot();
+              field.value = input.value;
+              setDirty(true);
+            });
+            controlWrap.appendChild(input);
+          } else {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = String(field.value || '');
+            input.addEventListener('input', () => {
+              rememberUndoSnapshot();
+              field.value = input.value;
+              setDirty(true);
+            });
+            controlWrap.appendChild(input);
+          }
+        } else {
+          const text = document.createElement('div');
+          text.className = 'field-meta';
+          text.textContent = String(field.value || '(none)');
+          controlWrap.appendChild(text);
+        }
+
+        row.appendChild(controlWrap);
+        rows.appendChild(row);
+      });
+      card.appendChild(rows);
+    }
     detailPane.appendChild(card);
   }
   layout.appendChild(detailPane);
@@ -4483,6 +5424,10 @@ function renderTabs() {
 
 function renderActiveTab(options = {}) {
   const preserveTabScroll = !!options.preserveTabScroll;
+  if (state.referenceSectionNavCleanup) {
+    try { state.referenceSectionNavCleanup(); } catch (_err) {}
+    state.referenceSectionNavCleanup = null;
+  }
   if (!preserveTabScroll) {
     state.tabContentScrollTop = el.tabContent.scrollTop;
   }
@@ -4499,6 +5444,8 @@ function renderActiveTab(options = {}) {
     el.tabContent.appendChild(renderReferenceTab(tab, state.activeTab));
   } else if (tab.type === 'map') {
     el.tabContent.appendChild(renderMapTab(tab));
+  } else if (tab.type === 'biqStructure') {
+    el.tabContent.appendChild(renderBiqTab(tab));
   } else if (tab.type === 'biq') {
     el.tabContent.appendChild(renderBiqTab(tab));
   } else if (state.activeTab === 'base') {
@@ -4611,7 +5558,7 @@ async function saveCurrentBundle() {
 
   try {
     const tabsToSave = {};
-    ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units'].forEach((key) => {
+    ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts', 'terrainPedia', 'workerActions', 'scenarioSettings', 'players', 'terrain', 'world', 'rules'].forEach((key) => {
       if (state.bundle.tabs[key]) tabsToSave[key] = state.bundle.tabs[key];
     });
     const res = await window.c3xManager.saveBundle({
@@ -4623,7 +5570,7 @@ async function saveCurrentBundle() {
     });
 
     if (!res.ok) {
-      setStatus('Save failed.', true);
+      setStatus(`Save failed: ${res.error || 'unknown error'}`, true);
       return;
     }
 
@@ -4831,6 +5778,27 @@ async function init() {
       } catch (_err) {
         setStatus('Could not copy debug log.', true);
       }
+    });
+  }
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    const target = ev.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (!target.classList.contains('app-search-input')) return;
+    if (!target.value) return;
+    target.value = '';
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    ev.preventDefault();
+    ev.stopPropagation();
+  });
+  if (el.debugDrawer) {
+    document.addEventListener('click', (ev) => {
+      if (el.debugDrawer.classList.contains('hidden')) return;
+      const target = ev.target;
+      if (!target) return;
+      if (el.debugDrawer.contains(target)) return;
+      if (el.debugToggle && el.debugToggle.contains(target)) return;
+      el.debugDrawer.classList.add('hidden');
     });
   }
 
