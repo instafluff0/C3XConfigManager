@@ -29,6 +29,14 @@ const state = {
     naturalWonders: 0,
     animations: 0
   },
+  referenceListScrollTop: {},
+  referenceDetailScrollTop: {},
+  referenceSelection: {},
+  referenceFilter: {},
+  referenceImprovementKind: {},
+  referenceSearchCaret: {},
+  referenceSearchFocusedTab: null,
+  referenceNotice: null,
   previewCache: new Map()
 };
 
@@ -62,12 +70,22 @@ const el = {
 const DIRECTION_OPTIONS = ['northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest', 'north'];
 const TERRAIN_OPTIONS = ['desert', 'plains', 'grassland', 'jungle', 'tundra', 'floodplain', 'swamp', 'hill', 'mountain', 'forest', 'volcano', 'snow-forest', 'snow-mountain', 'snow-volcano', 'coast', 'sea', 'ocean'];
 const TAB_ICONS = {
+  units: 'icon-unit',
+  technologies: 'icon-tech',
+  civilizations: 'icon-civ',
+  resources: 'icon-resource',
+  improvements: 'icon-improv',
+  governments: 'icon-gov',
   base: 'icon-c3x',
   districts: 'icon-district',
   wonders: 'icon-wonder',
   naturalWonders: 'icon-natural',
   animations: 'icon-anim'
 };
+const TAB_GROUPS = [
+  { label: 'CIV 3', keys: ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units'] },
+  { label: 'C3X', keys: ['base', 'districts', 'wonders', 'naturalWonders', 'animations'] }
+];
 
 const BASE_ENUM_OPTIONS = {
   draw_lines_using_gdi_plus: ['never', 'wine', 'always'],
@@ -96,6 +114,7 @@ const BASE_FIELD_DETAILS = {
   minimum_natural_wonder_separation: 'Minimum tile distance between natural wonders.',
   draw_lines_using_gdi_plus: 'Line rendering strategy.'
 };
+const EDITABLE_TAB_KEYS = ['base', 'districts', 'wonders', 'naturalWonders', 'animations'];
 
 const SECTION_SCHEMAS = {
   districts: {
@@ -238,6 +257,22 @@ function setStatus(text, isError = false) {
   el.status.style.color = isError ? '#a13514' : '';
 }
 
+function setReferenceNotice(text, isError = false, rerender = true) {
+  state.referenceNotice = text ? { text, isError } : null;
+  if (rerender && state.bundle && state.bundle.tabs && state.activeTab && state.bundle.tabs[state.activeTab] && state.bundle.tabs[state.activeTab].type === 'reference') {
+    renderActiveTab({ preserveTabScroll: true });
+  }
+}
+
+function withRemoveIcon(button, label) {
+  button.textContent = '';
+  const icon = document.createElement('span');
+  icon.className = 'remove-icon';
+  icon.textContent = 'x';
+  button.appendChild(icon);
+  button.appendChild(document.createTextNode(label));
+}
+
 function refreshDirtyUi() {
   if (el.saveBtn) el.saveBtn.classList.toggle('dirty', state.isDirty);
   if (el.dirtyIndicator) el.dirtyIndicator.classList.toggle('hidden', !state.isDirty);
@@ -245,7 +280,12 @@ function refreshDirtyUi() {
 }
 
 function snapshotTabs() {
-  return JSON.stringify(state.bundle ? state.bundle.tabs : null);
+  if (!state.bundle || !state.bundle.tabs) return 'null';
+  const editableTabs = {};
+  EDITABLE_TAB_KEYS.forEach((key) => {
+    if (state.bundle.tabs[key]) editableTabs[key] = state.bundle.tabs[key];
+  });
+  return JSON.stringify(editableTabs);
 }
 
 function rememberUndoSnapshot() {
@@ -298,13 +338,17 @@ function setMode(mode) {
 
 function syncSettingsFromInputs() {
   state.settings.c3xPath = el.c3xPath.value.trim();
-  state.settings.civ3ConquestsPath = el.civ3Path.value.trim();
+  state.settings.civ3Path = el.civ3Path.value.trim();
   state.settings.scenarioPath = el.scenarioPath.value.trim();
 }
 
 function fillInputsFromSettings() {
   el.c3xPath.value = state.settings.c3xPath || '';
-  el.civ3Path.value = state.settings.civ3ConquestsPath || '';
+  if (!state.settings.civ3Path && state.settings.civ3ConquestsPath) {
+    const old = state.settings.civ3ConquestsPath;
+    state.settings.civ3Path = /[\\/]Conquests$/i.test(old) ? old.replace(/[\\/]Conquests$/i, '') : old;
+  }
+  el.civ3Path.value = state.settings.civ3Path || '';
   el.scenarioPath.value = state.settings.scenarioPath || '';
 }
 
@@ -540,7 +584,7 @@ function makeInputForBaseRow(row, onChange) {
           onChange(serializeStructuredEntries(items));
         });
         const del = document.createElement('button');
-        del.textContent = 'Remove';
+        withRemoveIcon(del, ' Remove');
         del.addEventListener('click', () => {
       rememberUndoSnapshot();
           items.splice(idx, 1);
@@ -591,7 +635,7 @@ function makeInputForBaseRow(row, onChange) {
           onChange(serializeNameAmountItems(items));
         });
         const del = document.createElement('button');
-        del.textContent = 'Remove';
+        withRemoveIcon(del, ' Remove');
         del.addEventListener('click', () => {
           items.splice(idx, 1);
           if (items.length === 0) items.push({ name: '', amount: '' });
@@ -641,7 +685,7 @@ function makeInputForBaseRow(row, onChange) {
           onChange(serializeBuildingPrereqItems(items));
         });
         const del = document.createElement('button');
-        del.textContent = 'Remove';
+        withRemoveIcon(del, ' Remove');
         del.addEventListener('click', () => {
           items.splice(idx, 1);
           if (items.length === 0) items.push({ building: '', units: [] });
@@ -717,7 +761,7 @@ function makeInputForBaseRow(row, onChange) {
         block.appendChild(flagRow);
 
         const del = document.createElement('button');
-        del.textContent = 'Remove';
+        withRemoveIcon(del, ' Remove');
         del.addEventListener('click', () => {
           items.splice(idx, 1);
           if (items.length === 0) items.push({ building: '', resource: '', flags: [] });
@@ -940,7 +984,7 @@ function getPreviewDelayMs(tabKey, section, title) {
   return 100;
 }
 
-function renderRgbaPreview(container, preview, title, delayMsProvider) {
+function renderRgbaPreview(container, preview, title, delayMsProvider, displayWidth = null) {
   const card = document.createElement('div');
   card.className = 'preview-card';
   const h = document.createElement('div');
@@ -952,7 +996,8 @@ function renderRgbaPreview(container, preview, title, delayMsProvider) {
   canvas.width = preview.width;
   canvas.height = preview.height;
   canvas.className = 'preview-canvas';
-  canvas.style.width = `${state.previewSize}px`;
+  const previewWidth = Number.isFinite(displayWidth) && displayWidth > 0 ? displayWidth : state.previewSize;
+  canvas.style.width = `${previewWidth}px`;
   canvas.style.height = 'auto';
   const ctx = canvas.getContext('2d');
   card.appendChild(canvas);
@@ -997,7 +1042,7 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
   if (state.previewCache.has(cacheKey)) {
     const cached = state.previewCache.get(cacheKey);
     appendDebugLog('preview:cache-hit', { tabKey, count: cached.length });
-    cached.forEach((p) => renderRgbaPreview(previewWrap, p.preview, p.title, () => getPreviewDelayMs(tabKey, section, p.title)));
+    cached.forEach((p) => renderRgbaPreview(previewWrap, p.preview, p.title, () => getPreviewDelayMs(tabKey, section, p.title), p.displayWidth));
     return;
   }
 
@@ -1072,8 +1117,8 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
       const res = await window.c3xManager.getPreview(task.request);
       if (res && res.ok) {
         appendDebugLog('preview:response:ok', { tabKey, title: task.title, animated: !!res.animated, width: res.width, height: res.height, sourcePath: res.sourcePath, frames: res.framesBase64 ? res.framesBase64.length : 0, debug: res.debug || null });
-        renderRgbaPreview(previewWrap, res, task.title, () => getPreviewDelayMs(tabKey, section, task.title));
-        resolved.push({ title: task.title, preview: res });
+        renderRgbaPreview(previewWrap, res, task.title, () => getPreviewDelayMs(tabKey, section, task.title), task.displayWidth);
+        resolved.push({ title: task.title, preview: res, displayWidth: task.displayWidth || null });
       } else {
         appendDebugLog('preview:response:err', { tabKey, title: task.title, error: res && res.error });
       }
@@ -1087,12 +1132,457 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
   }
 }
 
+function makeReferencePreviewTasks(tabKey, entry) {
+  const tasks = [];
+  const largeSizeByTab = {
+    technologies: 150,
+    resources: 150,
+    improvements: 170,
+    governments: 170,
+    civilizations: 170,
+    units: 180
+  };
+  const smallSize = 72;
+  if (Array.isArray(entry.iconPaths)) {
+    entry.iconPaths.slice(0, 2).forEach((assetPath, idx) => {
+      tasks.push({
+        title: idx === 0 ? 'Civilopedia Large' : 'Civilopedia Small',
+        displayWidth: idx === 0 ? Math.min(largeSizeByTab[tabKey] || 170, state.previewSize) : Math.min(smallSize, state.previewSize),
+        request: {
+          kind: 'civilopediaIcon',
+          civ3Path: state.settings.civ3Path,
+          assetPath
+        }
+      });
+    });
+  }
+  if (tabKey === 'civilizations' && Array.isArray(entry.racePaths)) {
+    entry.racePaths.slice(0, 2).forEach((assetPath, idx) => {
+      tasks.push({
+        title: idx === 0 ? 'Advisor Portrait' : 'Victory Portrait',
+        displayWidth: Math.min(150, state.previewSize),
+        request: {
+          kind: 'civilopediaIcon',
+          civ3Path: state.settings.civ3Path,
+          assetPath
+        }
+      });
+    });
+  }
+  if (tabKey === 'units' && entry.animationName) {
+    tasks.push({
+      title: 'Unit Animation',
+      displayWidth: Math.min(180, state.previewSize),
+      request: {
+        kind: 'unitAnimation',
+        civ3Path: state.settings.civ3Path,
+        animationName: entry.animationName
+      }
+    });
+  }
+  return tasks;
+}
+
+async function loadPreviewsForReferenceEntry(tabKey, entry, previewWrap) {
+  const cacheKey = JSON.stringify({
+    kind: 'reference',
+    tabKey,
+    key: entry.civilopediaKey,
+    civ3Path: state.settings.civ3Path
+  });
+  if (state.previewCache.has(cacheKey)) {
+    const cached = state.previewCache.get(cacheKey);
+    cached.forEach((p) => renderRgbaPreview(previewWrap, p.preview, p.title, () => 100, p.displayWidth));
+    return;
+  }
+
+  const tasks = makeReferencePreviewTasks(tabKey, entry);
+  const resolved = [];
+  for (const task of tasks) {
+    try {
+      const res = await window.c3xManager.getPreview(task.request);
+      if (res && res.ok) {
+        renderRgbaPreview(previewWrap, res, task.title, () => 100, task.displayWidth);
+        resolved.push({ title: task.title, preview: res, displayWidth: task.displayWidth || null });
+      }
+    } catch (_err) {
+      // Ignore preview errors for missing art references.
+    }
+  }
+  if (resolved.length > 0) {
+    state.previewCache.set(cacheKey, resolved);
+  }
+}
+
+function drawPreviewFrameToCanvas(preview, canvas) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx || !preview) return;
+  let rgba;
+  if (preview.rgbaBase64) {
+    rgba = fromBase64ToUint8(preview.rgbaBase64);
+  } else if (preview.framesBase64 && preview.framesBase64[0]) {
+    rgba = fromBase64ToUint8(preview.framesBase64[0]);
+  } else {
+    return;
+  }
+  const src = document.createElement('canvas');
+  src.width = preview.width;
+  src.height = preview.height;
+  const srcCtx = src.getContext('2d');
+  if (!srcCtx) return;
+  srcCtx.putImageData(new ImageData(new Uint8ClampedArray(rgba), preview.width, preview.height), 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const ratio = Math.min(canvas.width / preview.width, canvas.height / preview.height);
+  const w = Math.max(1, Math.floor(preview.width * ratio));
+  const h = Math.max(1, Math.floor(preview.height * ratio));
+  const x = Math.floor((canvas.width - w) / 2);
+  const y = Math.floor((canvas.height - h) / 2);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(src, x, y, w, h);
+}
+
+function loadReferenceListThumbnail(tabKey, entry, holder) {
+  const assetPath = entry.thumbPath || '';
+  if (!assetPath) return;
+  const key = JSON.stringify({ kind: 'list-thumb', tabKey, entry: entry.civilopediaKey, assetPath, civ3Path: state.settings.civ3Path });
+  const paint = (preview) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 28;
+    canvas.height = 28;
+    canvas.className = 'entry-thumb-canvas';
+    drawPreviewFrameToCanvas(preview, canvas);
+    holder.innerHTML = '';
+    holder.appendChild(canvas);
+  };
+
+  if (state.previewCache.has(key)) {
+    paint(state.previewCache.get(key));
+    return;
+  }
+
+  window.c3xManager.getPreview({ kind: 'civilopediaIcon', civ3Path: state.settings.civ3Path, assetPath })
+    .then((res) => {
+      if (!res || !res.ok) return;
+      state.previewCache.set(key, res);
+      if (holder.isConnected) paint(res);
+    })
+    .catch(() => {});
+}
+
 function getSectionTitle(section, schema, index) {
   const titleField = section.fields.find((f) => f.key === schema.titleKey);
   if (titleField && titleField.value) {
     return titleField.value;
   }
   return `${schema.entityName} ${index + 1}`;
+}
+
+function formatReferenceList(values) {
+  if (!values || values.length === 0) return '(none)';
+  return values.join(', ');
+}
+
+function mapCivilopediaKeyToTabKey(civilopediaKey) {
+  const key = String(civilopediaKey || '').toUpperCase();
+  if (key.startsWith('RACE_')) return 'civilizations';
+  if (key.startsWith('TECH_')) return 'technologies';
+  if (key.startsWith('GOOD_')) return 'resources';
+  if (key.startsWith('BLDG_')) return 'improvements';
+  if (key.startsWith('GOVT_')) return 'governments';
+  if (key.startsWith('PRTO_')) return 'units';
+  return null;
+}
+
+function navigateToCivilopediaKey(civilopediaKey) {
+  if (!state.bundle || !state.bundle.tabs) return false;
+  const tabKey = mapCivilopediaKeyToTabKey(civilopediaKey);
+  if (!tabKey || !state.bundle.tabs[tabKey] || !Array.isArray(state.bundle.tabs[tabKey].entries)) return false;
+  const target = String(civilopediaKey || '').toUpperCase();
+  const entries = state.bundle.tabs[tabKey].entries;
+  const idx = entries.findIndex((entry) => String(entry.civilopediaKey || '').toUpperCase() === target);
+  if (idx < 0) return false;
+  const targetEntry = entries[idx];
+  const needle = String(state.referenceFilter[tabKey] || '').trim().toLowerCase();
+  if (needle) {
+    const hay = `${targetEntry.name} ${targetEntry.civilopediaKey}`.toLowerCase();
+    if (!hay.includes(needle)) {
+      state.referenceFilter[tabKey] = '';
+    }
+  }
+  if (tabKey === 'improvements') {
+    const kind = state.referenceImprovementKind[tabKey] || 'all';
+    if (kind !== 'all' && targetEntry.improvementKind !== kind) {
+      state.referenceImprovementKind[tabKey] = 'all';
+    }
+  }
+  state.activeTab = tabKey;
+  state.referenceSelection[tabKey] = idx;
+  renderTabs();
+  renderActiveTab();
+  return true;
+}
+
+function renderCivilopediaRichText(container, text) {
+  const lines = String(text || '').split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) {
+    container.textContent = '(none)';
+    return;
+  }
+  const linkPattern = /\$LINK<([^=<>]+)=([A-Za-z0-9_]+)>/g;
+  lines.forEach((line) => {
+    const p = document.createElement('p');
+    p.className = 'pedia-paragraph';
+    const cleaned = line.replace(/\[([^\]]+)\]/g, '$1');
+    let pos = 0;
+    for (const match of cleaned.matchAll(linkPattern)) {
+      const index = match.index || 0;
+      if (index > pos) {
+        p.appendChild(document.createTextNode(cleaned.slice(pos, index)));
+      }
+      const label = match[1];
+      const key = match[2];
+      const a = document.createElement('a');
+      a.href = '#';
+      a.className = 'pedia-link';
+      a.textContent = label;
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        if (!navigateToCivilopediaKey(key)) {
+          setReferenceNotice(`No local entry for ${key}.`, true);
+        }
+      });
+      p.appendChild(a);
+      pos = index + match[0].length;
+    }
+    if (pos < cleaned.length) {
+      p.appendChild(document.createTextNode(cleaned.slice(pos)));
+    }
+    container.appendChild(p);
+  });
+}
+
+function renderReferenceTab(tab, tabKey) {
+  const wrap = document.createElement('div');
+  wrap.className = 'section-editor';
+
+  const header = document.createElement('div');
+  header.className = 'section-editor-header sticky';
+  header.appendChild(createIcon(TAB_ICONS[tabKey]));
+  header.insertAdjacentHTML('beforeend', `<h3>${tab.title}</h3><span class="source-tag">read-only</span>`);
+  wrap.appendChild(header);
+
+  const helperRow = document.createElement('div');
+  helperRow.className = 'reference-helper-row';
+  const helper = document.createElement('p');
+  helper.className = 'hint hint-compact';
+  helper.textContent = 'Read-only Civilopedia view with precedence Conquests > civ3PTW > vanilla.';
+  helperRow.appendChild(helper);
+  if (state.referenceNotice && state.referenceNotice.text) {
+    const note = document.createElement('span');
+    note.className = `reference-notice ${state.referenceNotice.isError ? 'error' : ''}`.trim();
+    note.textContent = state.referenceNotice.text;
+    helperRow.appendChild(note);
+  }
+  wrap.appendChild(helperRow);
+
+  const controls = document.createElement('div');
+  controls.className = 'reference-filter-row';
+  const search = document.createElement('input');
+  search.type = 'text';
+  search.placeholder = `Search ${tab.title}...`;
+  search.value = state.referenceFilter[tabKey] || '';
+  controls.appendChild(search);
+
+  let kindFilter = null;
+  if (tabKey === 'improvements') {
+    kindFilter = document.createElement('select');
+    const options = [
+      { value: 'all', label: 'All Improvements' },
+      { value: 'wonder', label: 'Wonders' },
+      { value: 'small_wonder', label: 'Small Wonders' },
+      { value: 'normal', label: 'Non-Wonders' }
+    ];
+    options.forEach((opt) => {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      kindFilter.appendChild(o);
+    });
+    kindFilter.value = state.referenceImprovementKind[tabKey] || 'all';
+    controls.appendChild(kindFilter);
+  }
+  wrap.appendChild(controls);
+
+  const allEntries = tab.entries || [];
+  const filteredEntries = allEntries
+    .map((entry, baseIndex) => ({ entry, baseIndex }))
+    .filter(({ entry }) => {
+      const needle = String(state.referenceFilter[tabKey] || '').trim().toLowerCase();
+      const hay = `${entry.name} ${entry.civilopediaKey}`.toLowerCase();
+      if (needle && !hay.includes(needle)) return false;
+      if (tabKey === 'improvements') {
+        const k = state.referenceImprovementKind[tabKey] || 'all';
+        if (k !== 'all' && entry.improvementKind !== k) return false;
+      }
+      return true;
+    });
+
+  const currentBaseIndex = state.referenceSelection[tabKey] || 0;
+  let selectedFilteredIndex = filteredEntries.findIndex((x) => x.baseIndex === currentBaseIndex);
+  if (selectedFilteredIndex < 0) selectedFilteredIndex = 0;
+  if (filteredEntries.length > 0) {
+    state.referenceSelection[tabKey] = filteredEntries[selectedFilteredIndex].baseIndex;
+  }
+
+  const layout = document.createElement('div');
+  layout.className = 'entry-layout';
+
+  const listPane = document.createElement('div');
+  listPane.className = 'entry-list-pane';
+  listPane.addEventListener('scroll', () => {
+    state.referenceListScrollTop[tabKey] = listPane.scrollTop;
+  });
+
+  filteredEntries.forEach(({ entry, baseIndex }, index) => {
+    const itemBtn = document.createElement('button');
+    itemBtn.className = 'entry-list-item';
+    itemBtn.type = 'button';
+    itemBtn.classList.toggle('active', index === selectedFilteredIndex);
+    const thumb = document.createElement('span');
+    thumb.className = 'entry-thumb';
+    const title = document.createElement('strong');
+    title.textContent = entry.name;
+    itemBtn.appendChild(thumb);
+    itemBtn.appendChild(title);
+    loadReferenceListThumbnail(tabKey, entry, thumb);
+    itemBtn.addEventListener('mousedown', () => {
+      state.referenceListScrollTop[tabKey] = listPane.scrollTop;
+    });
+    itemBtn.addEventListener('click', () => {
+      state.referenceListScrollTop[tabKey] = listPane.scrollTop;
+      state.referenceSelection[tabKey] = baseIndex;
+      state.tabContentScrollTop = el.tabContent.scrollTop;
+      renderActiveTab({ preserveTabScroll: true });
+    });
+    listPane.appendChild(itemBtn);
+  });
+  layout.appendChild(listPane);
+
+  const detailPane = document.createElement('div');
+  detailPane.className = 'entry-detail-pane';
+  detailPane.addEventListener('scroll', () => {
+    state.referenceDetailScrollTop[tabKey] = detailPane.scrollTop;
+  });
+
+  search.addEventListener('input', () => {
+    state.referenceFilter[tabKey] = search.value;
+    state.referenceListScrollTop[tabKey] = 0;
+    state.referenceSearchFocusedTab = tabKey;
+    state.referenceSearchCaret[tabKey] = {
+      start: search.selectionStart ?? search.value.length,
+      end: search.selectionEnd ?? search.value.length
+    };
+    renderActiveTab({ preserveTabScroll: true });
+  });
+  if (kindFilter) {
+    kindFilter.addEventListener('change', () => {
+      state.referenceImprovementKind[tabKey] = kindFilter.value;
+      state.referenceListScrollTop[tabKey] = 0;
+      renderActiveTab({ preserveTabScroll: true });
+    });
+  }
+
+  if (filteredEntries.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'section-card';
+    const hasFilter = !!String(state.referenceFilter[tabKey] || '').trim() || (tabKey === 'improvements' && (state.referenceImprovementKind[tabKey] || 'all') !== 'all');
+    empty.innerHTML = hasFilter
+      ? '<p class="hint">No entries match the current filters.</p>'
+      : '<p class="hint">No entries found. Verify your Civilization 3 path and reload.</p>';
+    detailPane.appendChild(empty);
+  } else {
+    const entry = filteredEntries[selectedFilteredIndex].entry;
+    const card = document.createElement('div');
+    card.className = 'section-card';
+    card.style.setProperty('--preview-size', `${state.previewSize}px`);
+
+    const top = document.createElement('div');
+    top.className = 'section-top';
+    top.innerHTML = `<strong>${entry.name}</strong>`;
+    card.appendChild(top);
+
+    const detailLayout = document.createElement('div');
+    detailLayout.className = 'reference-detail-layout';
+    const textCol = document.createElement('div');
+    textCol.className = 'reference-text-col';
+    const artCol = document.createElement('div');
+    artCol.className = 'reference-art-col';
+    card.appendChild(detailLayout);
+    detailLayout.appendChild(textCol);
+    detailLayout.appendChild(artCol);
+
+    const previewWrap = document.createElement('div');
+    previewWrap.className = 'preview-wrap compact';
+    artCol.appendChild(previewWrap);
+    loadPreviewsForReferenceEntry(tabKey, entry, previewWrap);
+
+    const meta = document.createElement('div');
+    meta.className = 'kv-grid';
+    meta.innerHTML = `
+      <div class="field-meta"><strong>Key:</strong> ${entry.civilopediaKey}</div>
+      <div class="field-meta"><strong>Tech Dependencies:</strong> ${formatReferenceList(entry.techDependencies)}</div>
+      <div class="field-meta"><strong>Animation:</strong> ${entry.animationName || '(none)'}</div>
+      <div class="field-meta"><strong>Icon Paths:</strong> ${formatReferenceList(entry.iconPaths)}</div>
+    `;
+    if (tabKey === 'civilizations') {
+      const civMeta = document.createElement('div');
+      civMeta.className = 'field-meta';
+      civMeta.innerHTML = `<strong>Race Paths:</strong> ${formatReferenceList(entry.racePaths)}`;
+      meta.appendChild(civMeta);
+    }
+    textCol.appendChild(meta);
+
+    if (entry.overview) {
+      const overviewBlock = document.createElement('div');
+      overviewBlock.className = 'field-description';
+      overviewBlock.style.marginTop = '8px';
+      const title = document.createElement('div');
+      title.className = 'field-meta';
+      title.textContent = 'Overview';
+      overviewBlock.appendChild(title);
+      renderCivilopediaRichText(overviewBlock, entry.overview);
+      textCol.appendChild(overviewBlock);
+    }
+
+    const textBlock = document.createElement('div');
+    textBlock.className = 'field-description';
+    textBlock.style.marginTop = '8px';
+    const descTitle = document.createElement('div');
+    descTitle.className = 'field-meta';
+    descTitle.textContent = 'Civilopedia';
+    textBlock.appendChild(descTitle);
+    renderCivilopediaRichText(textBlock, entry.description || '(No Civilopedia body found)');
+    textCol.appendChild(textBlock);
+
+    detailPane.appendChild(card);
+  }
+
+  layout.appendChild(detailPane);
+  wrap.appendChild(layout);
+  const savedListTop = state.referenceListScrollTop[tabKey] || 0;
+  const savedDetailTop = state.referenceDetailScrollTop[tabKey] || 0;
+  window.requestAnimationFrame(() => {
+    listPane.scrollTop = savedListTop;
+    detailPane.scrollTop = savedDetailTop;
+    if (state.referenceSearchFocusedTab === tabKey) {
+      const caret = state.referenceSearchCaret[tabKey];
+      search.focus({ preventScroll: true });
+      if (caret && Number.isFinite(caret.start) && Number.isFinite(caret.end)) {
+        search.setSelectionRange(caret.start, caret.end);
+      }
+    }
+  });
+  return wrap;
 }
 
 function createFieldInput(schemaField, value, onChange) {
@@ -1230,7 +1720,7 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
       });
 
       const del = document.createElement('button');
-      del.textContent = 'Remove';
+      withRemoveIcon(del, ' Remove');
         del.addEventListener('click', () => {
           const next = [...list];
           next.splice(idx, 1);
@@ -1322,7 +1812,7 @@ function renderAdvancedFields(section, schemaKeys) {
     });
 
     const del = document.createElement('button');
-    del.textContent = 'Remove';
+    withRemoveIcon(del, ' Remove');
     del.addEventListener('click', () => {
       rememberUndoSnapshot();
       const allUnknown = section.fields.filter((f) => !schemaKeys.has(f.key));
@@ -1410,7 +1900,7 @@ function renderSectionTab(tab, tabKey) {
   });
   tab.model.sections.forEach((section, sectionIndex) => {
     const itemBtn = document.createElement('button');
-    itemBtn.className = 'entry-list-item';
+    itemBtn.className = 'entry-list-item no-thumb';
     itemBtn.dataset.index = String(sectionIndex);
     itemBtn.classList.toggle('active', sectionIndex === selectedIndex);
     itemBtn.type = 'button';
@@ -1455,7 +1945,7 @@ function renderSectionTab(tab, tabKey) {
     top.innerHTML = `<strong>${getSectionTitle(section, schema, selectedIndex)}</strong>`;
 
     const removeSectionBtn = document.createElement('button');
-    removeSectionBtn.textContent = `Remove ${schema.entityName}`;
+    withRemoveIcon(removeSectionBtn, ` Remove ${schema.entityName}`);
     removeSectionBtn.addEventListener('click', () => {
       rememberUndoSnapshot();
       tab.model.sections.splice(selectedIndex, 1);
@@ -1554,21 +2044,35 @@ function renderSectionTab(tab, tabKey) {
 
 function renderTabs() {
   el.tabs.innerHTML = '';
-
-  Object.entries(state.bundle.tabs).forEach(([key, tab]) => {
-    const button = document.createElement('button');
-    button.className = 'tab-btn';
-    button.appendChild(createIcon(TAB_ICONS[key]));
-    const text = document.createElement('span');
-    text.textContent = tab.title;
-    button.appendChild(text);
-    button.classList.toggle('active', state.activeTab === key);
-    button.addEventListener('click', () => {
-      state.activeTab = key;
-      renderTabs();
-      renderActiveTab();
+  TAB_GROUPS.forEach((group) => {
+    const present = group.keys.filter((key) => state.bundle.tabs[key]);
+    if (present.length === 0) return;
+    const groupWrap = document.createElement('div');
+    groupWrap.className = 'tab-group';
+    const label = document.createElement('div');
+    label.className = 'tab-group-label';
+    label.textContent = group.label;
+    groupWrap.appendChild(label);
+    const row = document.createElement('div');
+    row.className = 'tab-group-row';
+    present.forEach((key) => {
+      const tab = state.bundle.tabs[key];
+      const button = document.createElement('button');
+      button.className = 'tab-btn';
+      button.appendChild(createIcon(TAB_ICONS[key]));
+      const text = document.createElement('span');
+      text.textContent = tab.title;
+      button.appendChild(text);
+      button.classList.toggle('active', state.activeTab === key);
+      button.addEventListener('click', () => {
+        state.activeTab = key;
+        renderTabs();
+        renderActiveTab();
+      });
+      row.appendChild(button);
     });
-    el.tabs.appendChild(button);
+    groupWrap.appendChild(row);
+    el.tabs.appendChild(groupWrap);
   });
 }
 
@@ -1585,7 +2089,9 @@ function renderActiveTab(options = {}) {
     return;
   }
 
-  if (state.activeTab === 'base') {
+  if (tab.type === 'reference') {
+    el.tabContent.appendChild(renderReferenceTab(tab, state.activeTab));
+  } else if (state.activeTab === 'base') {
     el.tabContent.appendChild(renderBaseTab(tab));
   } else {
     el.tabContent.appendChild(renderSectionTab(tab, state.activeTab));
@@ -1616,11 +2122,12 @@ async function loadBundleAndRender() {
     const bundle = await window.c3xManager.loadBundle({
       mode: state.settings.mode,
       c3xPath: state.settings.c3xPath,
+      civ3Path: state.settings.civ3Path,
       scenarioPath: state.settings.scenarioPath
     });
 
     state.bundle = bundle;
-    state.activeTab = 'base';
+    state.activeTab = Object.keys(bundle.tabs)[0] || 'base';
     state.baseFilter = '';
     el.workspace.classList.remove('hidden');
     renderTabs();
@@ -1629,7 +2136,7 @@ async function loadBundleAndRender() {
       captureCleanSnapshot();
       state.trackDirty = true;
     }, 0);
-    setStatus('Configs loaded.');
+    setReferenceNotice('Configs loaded.');
   } catch (err) {
     state.trackDirty = true;
     setStatus(`Failed to load configs: ${err.message}`, true);
@@ -1646,11 +2153,15 @@ async function saveCurrentBundle() {
   await window.c3xManager.setSettings(state.settings);
 
   try {
+    const tabsToSave = {};
+    ['base', 'districts', 'wonders', 'naturalWonders', 'animations'].forEach((key) => {
+      if (state.bundle.tabs[key]) tabsToSave[key] = state.bundle.tabs[key];
+    });
     const res = await window.c3xManager.saveBundle({
       mode: state.settings.mode,
       c3xPath: state.settings.c3xPath,
       scenarioPath: state.settings.scenarioPath,
-      tabs: state.bundle.tabs
+      tabs: tabsToSave
     });
 
     if (!res.ok) {

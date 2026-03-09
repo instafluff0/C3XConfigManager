@@ -21,6 +21,13 @@ function looksLikeC3xFolder(dirPath) {
 function inferDefaultPaths(existing) {
   const next = { ...existing };
 
+  // Backward compatibility: older settings stored a Conquests path directly.
+  if (!next.civ3Path && next.civ3ConquestsPath) {
+    const old = next.civ3ConquestsPath;
+    if (path.basename(old).toLowerCase() === 'conquests') next.civ3Path = path.dirname(old);
+    else next.civ3Path = old;
+  }
+
   if (!looksLikeC3xFolder(next.c3xPath)) {
     const c3xCandidates = [
       path.join(__dirname, 'C3X'),
@@ -34,16 +41,17 @@ function inferDefaultPaths(existing) {
     }
   }
 
-  if (!dirExists(next.civ3ConquestsPath)) {
+  if (!dirExists(next.civ3Path)) {
     const appParent = path.dirname(__dirname);
+    const appGrandParent = path.dirname(appParent);
     if (path.basename(appParent).toLowerCase() === 'conquests') {
-      next.civ3ConquestsPath = appParent;
+      next.civ3Path = appGrandParent;
     } else if (path.basename(__dirname).toLowerCase() === 'conquests') {
-      next.civ3ConquestsPath = __dirname;
+      next.civ3Path = path.dirname(__dirname);
     } else if (looksLikeC3xFolder(next.c3xPath)) {
       const c3xParent = path.dirname(next.c3xPath);
       if (path.basename(c3xParent).toLowerCase() === 'conquests') {
-        next.civ3ConquestsPath = c3xParent;
+        next.civ3Path = path.dirname(c3xParent);
       }
     }
   }
@@ -77,7 +85,7 @@ function createWindow() {
     height: 960,
     minWidth: 1180,
     minHeight: 760,
-    title: 'C3X Config Manager',
+    title: 'Civ 3 | C3X Modern Configuration Manager',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -107,7 +115,7 @@ app.on('window-all-closed', () => {
 ipcMain.handle('manager:get-settings', async () => {
   const defaults = {
     c3xPath: '',
-    civ3ConquestsPath: '',
+    civ3Path: '',
     scenarioPath: '',
     mode: 'global'
   };

@@ -360,6 +360,60 @@ function parseIniForFlc(iniPath) {
   return null;
 }
 
+function normalizeAssetPath(raw) {
+  return String(raw || '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/^\.?[\\/]+/, '')
+    .replace(/\\/g, path.sep)
+    .replace(/\//g, path.sep);
+}
+
+function resolveCiv3Root(civ3Path) {
+  if (!civ3Path) return '';
+  const base = path.basename(civ3Path).toLowerCase();
+  if (base === 'conquests' || base === 'civ3ptw') return path.dirname(civ3Path);
+  return civ3Path;
+}
+
+function resolveConquestsRoot(civ3Path) {
+  const root = resolveCiv3Root(civ3Path);
+  return root ? path.join(root, 'Conquests') : '';
+}
+
+function resolvePtwRoot(civ3Path) {
+  const root = resolveCiv3Root(civ3Path);
+  return root ? path.join(root, 'civ3PTW') : '';
+}
+
+function resolveConquestsAssetPath(civ3Path, rawAssetPath) {
+  if (!civ3Path || !rawAssetPath) return null;
+  const civ3Root = resolveCiv3Root(civ3Path);
+  const conquestsRoot = resolveConquestsRoot(civ3Path);
+  const ptwRoot = resolvePtwRoot(civ3Path);
+  const rel = normalizeAssetPath(rawAssetPath);
+  const candidates = [];
+  if (path.isAbsolute(rel)) candidates.push(rel);
+  candidates.push(path.join(conquestsRoot, rel));
+  candidates.push(path.join(ptwRoot, rel));
+  candidates.push(path.join(civ3Root, rel));
+  return candidates.find((p) => fileExists(p)) || null;
+}
+
+function resolveUnitIniPath(civ3Path, animationName) {
+  if (!civ3Path || !animationName) return null;
+  const civ3Root = resolveCiv3Root(civ3Path);
+  const conquestsRoot = resolveConquestsRoot(civ3Path);
+  const ptwRoot = resolvePtwRoot(civ3Path);
+  const unitName = String(animationName).trim();
+  const candidates = [
+    path.join(conquestsRoot, 'Art', 'Units', unitName, `${unitName}.ini`),
+    path.join(ptwRoot, 'Art', 'Units', unitName, `${unitName}.ini`),
+    path.join(civ3Root, 'Art', 'Units', unitName, `${unitName}.ini`)
+  ];
+  return candidates.find((p) => fileExists(p)) || null;
+}
+
 function resolvePcxPath(c3xPath, fileName) {
   if (!c3xPath || !fileName) return null;
   const direct = path.isAbsolute(fileName) ? fileName : null;
@@ -418,7 +472,7 @@ function parseNaturalWonderAnimationIniPath(animationSpec) {
 }
 
 function getPreview(request) {
-  const { c3xPath, kind } = request;
+  const { c3xPath, civ3Path, kind } = request;
 
   if (kind === 'district' || kind === 'wonder' || kind === 'naturalWonder') {
     const pcx = resolvePcxPath(c3xPath, request.fileName);
@@ -443,6 +497,20 @@ function getPreview(request) {
     const iniAbs = path.isAbsolute(rel) ? rel : path.join(c3xPath, 'Art', 'Animations', rel);
     const flc = parseIniForFlc(iniAbs);
     if (!flc || !fileExists(flc)) return { ok: false, error: 'FLC from animation spec not found' };
+    return { ok: true, ...decodeByPath(flc) };
+  }
+
+  if (kind === 'civilopediaIcon') {
+    const iconPath = resolveConquestsAssetPath(civ3Path, request.assetPath);
+    if (!iconPath) return { ok: false, error: 'Civilopedia icon not found' };
+    return { ok: true, ...decodeByPath(iconPath) };
+  }
+
+  if (kind === 'unitAnimation') {
+    const unitIni = resolveUnitIniPath(civ3Path, request.animationName);
+    if (!unitIni) return { ok: false, error: 'Unit INI not found for animation name' };
+    const flc = parseIniForFlc(unitIni);
+    if (!flc || !fileExists(flc)) return { ok: false, error: 'No FLC found in unit INI' };
     return { ok: true, ...decodeByPath(flc) };
   }
 

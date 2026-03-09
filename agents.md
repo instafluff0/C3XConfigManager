@@ -1,7 +1,7 @@
 # agents.md
 
 ## Scope
-This folder contains an Electron app (`C3X Config Manager`) for managing C3X config files in a UI.
+This folder contains an Electron app (`Civ 3 | C3X Modern Configuration Manager`) for managing C3X config files in a UI.
 
 ## Ground Truth From C3X Parsing
 Behavior is based on `injected_code.c`:
@@ -60,8 +60,33 @@ Scenario scope writes:
 - Settings are persisted in Electron `userData/settings.json`.
 - On app load, paths are inferred if missing:
   - C3X path candidates include app-adjacent `C3X` folders and app/parent dirs containing `default.c3x_config.ini`.
-  - Conquests path defaults to app parent when that folder is named `Conquests`, or C3X parent when named `Conquests`.
+  - Civilization III path defaults to app grandparent when app parent is `Conquests`, or C3X grandparent when C3X parent is `Conquests`.
 - If inferred/saved paths exist, app auto-loads configs.
+
+## Civilopedia Data Ground Truth
+- Standard Game read-only tabs are driven by layered text sources under the Civ3 root:
+  - Vanilla: `Text/Civilopedia.txt` + `Text/PediaIcons.txt`
+  - PTW: `civ3PTW/Text/Civilopedia.txt` + `civ3PTW/Text/PediaIcons.txt`
+  - Conquests: `Conquests/Text/Civilopedia.txt` + `Conquests/Text/PediaIcons.txt`
+- Layer precedence is key-based override: `Conquests > civ3PTW > vanilla`.
+  - If the same `#KEY` block exists in multiple layers, the highest layer wins.
+- Entity tabs and keys:
+  - `Civs`: `RACE_*`
+  - `Techs`: `TECH_*`
+  - `Resources`: `GOOD_*`
+  - `Improvements`: `BLDG_*`
+  - `Units`: `PRTO_*`
+- Civilopedia text structure:
+  - `#PRTO_*`, `#TECH_*`, `#GOOD_*`, `#RACE_*` blocks are short overview/usage text.
+  - Long encyclopedia text is under `#DESC_<KEY>` blocks.
+  - Display names should be derived from keys (not first prose lines).
+- PediaIcons mapping used by app:
+  - Icons: `#ICON_<KEY>` (usually large then small path lines).
+  - Techs are a special case in `PediaIcons.txt`: `#TECH_*` and `#TECH_*_LARGE` (not `#ICON_TECH_*`).
+  - Unit animation folder indirection: `#ANIMNAME_PRTO_*`.
+  - Civilization portraits: `#RACE_*` block in `PediaIcons.txt`.
+- Art/path resolution for read-only previews follows same precedence:
+  - `Conquests/Art` first, then `civ3PTW/Art`, then base `Art`.
 
 ## UI/Editing Behavior
 - Mode labels in UI are:

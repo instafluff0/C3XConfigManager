@@ -362,10 +362,31 @@ button:disabled {
 }
 
 .tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(57, 62, 95, 0.18);
+}
+
+.tab-group {
+  display: grid;
+  gap: 6px;
+}
+
+.tab-group-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #49567f;
+  font-weight: 700;
+}
+
+.tab-group-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 10px;
 }
 
 .tab-btn.active {
@@ -473,6 +494,7 @@ button:disabled {
   overflow: auto;
   display: grid;
   gap: 6px;
+  align-content: start;
 }
 
 .entry-list-item {
@@ -482,11 +504,40 @@ button:disabled {
   text-align: left;
   padding: 7px 8px;
   display: grid;
-  gap: 2px;
+  grid-template-columns: 30px 1fr;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
 }
 
 .entry-list-item strong {
   font-size: 0.82rem;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+
+.entry-list-item.no-thumb {
+  grid-template-columns: 1fr;
+}
+
+.entry-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid rgba(73, 69, 98, 0.2);
+  background: rgba(255, 255, 255, 0.92);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.entry-thumb-canvas {
+  width: 26px;
+  height: 26px;
+  image-rendering: pixelated;
 }
 
 .entry-list-item.active {
@@ -510,6 +561,10 @@ button:disabled {
   flex-wrap: wrap;
   gap: 8px;
   margin: 6px 0 8px;
+}
+
+.preview-wrap.compact {
+  margin: 0;
 }
 
 .preview-tools {
@@ -564,6 +619,18 @@ button:disabled {
   color: #5b668b;
 }
 
+.reference-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(220px, 0.85fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.reference-text-col,
+.reference-art-col {
+  min-width: 0;
+}
+
 .section-top {
   display: flex;
   justify-content: space-between;
@@ -596,6 +663,62 @@ button:disabled {
   color: var(--ink-dim);
   margin: 4px 0 8px;
   font-size: 0.83rem;
+}
+
+.hint-compact {
+  font-size: 0.72rem;
+}
+
+.reference-helper-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 4px 0 8px;
+}
+
+.reference-helper-row .hint {
+  margin: 0;
+}
+
+.reference-notice {
+  font-size: 0.72rem;
+  color: #355a4a;
+  background: rgba(225, 244, 235, 0.9);
+  border: 1px solid rgba(103, 159, 129, 0.35);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+.reference-notice.error {
+  color: #8f321a;
+  background: rgba(250, 231, 225, 0.95);
+  border-color: rgba(189, 92, 63, 0.42);
+}
+
+.remove-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(123, 77, 70, 0.45);
+  color: #8f3e2c;
+  background: rgba(252, 236, 230, 0.88);
+  font-size: 0.72rem;
+  font-weight: 800;
+  margin-right: 7px;
+  line-height: 1;
+}
+
+.reference-filter-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .filter-row {
@@ -651,6 +774,17 @@ button:disabled {
   font-size: 0.72rem;
   color: #45537f;
   line-height: 1.3;
+}
+
+.pedia-paragraph {
+  margin: 0 0 6px;
+}
+
+.pedia-link {
+  color: #245bca;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
 }
 
 .multi-value-group {
@@ -713,9 +847,15 @@ button:disabled {
 }
 
 .icon-c3x { background: linear-gradient(135deg, #28a39a, #69d4c9); }
+.icon-unit { background: linear-gradient(135deg, #2f78d8, #9fc8ff); }
+.icon-tech { background: linear-gradient(135deg, #d26d1e, #ffbf75); }
+.icon-civ { background: linear-gradient(135deg, #7f45c7, #c5a5f3); }
+.icon-resource { background: linear-gradient(135deg, #c54e44, #f2a59e); }
+.icon-improv { background: linear-gradient(135deg, #8d5f2a, #d9b67e); }
+.icon-gov { background: linear-gradient(135deg, #4f5e9d, #a4b3e6); }
 .icon-district { background: linear-gradient(135deg, #e98949, #ffd084); }
 .icon-wonder { background: linear-gradient(135deg, #4f74df, #8fb0ff); }
-.icon-natural { background: linear-gradient(135deg, #24a06d, #8ae6b5); }
+.icon-natural { background: linear-gradient(135deg, #249a7f, #86e1cc); }
 .icon-anim { background: linear-gradient(135deg, #7d71e8, #c2baf9); }
 
 @media (max-width: 980px) {
@@ -735,6 +875,10 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .tabs {
+    grid-template-columns: 1fr;
+  }
+
   .entry-list-pane {
     max-height: 180px;
   }
@@ -742,5 +886,13 @@ button:disabled {
   .preview-tools {
     grid-template-columns: 1fr;
     align-items: start;
+  }
+
+  .reference-detail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .reference-filter-row {
+    grid-template-columns: 1fr;
   }
 }

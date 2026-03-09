@@ -39,6 +39,15 @@ const FILE_SPECS = {
   }
 };
 
+const REFERENCE_TAB_SPECS = [
+  { key: 'civilizations', title: 'Civs', prefix: 'RACE_' },
+  { key: 'technologies', title: 'Techs', prefix: 'TECH_' },
+  { key: 'resources', title: 'Resources', prefix: 'GOOD_' },
+  { key: 'improvements', title: 'Improvements', prefix: 'BLDG_' },
+  { key: 'governments', title: 'Governments', prefix: 'GOVT_' },
+  { key: 'units', title: 'Units', prefix: 'PRTO_' }
+];
+
 function readTextIfExists(filePath) {
   try {
     if (!filePath || !fs.existsSync(filePath)) {
@@ -48,6 +57,399 @@ function readTextIfExists(filePath) {
   } catch (_err) {
     return null;
   }
+}
+
+function normalizeRelativePath(raw) {
+  return String(raw || '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/^\.?[\\/]+/, '')
+    .replace(/\\/g, '/');
+}
+
+function resolveCiv3RootPath(civ3Path) {
+  if (!civ3Path) return '';
+  const base = path.basename(civ3Path).toLowerCase();
+  if (base === 'conquests' || base === 'civ3ptw') {
+    return path.dirname(civ3Path);
+  }
+  return civ3Path;
+}
+
+function getTextLayerFiles(civ3Path, name) {
+  const root = resolveCiv3RootPath(civ3Path);
+  if (!root) {
+    return [];
+  }
+  return [
+    { layer: 'vanilla', filePath: path.join(root, 'Text', name) },
+    { layer: 'ptw', filePath: path.join(root, 'civ3PTW', 'Text', name) },
+    { layer: 'conquests', filePath: path.join(root, 'Conquests', 'Text', name) }
+  ];
+}
+
+function readTextLayers(civ3Path, name) {
+  const layers = {};
+  for (const ref of getTextLayerFiles(civ3Path, name)) {
+    layers[ref.layer] = {
+      filePath: ref.filePath,
+      text: readTextIfExists(ref.filePath)
+    };
+  }
+  return layers;
+}
+
+function parseCivilopediaSections(text) {
+  const sections = {};
+  if (!text) return sections;
+
+  const lines = text.split(/\r?\n/);
+  let currentKey = null;
+  let currentLines = [];
+  const flush = () => {
+    if (!currentKey) return;
+    sections[currentKey] = {
+      key: currentKey,
+      rawLines: [...currentLines]
+    };
+  };
+
+  for (const line of lines) {
+    if (line.startsWith('#')) {
+      flush();
+      currentKey = line.slice(1).trim();
+      currentLines = [];
+      continue;
+    }
+    if (currentKey) {
+      currentLines.push(line);
+    }
+  }
+  flush();
+  return sections;
+}
+
+function parsePediaIconsBlocks(text) {
+  const blocks = {};
+  if (!text) return blocks;
+  const lines = text.split(/\r?\n/);
+  let currentKey = null;
+  let currentLines = [];
+  const flush = () => {
+    if (!currentKey) return;
+    blocks[currentKey] = [...currentLines];
+  };
+
+  for (const line of lines) {
+    if (line.startsWith('#')) {
+      flush();
+      currentKey = line.slice(1).trim();
+      currentLines = [];
+      continue;
+    }
+    if (!currentKey) continue;
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(';')) continue;
+    currentLines.push(trimmed);
+  }
+  flush();
+  return blocks;
+}
+
+function toCanonicalKeyMap(rawMap) {
+  const out = {};
+  for (const [key, value] of Object.entries(rawMap || {})) {
+    out[String(key || '').toUpperCase()] = {
+      rawKey: key,
+      value
+    };
+  }
+  return out;
+}
+
+function mergeByPrecedence(mapsByLayer) {
+  const merged = {};
+  for (const layer of ['vanilla', 'ptw', 'conquests']) {
+    const src = mapsByLayer[layer] || {};
+    for (const [key, value] of Object.entries(src)) {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+function inferDisplayNameFromKey(shortKey) {
+  const acronyms = new Set(['AEGIS']);
+  return String(shortKey || '')
+    .split('_')
+    .filter(Boolean)
+    .map((word) => {
+      if (acronyms.has(word)) return word;
+      if (/^[IVX]+$/.test(word)) return word;
+      const lower = word.toLowerCase();
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(' ')
+    .trim();
+}
+
+function parseBodyFromCivilopediaSection(civilopediaSection) {
+  const lines = (civilopediaSection && civilopediaSection.rawLines) || [];
+  const bodyLines = [];
+  for (const line of lines) {
+    const trimmed = String(line || '').trim();
+    if (!trimmed || trimmed.startsWith(';')) continue;
+    const cleaned = trimmed.replace(/\^/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!cleaned) continue;
+    bodyLines.push(cleaned);
+  }
+  return bodyLines;
+}
+
+function dedupeStrings(values) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values) {
+    const key = String(value || '').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
+function extractTechDependenciesFromText(bodyLines) {
+  const deps = [];
+  for (const line of bodyLines || []) {
+    const linkMatches = line.match(/=TECH_[A-Za-z0-9_]+/g) || [];
+    for (const token of linkMatches) {
+      deps.push(token.slice(1).replace(/^TECH_/, '').replace(/_/g, ' '));
+    }
+    const tokenMatches = line.match(/\bTECH_[A-Za-z0-9_]+\b/g) || [];
+    for (const token of tokenMatches) {
+      deps.push(token.replace(/^TECH_/, '').replace(/_/g, ' '));
+    }
+
+    const requires = line.match(/\brequires?\b\s*[:\-]?\s*(.+)$/i);
+    if (!requires) continue;
+    const rhs = requires[1].split(/[.;]/)[0];
+    rhs.split(/,|\/|\band\b/i).forEach((piece) => {
+      const cleaned = piece.replace(/[\[\]()]/g, '').trim();
+      if (cleaned.length > 1) deps.push(cleaned);
+    });
+  }
+  return dedupeStrings(deps);
+}
+
+function mergeSimplePrecedence(vanillaMap, ptwMap, conquestsMap) {
+  return {
+    ...(vanillaMap || {}),
+    ...(ptwMap || {}),
+    ...(conquestsMap || {})
+  };
+}
+
+function parseImprovementKindsFromCivilopediaText(text) {
+  const kinds = {};
+  if (!text) return kinds;
+
+  const lines = text.split(/\r?\n/);
+  let scope = 'normal';
+  for (const rawLine of lines) {
+    const line = String(rawLine || '').trim();
+    if (!line) continue;
+
+    if (line.startsWith(';')) {
+      const upper = line.toUpperCase();
+      if (upper.includes('SMALL WONDERS')) {
+        scope = 'small_wonder';
+      } else if (upper.includes('GREAT WONDERS')) {
+        scope = 'wonder';
+      } else if (upper.includes('CITY IMPROVEMENTS') || upper.includes('END SMALL WONDERS') || upper.includes('END GREAT WONDERS')) {
+        scope = 'normal';
+      }
+      continue;
+    }
+
+    if (!line.startsWith('#BLDG_')) continue;
+    const key = line.slice(1).trim().toUpperCase();
+    if (!key) continue;
+    kinds[key] = scope;
+  }
+  return kinds;
+}
+
+function parseImprovementKindsFromPediaIconsBlocks(blocks) {
+  const kinds = {};
+  for (const key of Object.keys(blocks || {})) {
+    const upper = String(key || '').toUpperCase();
+    if (!upper.startsWith('WON_SPLASH_BLDG_')) continue;
+    const bldg = `BLDG_${upper.slice('WON_SPLASH_BLDG_'.length)}`;
+    kinds[bldg] = 'wonder';
+  }
+  return kinds;
+}
+
+function mapPediaIconsForKey(pediaBlocks, civilopediaKey) {
+  const collectIconLines = (upperKey) => {
+    const iconKey = `ICON_${upperKey}`;
+    const iconBlock = (pediaBlocks[iconKey] && pediaBlocks[iconKey].value) || [];
+    const techSmallBlock = (pediaBlocks[upperKey] && pediaBlocks[upperKey].value) || [];
+    const techLargeBlock = (pediaBlocks[`${upperKey}_LARGE`] && pediaBlocks[`${upperKey}_LARGE`].value) || [];
+    return [...iconBlock, ...techLargeBlock, ...techSmallBlock]
+      .filter((line) => /[\\/]/.test(line) || /\.(pcx|flc|ini)$/i.test(line));
+  };
+
+  const upperKey = civilopediaKey.toUpperCase();
+  const usableLines = collectIconLines(upperKey);
+  const raceIconKey = `ICON_RACE_${upperKey.replace(/^RACE_/, '')}`;
+  const raceIconBlock = (pediaBlocks[raceIconKey] && pediaBlocks[raceIconKey].value) || [];
+  const raceUsable = raceIconBlock.filter((line) => /[\\/]/.test(line) || /\.(pcx|flc|ini)$/i.test(line));
+
+  const govFallback = [];
+  if (upperKey.startsWith('GOVT_') && usableLines.length === 0) {
+    const short = upperKey.slice('GOVT_'.length);
+    govFallback.push(...collectIconLines(`TECH_${short}`));
+    if (govFallback.length === 0) {
+      const techCandidates = Object.keys(pediaBlocks)
+        .filter((key) => key.startsWith('TECH_') && !key.endsWith('_LARGE') && !key.startsWith('ICON_'));
+      const bySuffix = techCandidates.find((key) => key.endsWith(`_${short}`));
+      const byToken = bySuffix || techCandidates.find((key) => key.split('_').includes(short));
+      if (byToken) {
+        govFallback.push(...collectIconLines(byToken));
+      }
+    }
+  }
+
+  const rawPaths = [...usableLines, ...govFallback, ...raceUsable].map((line) => normalizeRelativePath(line));
+  const iconPaths = dedupeStrings(rawPaths.filter(Boolean));
+
+  const animKey = `ANIMNAME_${civilopediaKey.toUpperCase()}`;
+  const animBlock = (pediaBlocks[animKey] && pediaBlocks[animKey].value) || [];
+  const animName = animBlock.length > 0 ? String(animBlock[0]).trim() : '';
+
+  const raceBlock = (pediaBlocks[civilopediaKey.toUpperCase()] && pediaBlocks[civilopediaKey.toUpperCase()].value) || [];
+  const racePaths = raceBlock.map((line) => normalizeRelativePath(line)).filter(Boolean);
+
+  return {
+    iconPaths,
+    animationName: animName,
+    racePaths: dedupeStrings(racePaths)
+  };
+}
+
+function buildReferenceTabs(civ3Path) {
+  const civilopediaLayers = readTextLayers(civ3Path, 'Civilopedia.txt');
+  const pediaIconLayers = readTextLayers(civ3Path, 'PediaIcons.txt');
+  const improvementKindsByKey = mergeSimplePrecedence(
+    mergeSimplePrecedence(
+      parseImprovementKindsFromPediaIconsBlocks(parsePediaIconsBlocks((pediaIconLayers.vanilla && pediaIconLayers.vanilla.text) || '')),
+      parseImprovementKindsFromCivilopediaText((civilopediaLayers.vanilla && civilopediaLayers.vanilla.text) || ''),
+      {}
+    ),
+    mergeSimplePrecedence(
+      parseImprovementKindsFromPediaIconsBlocks(parsePediaIconsBlocks((pediaIconLayers.ptw && pediaIconLayers.ptw.text) || '')),
+      parseImprovementKindsFromCivilopediaText((civilopediaLayers.ptw && civilopediaLayers.ptw.text) || ''),
+      {}
+    ),
+    mergeSimplePrecedence(
+      parseImprovementKindsFromPediaIconsBlocks(parsePediaIconsBlocks((pediaIconLayers.conquests && pediaIconLayers.conquests.text) || '')),
+      parseImprovementKindsFromCivilopediaText((civilopediaLayers.conquests && civilopediaLayers.conquests.text) || ''),
+      {}
+    )
+  );
+  const civilopediaSections = mergeByPrecedence({
+    vanilla: toCanonicalKeyMap(parseCivilopediaSections((civilopediaLayers.vanilla && civilopediaLayers.vanilla.text) || '')),
+    ptw: toCanonicalKeyMap(parseCivilopediaSections((civilopediaLayers.ptw && civilopediaLayers.ptw.text) || '')),
+    conquests: toCanonicalKeyMap(parseCivilopediaSections((civilopediaLayers.conquests && civilopediaLayers.conquests.text) || ''))
+  });
+  const pediaBlocks = mergeByPrecedence({
+    vanilla: toCanonicalKeyMap(parsePediaIconsBlocks((pediaIconLayers.vanilla && pediaIconLayers.vanilla.text) || '')),
+    ptw: toCanonicalKeyMap(parsePediaIconsBlocks((pediaIconLayers.ptw && pediaIconLayers.ptw.text) || '')),
+    conquests: toCanonicalKeyMap(parsePediaIconsBlocks((pediaIconLayers.conquests && pediaIconLayers.conquests.text) || ''))
+  });
+
+  const tabs = {};
+  for (const tabSpec of REFERENCE_TAB_SPECS) {
+    const entriesByKey = new Map();
+    const prefix = tabSpec.prefix;
+
+    const canonicalPrefix = prefix.toUpperCase();
+    Object.keys(civilopediaSections)
+      .filter((key) => key.startsWith(canonicalPrefix))
+      .forEach((civilopediaKey) => entriesByKey.set(civilopediaKey, { civilopediaKey }));
+
+    Object.keys(pediaBlocks)
+      .filter((key) => key.startsWith(`ICON_${canonicalPrefix}`) || key.startsWith(`ANIMNAME_${canonicalPrefix}`) || key.startsWith(`ICON_RACE_`) || (canonicalPrefix === 'RACE_' && key.startsWith(canonicalPrefix)))
+      .forEach((key) => {
+        let civilopediaKey = key.startsWith('ICON_') ? key.slice(5) : key.startsWith('ANIMNAME_') ? key.slice(9) : key;
+        if (canonicalPrefix === 'RACE_' && key.startsWith('ICON_RACE_')) {
+          civilopediaKey = `RACE_${key.slice('ICON_RACE_'.length)}`;
+        }
+        if (civilopediaKey.startsWith(canonicalPrefix)) {
+          entriesByKey.set(civilopediaKey, { civilopediaKey });
+        }
+      });
+
+    const entries = Array.from(entriesByKey.values())
+      .map((entry) => {
+        const civilopediaSection = (civilopediaSections[entry.civilopediaKey] && civilopediaSections[entry.civilopediaKey].value) || null;
+        const descSection = (civilopediaSections[`DESC_${entry.civilopediaKey}`] && civilopediaSections[`DESC_${entry.civilopediaKey}`].value) || null;
+        const pedia = mapPediaIconsForKey(pediaBlocks, entry.civilopediaKey);
+        const overviewLines = parseBodyFromCivilopediaSection(civilopediaSection);
+        const descLines = parseBodyFromCivilopediaSection(descSection);
+        const shortKey = entry.civilopediaKey.slice(prefix.length);
+        const descriptionLines = descLines.length > 0 ? descLines : overviewLines;
+        const thumbPath =
+          tabSpec.key === 'civilizations'
+            ? (pedia.racePaths[0] || pedia.iconPaths[pedia.iconPaths.length - 1] || '')
+            : (pedia.iconPaths[pedia.iconPaths.length - 1] || pedia.iconPaths[0] || '');
+
+        return {
+          id: shortKey,
+          civilopediaKey: entry.civilopediaKey,
+          name: inferDisplayNameFromKey(shortKey),
+          overview: overviewLines.join('\n'),
+          description: descriptionLines.join('\n'),
+          techDependencies: tabSpec.key === 'technologies' ? [] : extractTechDependenciesFromText(overviewLines),
+          improvementKind: tabSpec.key === 'improvements' ? (improvementKindsByKey[entry.civilopediaKey] || 'normal') : null,
+          iconPaths: pedia.iconPaths,
+          racePaths: pedia.racePaths,
+          thumbPath,
+          animationName: pedia.animationName
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+
+    if (tabSpec.key === 'civilizations') {
+      const fallbackThumb = (entries.find((e) => e.thumbPath) || {}).thumbPath || '';
+      if (fallbackThumb) {
+        entries.forEach((entry) => {
+          if (!entry.thumbPath) {
+            entry.thumbPath = fallbackThumb;
+          }
+        });
+      }
+    }
+
+    tabs[tabSpec.key] = {
+      title: tabSpec.title,
+      type: 'reference',
+      readOnly: true,
+      sourcePath: (civilopediaLayers.conquests && civilopediaLayers.conquests.filePath) || '',
+      sourceDetails: {
+        civilopediaVanilla: (civilopediaLayers.vanilla && civilopediaLayers.vanilla.filePath) || '',
+        civilopediaPtw: (civilopediaLayers.ptw && civilopediaLayers.ptw.filePath) || '',
+        civilopediaConquests: (civilopediaLayers.conquests && civilopediaLayers.conquests.filePath) || '',
+        pediaIconsVanilla: (pediaIconLayers.vanilla && pediaIconLayers.vanilla.filePath) || '',
+        pediaIconsPtw: (pediaIconLayers.ptw && pediaIconLayers.ptw.filePath) || '',
+        pediaIconsConquests: (pediaIconLayers.conquests && pediaIconLayers.conquests.filePath) || ''
+      },
+      entries
+    };
+  }
+
+  return tabs;
 }
 
 function ensureTrailingNewline(text) {
@@ -353,7 +755,7 @@ function serializeSectionedConfig(model, marker) {
 
 function serializeBaseConfig(baseRows, defaultMap, mode) {
   const lines = [];
-  lines.push('; Managed by C3X Config Manager');
+  lines.push('; Managed by Civ 3 | C3X Modern Configuration Manager');
   lines.push(`; Mode: ${mode}`);
   lines.push('');
 
@@ -415,15 +817,26 @@ function resolvePaths({ c3xPath, scenarioPath, mode }) {
 function loadBundle(payload) {
   const mode = payload.mode === 'scenario' ? 'scenario' : 'global';
   const c3xPath = payload.c3xPath || '';
+  const civ3Path = payload.civ3Path || '';
   const scenarioPath = payload.scenarioPath || '';
 
   const filePaths = resolvePaths({ c3xPath, scenarioPath, mode });
   const bundle = {
     mode,
     c3xPath,
+    civ3Path,
     scenarioPath,
     tabs: {}
   };
+
+  if (mode === 'global') {
+    const referenceTabs = buildReferenceTabs(civ3Path);
+    for (const spec of REFERENCE_TAB_SPECS) {
+      if (referenceTabs[spec.key]) {
+        bundle.tabs[spec.key] = referenceTabs[spec.key];
+      }
+    }
+  }
 
   const defaultBaseText = readTextIfExists(filePaths.base.defaultPath) || '';
   const scenarioBaseText = readTextIfExists(filePaths.base.scenarioPath) || '';
@@ -502,6 +915,7 @@ module.exports = {
   parseIniFieldDocs,
   parseIniSectionMap,
   parseSectionFieldDocs,
+  buildReferenceTabs,
   resolvePaths,
   loadBundle,
   saveBundle
