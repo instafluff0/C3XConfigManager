@@ -76,6 +76,10 @@ const state = {
     open: false,
     resolve: null
   },
+  entityModal: {
+    open: false,
+    resolve: null
+  },
   globalSearch: {
     open: false,
     query: '',
@@ -132,6 +136,12 @@ const el = {
   unsavedSaveContinue: document.getElementById('unsaved-save-continue'),
   unsavedDiscard: document.getElementById('unsaved-discard'),
   unsavedCancel: document.getElementById('unsaved-cancel'),
+  entityModalOverlay: document.getElementById('entity-modal-overlay'),
+  entityModalTitle: document.getElementById('entity-modal-title'),
+  entityModalBody: document.getElementById('entity-modal-body'),
+  entityModalContent: document.getElementById('entity-modal-content'),
+  entityModalCancel: document.getElementById('entity-modal-cancel'),
+  entityModalConfirm: document.getElementById('entity-modal-confirm'),
   globalSearchOverlay: document.getElementById('global-search-overlay'),
   globalSearchInput: document.getElementById('global-search-input'),
   globalSearchResults: document.getElementById('global-search-results'),
@@ -181,6 +191,15 @@ const TAB_GROUPS = [
   { label: 'CIV 3', keys: ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts', 'map', 'scenarioSettings', 'players', 'terrain', 'world', 'rules', 'terrainPedia', 'workerActions'] },
   { label: 'C3X', keys: ['base', 'districts', 'wonders', 'naturalWonders', 'animations'] }
 ];
+const REFERENCE_MUTABLE_ENTITY_TABS = new Set(['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units']);
+const REFERENCE_PREFIX_BY_TAB = {
+  civilizations: 'RACE_',
+  technologies: 'TECH_',
+  resources: 'GOOD_',
+  improvements: 'BLDG_',
+  governments: 'GOVT_',
+  units: 'PRTO_'
+};
 const BIQ_TERRAIN_ATLAS_FILES = [
   'Art/Terrain/xtgc.pcx',
   'Art/Terrain/xpgc.pcx',
@@ -5027,9 +5046,411 @@ function buildBiqRecordSectionNav({ tabKey, sectionCode, rowsRoot, navHost }) {
   };
 }
 
+function ensureReferenceRecordOps(tab) {
+  if (!tab) return [];
+  if (!Array.isArray(tab.recordOps)) tab.recordOps = [];
+  return tab.recordOps;
+}
+
+function normalizeReferenceKeyToken(raw) {
+  return String(raw || '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Za-z0-9_]/g, '')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase();
+}
+
+function inferReferenceNameFromKey(civilopediaKey, tabKey) {
+  const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
+  const key = String(civilopediaKey || '').toUpperCase();
+  const short = prefix && key.startsWith(prefix) ? key.slice(prefix.length) : key;
+  return short
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (m) => m.toUpperCase())
+    .trim() || 'New Entry';
+}
+
+function makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredName) {
+  const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
+  const entries = (tab && Array.isArray(tab.entries)) ? tab.entries : [];
+  const existing = new Set(entries.map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase()));
+  let token = normalizeReferenceKeyToken(desiredName);
+  if (!token) token = `NEW_${Date.now()}`;
+  let key = `${prefix}${token}`;
+  let i = 2;
+  while (existing.has(key)) {
+    key = `${prefix}${token}_${i}`;
+    i += 1;
+  }
+  return key;
+}
+
+function makeDefaultReferenceFieldValue(field, name) {
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  if (base === 'name' || base === 'description' || base === 'civilizationname') return String(name || '');
+  const raw = String(field && field.value || '').trim().toLowerCase();
+  if (raw === 'true' || raw === 'false') return 'false';
+  const n = parseIntFromDisplayValue(field && field.value);
+  if (n != null) return '0';
+  return '';
+}
+
+function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKey, mode }) {
+  const src = sourceEntry ? JSON.parse(JSON.stringify(sourceEntry)) : {};
+  const name = inferReferenceNameFromKey(civilopediaKey, tabKey);
+  const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
+  const shortId = prefix && civilopediaKey.startsWith(prefix) ? civilopediaKey.slice(prefix.length) : civilopediaKey;
+  const entry = {
+    ...src,
+    id: shortId,
+    civilopediaKey,
+    biqIndex: null,
+    name,
+    isNew: true
+  };
+  if (!Array.isArray(entry.biqFields) && sourceEntry && Array.isArray(sourceEntry.biqFields)) {
+    entry.biqFields = JSON.parse(JSON.stringify(sourceEntry.biqFields));
+  }
+  if (!Array.isArray(entry.biqFields)) entry.biqFields = [];
+  if (mode === 'blank') {
+    entry.overview = '';
+    entry.description = '';
+    entry.iconPaths = [];
+    entry.racePaths = [];
+    entry.animationName = '';
+    entry.biqFields = entry.biqFields.map((field) => ({
+      ...field,
+      value: makeDefaultReferenceFieldValue(field, name),
+      originalValue: ''
+    }));
+  } else if (mode === 'import') {
+    entry.biqFields = entry.biqFields.map((field) => ({
+      ...field,
+      originalValue: ''
+    }));
+  } else {
+    entry.biqFields = entry.biqFields.map((field) => ({
+      ...field,
+      originalValue: String(field && field.value || '')
+    }));
+  }
+  entry.originalOverview = '';
+  entry.originalDescription = '';
+  entry.originalIconPaths = [];
+  entry.originalRacePaths = [];
+  entry.originalAnimationName = '';
+  return entry;
+}
+
+function hideEntityModal() {
+  state.entityModal.open = false;
+  if (el.entityModalOverlay) {
+    el.entityModalOverlay.classList.add('hidden');
+    el.entityModalOverlay.setAttribute('aria-hidden', 'true');
+  }
+  if (el.entityModalTitle) el.entityModalTitle.textContent = 'Manage Entry';
+  if (el.entityModalBody) el.entityModalBody.textContent = '';
+  if (el.entityModalContent) el.entityModalContent.innerHTML = '';
+  if (el.entityModalConfirm) {
+    el.entityModalConfirm.classList.remove('danger');
+    el.entityModalConfirm.textContent = 'Confirm';
+    el.entityModalConfirm.disabled = false;
+    el.entityModalConfirm.onclick = null;
+  }
+  if (el.entityModalCancel) el.entityModalCancel.onclick = null;
+}
+
+function resolveEntityModal(payload) {
+  const resolver = state.entityModal.resolve;
+  state.entityModal.resolve = null;
+  hideEntityModal();
+  if (typeof resolver === 'function') resolver(payload || null);
+}
+
+async function loadImportEntriesForTab(tabKey, filePath) {
+  const loaded = await window.c3xManager.loadBundle({
+    mode: 'scenario',
+    c3xPath: state.settings.c3xPath,
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: filePath
+  });
+  if (!loaded || !loaded.tabs || !loaded.tabs[tabKey] || !Array.isArray(loaded.tabs[tabKey].entries)) {
+    throw new Error('Could not load import source scenario.');
+  }
+  return loaded.tabs[tabKey].entries;
+}
+
+async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initialMode = 'blank', lockMode = false }) {
+  if (!el.entityModalOverlay || !el.entityModalContent) return null;
+  const entityName = String((tab && tab.title) || 'Entries').replace(/s$/, '') || 'entry';
+  const defaultName = (initialMode === 'copy' && selectedEntry) ? `${selectedEntry.name || ''} Copy`.trim() : '';
+  if (el.entityModalTitle) el.entityModalTitle.textContent = `${entityName}: Add / Copy / Import`;
+  if (el.entityModalBody) el.entityModalBody.textContent = 'Choose how to create the new entry. Import lets you copy from another scenario file.';
+  if (el.entityModalConfirm) {
+    el.entityModalConfirm.textContent = 'Create';
+    el.entityModalConfirm.disabled = false;
+  }
+  el.entityModalContent.innerHTML = '';
+
+  const form = document.createElement('div');
+  form.className = 'entity-modal-content';
+  const grid = document.createElement('div');
+  grid.className = 'entity-form-grid';
+  form.appendChild(grid);
+
+  const nameField = document.createElement('div');
+  nameField.className = 'entity-field';
+  const nameLabel = document.createElement('label');
+  nameLabel.textContent = 'Name';
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.placeholder = `New ${entityName} name`;
+  nameInput.value = defaultName;
+  nameField.appendChild(nameLabel);
+  nameField.appendChild(nameInput);
+  grid.appendChild(nameField);
+
+  const modeField = document.createElement('div');
+  modeField.className = 'entity-field';
+  const modeLabel = document.createElement('label');
+  modeLabel.textContent = 'Create From';
+  const modeSelect = document.createElement('select');
+  const modeOptions = [
+    { value: 'blank', label: 'Blank template' },
+    { value: 'copy', label: selectedEntry ? 'Copy selected entry' : 'Copy selected entry (unavailable)', disabled: !selectedEntry },
+    { value: 'import', label: 'Import from another scenario' }
+  ];
+  modeOptions.forEach((opt) => {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    o.disabled = !!opt.disabled;
+    modeSelect.appendChild(o);
+  });
+  modeField.appendChild(modeLabel);
+  modeField.appendChild(modeSelect);
+  if (modeOptions.some((opt) => opt.value === initialMode && !opt.disabled)) {
+    modeSelect.value = initialMode;
+  }
+  modeSelect.disabled = !!lockMode;
+  grid.appendChild(modeField);
+
+  const importWrap = document.createElement('div');
+  importWrap.className = 'entity-modal-content hidden';
+  const importToolbar = document.createElement('div');
+  importToolbar.className = 'entity-import-toolbar';
+  const importScenarioSelect = document.createElement('select');
+  importScenarioSelect.className = 'entity-import-scenario-select';
+  const importPlaceholder = document.createElement('option');
+  importPlaceholder.value = '';
+  importPlaceholder.textContent = 'Import source scenario...';
+  importScenarioSelect.appendChild(importPlaceholder);
+  const importManual = document.createElement('option');
+  importManual.value = '__manual__';
+  importManual.textContent = 'Manual / Browse...';
+  importScenarioSelect.appendChild(importManual);
+  const addImportGroup = (source, label) => {
+    const items = (state.availableScenarios || []).filter((s) => String(s && s.source || '') === source);
+    if (!items.length) return;
+    const group = document.createElement('optgroup');
+    group.label = label;
+    items.forEach((item) => {
+      const option = document.createElement('option');
+      option.value = String(item.path || '');
+      option.textContent = String(item.name || item.fileName || getPathTail(item.path || ''));
+      option.title = String(item.path || '');
+      group.appendChild(option);
+    });
+    importScenarioSelect.appendChild(group);
+  };
+  addImportGroup('Conquests', 'Conquests Folder');
+  addImportGroup('Scenarios', 'Scenarios Folder');
+  const pickBtn = document.createElement('button');
+  pickBtn.type = 'button';
+  pickBtn.className = 'ghost';
+  pickBtn.textContent = 'Choose Scenario .biq';
+  const importPath = document.createElement('span');
+  importPath.className = 'entity-import-path';
+  importPath.textContent = 'No source file selected';
+  importToolbar.appendChild(importScenarioSelect);
+  importToolbar.appendChild(pickBtn);
+  importToolbar.appendChild(importPath);
+  importWrap.appendChild(importToolbar);
+
+  const importSearch = document.createElement('input');
+  importSearch.type = 'search';
+  importSearch.classList.add('app-search-input');
+  importSearch.placeholder = `Search ${tab.title} in import file...`;
+  importWrap.appendChild(importSearch);
+
+  const importList = document.createElement('div');
+  importList.className = 'entity-import-list';
+  importWrap.appendChild(importList);
+  form.appendChild(importWrap);
+  el.entityModalContent.appendChild(form);
+
+  let importFilePath = '';
+  let importEntries = [];
+  let selectedImportKey = '';
+  const loadImportSource = async (filePath) => {
+    if (!filePath) return;
+    importPath.textContent = 'Loading source entries...';
+    importEntries = [];
+    selectedImportKey = '';
+    renderImportList();
+    try {
+      const loadedEntries = await loadImportEntriesForTab(tabKey, filePath);
+      importFilePath = filePath;
+      importEntries = loadedEntries;
+      importPath.textContent = filePath;
+      renderImportList();
+      if (importEntries.length === 0) {
+        setStatus('Selected scenario has no entries for this tab.', true);
+      }
+    } catch (err) {
+      importPath.textContent = 'Could not load source scenario';
+      setStatus(err && err.message ? err.message : 'Could not load import source scenario.', true);
+    }
+  };
+  const renderImportList = () => {
+    importList.innerHTML = '';
+    const needle = String(importSearch.value || '').trim().toLowerCase();
+    const list = importEntries.filter((entry) => {
+      if (!needle) return true;
+      return `${entry.name || ''} ${entry.civilopediaKey || ''}`.toLowerCase().includes(needle);
+    });
+    if (list.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'hint';
+      empty.textContent = importEntries.length === 0
+        ? 'Select a source scenario to load entries.'
+        : 'No matches for current search.';
+      importList.appendChild(empty);
+      return;
+    }
+    list.slice(0, 250).forEach((entry) => {
+      const key = String(entry.civilopediaKey || '').toUpperCase();
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'entity-import-item';
+      row.classList.toggle('active', key === selectedImportKey);
+      row.innerHTML = `<strong>${entry.name || key}</strong><span>${entry.civilopediaKey || ''}</span>`;
+      row.addEventListener('click', () => {
+        selectedImportKey = key;
+        renderImportList();
+      });
+      importList.appendChild(row);
+    });
+  };
+  const updateModeVisibility = () => {
+    importWrap.classList.toggle('hidden', modeSelect.value !== 'import');
+  };
+
+  importSearch.addEventListener('input', renderImportList);
+  modeSelect.addEventListener('change', updateModeVisibility);
+  importScenarioSelect.addEventListener('change', async () => {
+    const value = String(importScenarioSelect.value || '');
+    if (!value) return;
+    if (value === '__manual__') {
+      pickBtn.click();
+      return;
+    }
+    await loadImportSource(value);
+  });
+  pickBtn.addEventListener('click', async () => {
+    const filePath = await window.c3xManager.pickFile({
+      filters: [{ name: 'BIQ Scenario Files', extensions: ['biq'] }]
+    });
+    if (!filePath) return;
+    const hasOption = Array.from(importScenarioSelect.options).some((opt) => String(opt.value || '') === filePath);
+    if (hasOption) {
+      importScenarioSelect.value = filePath;
+    } else {
+      importScenarioSelect.value = '__manual__';
+    }
+    await loadImportSource(filePath);
+  });
+  updateModeVisibility();
+  renderImportList();
+
+  state.entityModal.open = true;
+  el.entityModalOverlay.classList.remove('hidden');
+  el.entityModalOverlay.setAttribute('aria-hidden', 'false');
+  window.setTimeout(() => nameInput.focus({ preventScroll: true }), 0);
+
+  return new Promise((resolve) => {
+    state.entityModal.resolve = resolve;
+    const onConfirm = () => {
+      const name = String(nameInput.value || '').trim();
+      const mode = String(modeSelect.value || 'blank');
+      if (!name) {
+        setStatus('Name is required.', true);
+        return;
+      }
+      if (mode === 'import') {
+        if (!importFilePath) {
+          setStatus('Select an import scenario first.', true);
+          return;
+        }
+        const picked = importEntries.find((entry) => String(entry && entry.civilopediaKey || '').toUpperCase() === selectedImportKey);
+        if (!picked) {
+          setStatus('Select one import entry from the list.', true);
+          return;
+        }
+        resolveEntityModal({ mode, name, importedEntry: picked, importFilePath });
+        return;
+      }
+      resolveEntityModal({ mode, name });
+    };
+    const onCancel = () => resolveEntityModal(null);
+    if (el.entityModalConfirm) el.entityModalConfirm.onclick = onConfirm;
+    if (el.entityModalCancel) el.entityModalCancel.onclick = onCancel;
+  });
+}
+
+async function promptReferenceDeleteAction({ tab, selectedEntry }) {
+  if (!el.entityModalOverlay || !selectedEntry) return false;
+  if (el.entityModalTitle) el.entityModalTitle.textContent = `Delete ${String((tab && tab.title) || 'Entry').replace(/s$/, '')}`;
+  if (el.entityModalBody) {
+    el.entityModalBody.textContent = `Delete "${selectedEntry.name || selectedEntry.civilopediaKey}"? Related BIQ references will be relinked on save when supported by the BIQ format.`;
+  }
+  if (el.entityModalConfirm) {
+    el.entityModalConfirm.textContent = 'Delete';
+    el.entityModalConfirm.disabled = false;
+  }
+  if (el.entityModalContent) el.entityModalContent.innerHTML = '';
+  state.entityModal.open = true;
+  el.entityModalOverlay.classList.remove('hidden');
+  el.entityModalOverlay.setAttribute('aria-hidden', 'false');
+  if (el.entityModalConfirm) el.entityModalConfirm.classList.add('danger');
+  if (el.entityModalCancel) el.entityModalCancel.focus({ preventScroll: true });
+  return new Promise((resolve) => {
+    state.entityModal.resolve = resolve;
+    const cleanup = () => {
+      if (el.entityModalConfirm) el.entityModalConfirm.classList.remove('danger');
+    };
+    if (el.entityModalConfirm) {
+      el.entityModalConfirm.onclick = () => {
+        cleanup();
+        resolveEntityModal(true);
+      };
+    }
+    if (el.entityModalCancel) {
+      el.entityModalCancel.onclick = () => {
+        cleanup();
+        resolveEntityModal(false);
+      };
+    }
+  });
+}
+
 function renderReferenceTab(tab, tabKey) {
   const wrap = document.createElement('div');
   wrap.className = 'section-editor';
+  const allEntries = tab.entries || [];
 
   const header = document.createElement('div');
   header.className = 'section-editor-header sticky';
@@ -5080,9 +5501,141 @@ function renderReferenceTab(tab, tabKey) {
     techTreeBtn.appendChild(label);
     controls.appendChild(techTreeBtn);
   }
+  if (referenceEditable && REFERENCE_MUTABLE_ENTITY_TABS.has(tabKey)) {
+    const actionRow = document.createElement('div');
+    actionRow.className = 'reference-entity-actions';
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'ghost';
+    addBtn.textContent = '＋ Add';
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'ghost';
+    copyBtn.textContent = '⧉ Copy';
+    const importBtn = document.createElement('button');
+    importBtn.type = 'button';
+    importBtn.className = 'ghost';
+    importBtn.textContent = '⇪ Import';
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'ghost';
+    deleteBtn.textContent = '🗑 Delete';
+    const selectedEntry = allEntries[Math.max(0, Number(state.referenceSelection[tabKey] || 0))] || null;
+    copyBtn.disabled = !selectedEntry;
+    deleteBtn.disabled = !selectedEntry;
+
+    addBtn.addEventListener('click', async () => {
+      const result = await promptReferenceCreateAction({ tab, tabKey, selectedEntry, initialMode: 'copy', lockMode: true });
+      if (!result) return;
+      const template = (result.mode === 'copy' ? selectedEntry : null) || allEntries[0] || null;
+      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, result.name);
+      const sourceEntry = result.mode === 'import' ? result.importedEntry : template;
+      const newEntry = buildNewReferenceEntryFromTemplate({
+        tabKey,
+        sourceEntry,
+        civilopediaKey: key,
+        mode: result.mode === 'import' ? 'import' : (result.mode === 'copy' ? 'copy' : 'blank')
+      });
+      const ops = ensureReferenceRecordOps(tab);
+      if (result.mode === 'copy' && selectedEntry) {
+        ops.push({
+          op: 'copy',
+          sourceRef: String(selectedEntry.civilopediaKey || '').toUpperCase(),
+          newRecordRef: key
+        });
+      } else {
+        ops.push({
+          op: 'add',
+          newRecordRef: key
+        });
+      }
+      rememberUndoSnapshot();
+      tab.entries.unshift(newEntry);
+      state.referenceSelection[tabKey] = 0;
+      setDirty(true);
+      renderActiveTab({ preserveTabScroll: true });
+    });
+
+    copyBtn.addEventListener('click', async () => {
+      if (!selectedEntry) return;
+      const result = await promptReferenceCreateAction({ tab, tabKey, selectedEntry, initialMode: 'import', lockMode: true });
+      if (!result || result.mode !== 'copy') return;
+      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, result.name);
+      const newEntry = buildNewReferenceEntryFromTemplate({
+        tabKey,
+        sourceEntry: selectedEntry,
+        civilopediaKey: key,
+        mode: 'copy'
+      });
+      const ops = ensureReferenceRecordOps(tab);
+      ops.push({
+        op: 'copy',
+        sourceRef: String(selectedEntry.civilopediaKey || '').toUpperCase(),
+        newRecordRef: key
+      });
+      rememberUndoSnapshot();
+      tab.entries.unshift(newEntry);
+      state.referenceSelection[tabKey] = 0;
+      setDirty(true);
+      renderActiveTab({ preserveTabScroll: true });
+    });
+
+    importBtn.addEventListener('click', async () => {
+      const result = await promptReferenceCreateAction({ tab, tabKey, selectedEntry });
+      if (!result || result.mode !== 'import' || !result.importedEntry) return;
+      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, result.name);
+      const newEntry = buildNewReferenceEntryFromTemplate({
+        tabKey,
+        sourceEntry: result.importedEntry,
+        civilopediaKey: key,
+        mode: 'import'
+      });
+      const ops = ensureReferenceRecordOps(tab);
+      ops.push({
+        op: 'add',
+        newRecordRef: key
+      });
+      rememberUndoSnapshot();
+      tab.entries.unshift(newEntry);
+      state.referenceSelection[tabKey] = 0;
+      setDirty(true);
+      renderActiveTab({ preserveTabScroll: true });
+    });
+
+    deleteBtn.addEventListener('click', async () => {
+      if (!selectedEntry) return;
+      const confirmed = await promptReferenceDeleteAction({ tab, selectedEntry });
+      if (!confirmed) return;
+      const targetKey = String(selectedEntry.civilopediaKey || '').toUpperCase();
+      const ops = ensureReferenceRecordOps(tab);
+      rememberUndoSnapshot();
+      tab.entries = (tab.entries || []).filter((entry) => String(entry && entry.civilopediaKey || '').toUpperCase() !== targetKey);
+      const hadCreateOp = ops.some((op) => String(op && op.newRecordRef || '').toUpperCase() === targetKey);
+      tab.recordOps = ops.filter((op) => {
+        const newRef = String(op && op.newRecordRef || '').toUpperCase();
+        const srcRef = String(op && op.sourceRef || '').toUpperCase();
+        const recRef = String(op && op.recordRef || '').toUpperCase();
+        if (newRef === targetKey) return false;
+        if (srcRef === targetKey) return false;
+        if (recRef === targetKey) return false;
+        return true;
+      });
+      if (!hadCreateOp) {
+        ensureReferenceRecordOps(tab).push({ op: 'delete', recordRef: targetKey });
+      }
+      state.referenceSelection[tabKey] = 0;
+      setDirty(true);
+      renderActiveTab({ preserveTabScroll: true });
+    });
+
+    actionRow.appendChild(addBtn);
+    actionRow.appendChild(copyBtn);
+    actionRow.appendChild(importBtn);
+    actionRow.appendChild(deleteBtn);
+    controls.appendChild(actionRow);
+  }
   wrap.appendChild(controls);
 
-  const allEntries = tab.entries || [];
   const filteredEntries = allEntries
     .map((entry, baseIndex) => ({ entry, baseIndex }))
     .filter(({ entry }) => {
@@ -7572,7 +8125,8 @@ async function loadBundleAndRender(options = {}) {
     });
 
     const previousActiveTab = state.activeTab;
-    const persistedView = loadPersistedViewSnapshot();
+    const shouldUsePersistedView = options && options.usePersistedView === true;
+    const persistedView = shouldUsePersistedView ? loadPersistedViewSnapshot() : null;
     state.bundle = bundle;
     state.isDirty = false;
     state.undoSnapshot = null;
@@ -7664,9 +8218,12 @@ async function saveCurrentBundle() {
 
     const paths = res.saveReport.map((r) => r.path).join(' | ');
     const biqReport = res.saveReport.find((r) => r.kind === 'biq');
+    markReferenceTabsAsSaved();
     captureCleanSnapshot();
     if (biqReport && (Number(biqReport.skipped || 0) > 0 || String(biqReport.warning || '').trim())) {
-      setStatus(`Saved ${res.saveReport.length} file(s): ${paths} | BIQ applied ${biqReport.applied || 0}, skipped ${biqReport.skipped || 0}.`, true);
+      const warningText = friendlyBiqWarningText(String(biqReport.warning || ''));
+      const suffix = warningText ? ` ${warningText}` : '';
+      setStatus(`Saved ${res.saveReport.length} file(s): ${paths} | BIQ applied ${biqReport.applied || 0}, skipped ${biqReport.skipped || 0}.${suffix}`, true);
     } else {
       setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
     }
@@ -7675,6 +8232,69 @@ async function saveCurrentBundle() {
     setStatus(`Failed to save: ${err.message}`, true);
     return false;
   }
+}
+
+function friendlyBiqWarningText(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  const parts = text.split(';').map((p) => p.trim()).filter(Boolean);
+  const out = [];
+  parts.forEach((p) => {
+    const lower = p.toLowerCase();
+    if (lower.includes('cannot delete') && lower.includes('custom map data exists')) {
+      out.push('Some deletes were blocked because this scenario has custom map data (cities/units/tiles).');
+      return;
+    }
+    if (lower.startsWith('missing record')) {
+      out.push('Some requested records were not found at save time.');
+      return;
+    }
+    if (lower.startsWith('unknown section')) {
+      out.push('Some BIQ operations were ignored due to unknown section codes.');
+      return;
+    }
+    if (lower.startsWith('no setter for field')) {
+      out.push('Some field updates were skipped because the BIQ bridge has no writer for those fields.');
+      return;
+    }
+  });
+  const unique = Array.from(new Set(out));
+  return unique.join(' ');
+}
+
+function markReferenceTabEntryOriginals(tab) {
+  if (!tab || !Array.isArray(tab.entries)) return;
+  tab.recordOps = [];
+  tab.entries.forEach((entry) => {
+    if (!entry) return;
+    entry.isNew = false;
+    entry.originalOverview = String(entry.overview || '');
+    entry.originalDescription = String(entry.description || '');
+    entry.originalIconPaths = Array.isArray(entry.iconPaths) ? [...entry.iconPaths] : [];
+    entry.originalRacePaths = Array.isArray(entry.racePaths) ? [...entry.racePaths] : [];
+    entry.originalAnimationName = String(entry.animationName || '');
+    if (Array.isArray(entry.biqFields)) {
+      entry.biqFields.forEach((field) => {
+        if (!field) return;
+        field.originalValue = String(field.value || '');
+      });
+    }
+  });
+}
+
+function markReferenceTabsAsSaved() {
+  if (!state.bundle || !state.bundle.tabs) return;
+  Object.values(state.bundle.tabs).forEach((tab) => {
+    if (!tab) return;
+    if (tab.type === 'reference') {
+      markReferenceTabEntryOriginals(tab);
+      return;
+    }
+    if (tab.key === 'terrain' && tab.civilopedia) {
+      markReferenceTabEntryOriginals(tab.civilopedia.terrain);
+      markReferenceTabEntryOriginals(tab.civilopedia.workerActions);
+    }
+  });
 }
 
 function hideUnsavedChangesModal() {
@@ -7961,6 +8581,13 @@ async function init() {
       }
     });
   }
+  if (el.entityModalOverlay) {
+    el.entityModalOverlay.addEventListener('click', (ev) => {
+      if (ev.target === el.entityModalOverlay) {
+        resolveEntityModal(null);
+      }
+    });
+  }
   if (el.scrollTopFab && el.tabContent) {
     el.scrollTopFab.addEventListener('click', () => {
       el.tabContent.scrollTo({ top: 0, behavior: 'smooth' });
@@ -7993,6 +8620,12 @@ async function init() {
     }
     if (state.unsavedModal.open && ev.key === 'Escape') {
       resolveUnsavedChangesModal('cancel');
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+    if (state.entityModal.open && ev.key === 'Escape') {
+      resolveEntityModal(null);
       ev.preventDefault();
       ev.stopPropagation();
       return;
@@ -8076,7 +8709,7 @@ async function init() {
   updateScrollTopFab();
 
   if (await shouldAutoLoad()) {
-    await loadBundleAndRender();
+    await loadBundleAndRender({ usePersistedView: true });
   }
 }
 

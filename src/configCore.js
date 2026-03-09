@@ -2248,6 +2248,7 @@ function buildReferenceTabs(civ3Path, options = {}) {
       title: tabSpec.title,
       type: 'reference',
       readOnly: true,
+      recordOps: [],
       sourcePath:
         ((includeScenarioLayer && civilopediaLayers.scenario && civilopediaLayers.scenario.text) ? civilopediaLayers.scenario.filePath : '')
         || (civilopediaLayers.conquests && civilopediaLayers.conquests.filePath)
@@ -2852,9 +2853,10 @@ function saveBundle(payload) {
   }
 
   if (mode === 'scenario' && isBiqPath(scenarioPath)) {
+    const biqRecordOps = collectBiqReferenceRecordOps(payload.tabs || {});
     const biqEdits = collectBiqReferenceEdits(payload.tabs || {});
     const structureEdits = collectBiqStructureEdits(payload.tabs || {});
-    const allBiqEdits = biqEdits.concat(structureEdits);
+    const allBiqEdits = biqRecordOps.concat(biqEdits).concat(structureEdits);
     if (allBiqEdits.length > 0) {
       const biqSave = applyBiqReferenceEdits({
         biqPath: scenarioPath,
@@ -2941,6 +2943,53 @@ function collectBiqReferenceEdits(tabs) {
     });
   }
   return edits;
+}
+
+function collectBiqReferenceRecordOps(tabs) {
+  const ops = [];
+  for (const spec of REFERENCE_TAB_SPECS) {
+    const tab = tabs[spec.key];
+    if (!tab || !Array.isArray(tab.recordOps) || tab.recordOps.length === 0) continue;
+    const sectionCode = getSectionCodeForReferenceTabKey(spec.key);
+    if (!sectionCode) continue;
+    tab.recordOps.forEach((op) => {
+      const kind = String(op && op.op || '').toLowerCase();
+      if (kind === 'add') {
+        const newRecordRef = String(op.newRecordRef || '').trim().toUpperCase();
+        if (!newRecordRef) return;
+        const copyFromRef = String(op.copyFromRef || '').trim().toUpperCase();
+        ops.push({
+          op: copyFromRef ? 'copy' : 'add',
+          sectionCode,
+          newRecordRef,
+          copyFromRef
+        });
+        return;
+      }
+      if (kind === 'copy') {
+        const sourceRef = String(op.sourceRef || '').trim().toUpperCase();
+        const newRecordRef = String(op.newRecordRef || '').trim().toUpperCase();
+        if (!sourceRef || !newRecordRef) return;
+        ops.push({
+          op: 'copy',
+          sectionCode,
+          sourceRef,
+          newRecordRef
+        });
+        return;
+      }
+      if (kind === 'delete') {
+        const recordRef = String(op.recordRef || '').trim().toUpperCase();
+        if (!recordRef) return;
+        ops.push({
+          op: 'delete',
+          sectionCode,
+          recordRef
+        });
+      }
+    });
+  }
+  return ops;
 }
 
 function collectBiqStructureEdits(tabs) {
@@ -3158,8 +3207,19 @@ function applyBiqReferenceEdits({ biqPath, edits, javaPath }) {
   );
   try {
     const lines = edits.map((edit) => {
+      const op = String(edit && edit.op || 'set').toLowerCase();
+      if (op === 'add') {
+        return `ADD\t${edit.sectionCode}\t${String(edit.newRecordRef || '').trim().toUpperCase()}\t${String(edit.copyFromRef || '').trim().toUpperCase()}`;
+      }
+      if (op === 'copy') {
+        const source = String(edit.sourceRef || edit.copyFromRef || '').trim().toUpperCase();
+        return `COPY\t${edit.sectionCode}\t${source}\t${String(edit.newRecordRef || '').trim().toUpperCase()}`;
+      }
+      if (op === 'delete') {
+        return `DELETE\t${edit.sectionCode}\t${String(edit.recordRef || '').trim().toUpperCase()}`;
+      }
       const encoded = Buffer.from(String(edit.value || ''), 'utf8').toString('base64');
-      return `${edit.sectionCode}\t${edit.recordRef}\t${edit.fieldKey}\t${encoded}`;
+      return `SET\t${edit.sectionCode}\t${edit.recordRef}\t${edit.fieldKey}\t${encoded}`;
     });
     fs.writeFileSync(patchPath, `${lines.join('\n')}\n`, 'utf8');
     const javaBinary = findJavaBinary(javaPath);

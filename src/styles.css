@@ -654,6 +654,103 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.entity-modal {
+  width: min(760px, 100%);
+}
+
+.entity-modal-content {
+  display: grid;
+  gap: 10px;
+}
+
+.entity-form-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.entity-field {
+  display: grid;
+  gap: 6px;
+}
+
+.entity-field label {
+  font-size: 0.78rem;
+  color: #5d5777;
+}
+
+.entity-field input[type='text'],
+.entity-field select {
+  width: 100%;
+}
+
+.entity-import-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.entity-import-path {
+  font-size: 0.74rem;
+  color: #5d5777;
+  max-width: 100%;
+  word-break: break-all;
+}
+
+.entity-import-list {
+  border: 1px solid rgba(36, 25, 64, 0.12);
+  border-radius: 10px;
+  max-height: min(34vh, 280px);
+  overflow: auto;
+  background: #fff;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+}
+
+.entity-import-item {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+
+.entity-import-item:hover {
+  border-color: rgba(51, 102, 213, 0.34);
+  background: rgba(244, 248, 255, 0.96);
+}
+
+.entity-import-item.active {
+  border-color: rgba(226, 125, 42, 0.44);
+  background: rgba(255, 245, 233, 0.96);
+}
+
+.entity-import-item strong {
+  display: block;
+  font-size: 0.88rem;
+}
+
+.entity-import-item span {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  color: #5d5777;
+}
+
+button.danger {
+  background: linear-gradient(140deg, #d24d34, #b93f29);
+  border-color: rgba(144, 40, 24, 0.48);
+  color: #fff;
+}
+
+button.danger:hover {
+  box-shadow: 0 10px 22px rgba(176, 63, 40, 0.32);
+}
+
 .global-search-panel {
   width: min(860px, 100%);
   max-height: min(72vh, 760px);
@@ -2174,6 +2271,13 @@ button:disabled {
   grid-template-columns: minmax(200px, 1fr) auto;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.reference-entity-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .sticky-search-row {
