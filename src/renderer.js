@@ -2686,6 +2686,59 @@ const BIQ_FIELD_ENUMS = {
       { value: '0', label: 'Neutral' },
       { value: '1', label: 'High' },
       { value: '2', label: 'Very High' }
+    ],
+    civilizationgender: [
+      { value: '0', label: 'Masculine' },
+      { value: '1', label: 'Feminine' },
+      { value: '2', label: 'Neuter' }
+    ],
+    leadergender: [
+      { value: '0', label: 'Male' },
+      { value: '1', label: 'Female' }
+    ],
+    defaultcolor: Array.from({ length: 32 }, (_v, idx) => ({ value: String(idx), label: `Color ${idx}` })),
+    uniquecolor: Array.from({ length: 32 }, (_v, idx) => ({ value: String(idx), label: `Color ${idx}` }))
+  },
+  scenarioSettings: {
+    startmonth: [
+      { value: '1', label: 'January' },
+      { value: '2', label: 'February' },
+      { value: '3', label: 'March' },
+      { value: '4', label: 'April' },
+      { value: '5', label: 'May' },
+      { value: '6', label: 'June' },
+      { value: '7', label: 'July' },
+      { value: '8', label: 'August' },
+      { value: '9', label: 'September' },
+      { value: '10', label: 'October' },
+      { value: '11', label: 'November' },
+      { value: '12', label: 'December' }
+    ],
+    alliancevictorytype: [
+      { value: '0', label: 'Individual' },
+      { value: '1', label: 'Coalition' }
+    ]
+  },
+  players: {
+    genderofleadername: [
+      { value: 'Male', label: 'Male' },
+      { value: 'Female', label: 'Female' },
+      { value: '0', label: 'Male' },
+      { value: '1', label: 'Female' }
+    ]
+  },
+  rules: {
+    defaultdifficultylevel: [
+      { value: '0', label: 'Difficulty 1' },
+      { value: '1', label: 'Difficulty 2' },
+      { value: '2', label: 'Difficulty 3' },
+      { value: '3', label: 'Difficulty 4' },
+      { value: '4', label: 'Difficulty 5' },
+      { value: '5', label: 'Difficulty 6' },
+      { value: '6', label: 'Difficulty 7' },
+      { value: '7', label: 'Difficulty 8' },
+      { value: '8', label: 'Difficulty 9' },
+      { value: '9', label: 'Difficulty 10' }
     ]
   }
 };
@@ -2760,6 +2813,93 @@ const BIQ_SECTION_FRIENDLY_NAMES = {
   FLAV: 'AI Flavors'
 };
 
+const BIQ_STRUCTURE_RULE_SCHEMAS = {
+  GAME: {
+    order: [
+      'usedefaultrules', 'defaultvictoryconditions', 'numberofplayablecivs',
+      'usetimelimit', 'startmonth', 'startyear', 'alliancevictorytype',
+      'permitplagues', 'plaguename', 'plagueearlieststart', 'plaguevariation', 'plagueduration', 'plaguestrength',
+      'scenariosearchfolders'
+    ],
+    fields: {
+      usedefaultrules: { group: 'Rules', control: 'bool' },
+      defaultvictoryconditions: { group: 'Victory', control: 'bool' },
+      numberofplayablecivs: { group: 'Players', control: 'number', min: 1, max: 32 },
+      use_timelimit: { group: 'Time', control: 'bool' },
+      usetimelimit: { group: 'Time', control: 'bool' },
+      startmonth: { group: 'Time', control: 'select' },
+      startyear: { group: 'Time', control: 'number' },
+      alliancevictorytype: { group: 'Victory', control: 'select' },
+      permitplagues: { group: 'Plague', control: 'bool' },
+      plaguename: { group: 'Plague', control: 'text' },
+      plagueearlieststart: { group: 'Plague', control: 'number' },
+      plaguevariation: { group: 'Plague', control: 'number' },
+      plagueduration: { group: 'Plague', control: 'number' },
+      plaguestrength: { group: 'Plague', control: 'number' },
+      scenariosearchfolders: { group: 'Scenario', control: 'text' }
+    }
+  },
+  LEAD: {
+    order: [
+      'civ', 'leadername', 'genderofleadername', 'government', 'color', 'initialera', 'startcash',
+      'humanplayer', 'customcivdata', 'startembassies', 'skipfirstturn'
+    ],
+    fields: {
+      civ: { group: 'Identity', control: 'reference' },
+      leadername: { group: 'Identity', control: 'text' },
+      genderofleadername: { group: 'Identity', control: 'select' },
+      government: { group: 'Identity', control: 'reference' },
+      color: { group: 'Identity', control: 'number', min: 0, max: 31 },
+      initialera: { group: 'Identity', control: 'reference' },
+      startcash: { group: 'Start', control: 'number', min: 0 },
+      humanplayer: { group: 'Start', control: 'bool' },
+      customcivdata: { group: 'Start', control: 'bool' },
+      startembassies: { group: 'Start', control: 'bool' },
+      skipfirstturn: { group: 'Start', control: 'bool' }
+    }
+  },
+  RULE: {
+    order: [
+      'slave', 'startunit1', 'startunit2', 'scout', 'battlecreatedunit', 'basicbarbarian', 'advancedbarbarian', 'barbarianseaunit',
+      'defaultdifficultylevel', 'defaultmoneyresource',
+      'townname', 'cityname', 'metropolisname', 'maxcity1size', 'maxcity2size',
+      'minimumresearchtime', 'maximumresearchtime', 'futuretechcost',
+      'startingtreasury', 'foodconsumptionpercitizen', 'roadmovementrate', 'upgradecost',
+      'town_defence_bonus', 'citydefencebonus', 'metropolisdefencebonus', 'fortressdefencebonus', 'fortificationsdefencebonus'
+    ],
+    fields: {
+      slave: { group: 'Default Units', control: 'reference' },
+      startunit1: { group: 'Default Units', control: 'reference' },
+      startunit2: { group: 'Default Units', control: 'reference' },
+      scout: { group: 'Default Units', control: 'reference' },
+      battlecreatedunit: { group: 'Default Units', control: 'reference' },
+      basicbarbarian: { group: 'Default Units', control: 'reference' },
+      advancedbarbarian: { group: 'Default Units', control: 'reference' },
+      barbarianseaunit: { group: 'Default Units', control: 'reference' },
+      defaultdifficultylevel: { group: 'Defaults', control: 'reference' },
+      defaultmoneyresource: { group: 'Defaults', control: 'reference' },
+      townname: { group: 'Cities', control: 'text' },
+      cityname: { group: 'Cities', control: 'text' },
+      metropolisname: { group: 'Cities', control: 'text' },
+      maxcity1size: { group: 'Cities', control: 'number' },
+      maxcity2size: { group: 'Cities', control: 'number' },
+      minimumresearchtime: { group: 'Research', control: 'number' },
+      maximumresearchtime: { group: 'Research', control: 'number' },
+      futuretechcost: { group: 'Research', control: 'number' },
+      startingtreasury: { group: 'Economy', control: 'number' },
+      foodconsumptionpercitizen: { group: 'Economy', control: 'number' },
+      roadmovementrate: { group: 'Economy', control: 'number' },
+      upgradecost: { group: 'Economy', control: 'number' },
+      town_defence_bonus: { group: 'Defense', control: 'number' },
+      towndefencebonus: { group: 'Defense', control: 'number' },
+      citydefencebonus: { group: 'Defense', control: 'number' },
+      metropolisdefencebonus: { group: 'Defense', control: 'number' },
+      fortressdefencebonus: { group: 'Defense', control: 'number' },
+      fortificationsdefencebonus: { group: 'Defense', control: 'number' }
+    }
+  }
+};
+
 function getFriendlyBiqSectionTitle(section) {
   const code = String((section && section.code) || '').toUpperCase();
   return BIQ_SECTION_FRIENDLY_NAMES[code] || String((section && section.title) || code || 'Section');
@@ -2801,6 +2941,29 @@ function getBiqStructureRefSpec(sectionCode, baseKey) {
   if (code === 'TERR' && base === 'pollutioneffect') return { section: 'TERR', oneBased: false };
   if (code === 'CTZN' && base === 'prerequisite') return { section: 'TECH', oneBased: false };
   return null;
+}
+
+function getBiqStructureFieldSpec(sectionCode, field) {
+  const code = String(sectionCode || '').toUpperCase();
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const schema = BIQ_STRUCTURE_RULE_SCHEMAS[code] || null;
+  if (!schema || !schema.fields) return null;
+  return schema.fields[base] || null;
+}
+
+function getBiqStructureFieldGroup(sectionCode, field) {
+  const spec = getBiqStructureFieldSpec(sectionCode, field);
+  if (spec && spec.group) return spec.group;
+  return 'Other';
+}
+
+function getBiqStructureFieldOrder(sectionCode, field) {
+  const code = String(sectionCode || '').toUpperCase();
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const schema = BIQ_STRUCTURE_RULE_SCHEMAS[code] || null;
+  if (!schema || !Array.isArray(schema.order)) return Number.MAX_SAFE_INTEGER;
+  const idx = schema.order.indexOf(base);
+  return idx >= 0 ? idx : Number.MAX_SAFE_INTEGER;
 }
 
 function shouldHideBiqStructureField(sectionCode, field) {
@@ -2866,11 +3029,15 @@ const REFERENCE_RULE_SCHEMAS = {
     }
   },
   civilizations: {
-    order: ['leadername', 'leadertitle', 'culturegroup', 'favoritegovernment', 'shunnedgovernment', 'freetech1index', 'freetech2index', 'freetech3index', 'freetech4index', 'aggressionlevel'],
+    order: ['leadername', 'leadertitle', 'leadergender', 'civilizationgender', 'culturegroup', 'defaultcolor', 'diplomacytextindex', 'favoritegovernment', 'shunnedgovernment', 'freetech1index', 'freetech2index', 'freetech3index', 'freetech4index', 'aggressionlevel'],
     fields: {
       leadername: { group: 'Identity', control: 'text' },
       leadertitle: { group: 'Identity', control: 'text' },
+      leadergender: { group: 'Identity', control: 'select' },
+      civilizationgender: { group: 'Identity', control: 'select' },
       culturegroup: { group: 'Identity', control: 'select' },
+      defaultcolor: { group: 'Identity', control: 'select' },
+      diplomacytextindex: { group: 'Identity', control: 'number', min: 0 },
       favoritegovernment: { group: 'Governments', control: 'reference' },
       shunnedgovernment: { group: 'Governments', control: 'reference' },
       freetech1index: { group: 'Free Techs', control: 'reference' },
@@ -2957,6 +3124,12 @@ function getReferenceOptionsForField(tabKey, field) {
 }
 
 function getEnumOptionsForField(tabKey, field) {
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const enums = BIQ_FIELD_ENUMS[tabKey] || {};
+  return enums[base] || [];
+}
+
+function getEnumOptionsForBiqStructureTab(tabKey, field) {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
   const enums = BIQ_FIELD_ENUMS[tabKey] || {};
   return enums[base] || [];
@@ -3125,6 +3298,70 @@ function createReferencePicker(config) {
       const hay = String(row.dataset.search || '');
       row.classList.toggle('hidden', !!needle && !hay.includes(needle));
     });
+  });
+  document.addEventListener('click', (ev) => {
+    if (!wrap.contains(ev.target)) menu.classList.add('hidden');
+  });
+  return wrap;
+}
+
+function createColorSlotPicker(config) {
+  const opts = config || {};
+  const max = Number.isFinite(opts.max) ? Math.max(1, Number(opts.max)) : 31;
+  const onSelect = typeof opts.onSelect === 'function' ? opts.onSelect : null;
+  const wrap = document.createElement('div');
+  wrap.className = 'color-slot-picker';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'color-slot-picker-btn';
+  const swatch = document.createElement('span');
+  swatch.className = 'color-slot-swatch';
+  const text = document.createElement('span');
+  const parseValue = (value) => {
+    const n = Number.parseInt(String(value ?? '').trim(), 10);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(max, n));
+  };
+  let current = parseValue(opts.currentValue);
+  const renderBtn = () => {
+    swatch.style.background = colorFromNumber(current);
+    text.textContent = `Color ${current}`;
+  };
+  renderBtn();
+  button.appendChild(swatch);
+  button.appendChild(text);
+  wrap.appendChild(button);
+
+  const menu = document.createElement('div');
+  menu.className = 'color-slot-picker-menu hidden';
+  const grid = document.createElement('div');
+  grid.className = 'color-slot-grid';
+  for (let i = 0; i <= max; i += 1) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'color-slot-item';
+    item.title = `Color ${i}`;
+    item.setAttribute('aria-label', `Color ${i}`);
+    item.style.background = colorFromNumber(i);
+    if (i === current) item.classList.add('active');
+    item.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      current = i;
+      renderBtn();
+      Array.from(grid.querySelectorAll('.color-slot-item')).forEach((node, idx) => {
+        node.classList.toggle('active', idx === current);
+      });
+      menu.classList.add('hidden');
+      if (onSelect) onSelect(String(i));
+    });
+    grid.appendChild(item);
+  }
+  menu.appendChild(grid);
+  wrap.appendChild(menu);
+
+  button.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    menu.classList.toggle('hidden');
   });
   document.addEventListener('click', (ev) => {
     if (!wrap.contains(ev.target)) menu.classList.add('hidden');
@@ -4361,14 +4598,16 @@ function setReferenceArtSlotPath(entry, slot, nextPathRaw) {
   entry[key] = arr;
 }
 
-function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged }) {
+function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle = true }) {
   const card = document.createElement('div');
   card.className = 'art-slot-card';
   if (!editable) card.classList.add('read-only');
-  const title = document.createElement('div');
-  title.className = 'art-slot-title';
-  title.textContent = slot.label;
-  card.appendChild(title);
+  if (showTitle) {
+    const title = document.createElement('div');
+    title.className = 'art-slot-title';
+    title.textContent = slot.label;
+    card.appendChild(title);
+  }
   const visual = document.createElement('div');
   visual.className = 'art-slot-visual';
   card.appendChild(visual);
@@ -4656,8 +4895,12 @@ function buildReferenceSectionNav({ tabKey, textCol, navCol }) {
 
 function buildBiqRecordSectionNav({ tabKey, sectionCode, rowsRoot, navHost }) {
   if (!rowsRoot || !navHost) return;
-  const rows = Array.from(rowsRoot.querySelectorAll(':scope > .rule-row'));
-  if (rows.length === 0) return;
+  const groupCards = Array.from(rowsRoot.querySelectorAll(':scope > .rule-group-card'));
+  const hasGroups = groupCards.length > 0;
+  const rows = hasGroups
+    ? Array.from(rowsRoot.querySelectorAll('.rule-group-card .rule-row'))
+    : Array.from(rowsRoot.querySelectorAll(':scope > .rule-row'));
+  if (rows.length === 0 && !hasGroups) return;
 
   const usedIds = new Set();
   const makeId = (base) => {
@@ -4671,12 +4914,29 @@ function buildBiqRecordSectionNav({ tabKey, sectionCode, rowsRoot, navHost }) {
     return id;
   };
 
-  const sections = rows.map((row) => {
-    const label = String((row.querySelector('label') || {}).textContent || '').trim() || 'Field';
-    const id = makeId(label);
-    row.id = id;
-    return { id, label };
-  });
+  const sections = [];
+  if (hasGroups) {
+    groupCards.forEach((groupCard) => {
+      const groupTitle = String((groupCard.querySelector('.rule-group-title') || {}).textContent || '').trim() || 'Group';
+      const groupId = makeId(groupTitle);
+      groupCard.id = groupId;
+      sections.push({ id: groupId, label: groupTitle, level: 0 });
+      Array.from(groupCard.querySelectorAll(':scope .rule-row')).forEach((row) => {
+        const label = String((row.querySelector('label') || {}).textContent || '').trim() || 'Field';
+        const id = makeId(`${groupTitle}-${label}`);
+        row.id = id;
+        sections.push({ id, label, level: 1 });
+      });
+    });
+  } else {
+    rows.forEach((row) => {
+      const label = String((row.querySelector('label') || {}).textContent || '').trim() || 'Field';
+      const id = makeId(label);
+      row.id = id;
+      sections.push({ id, label, level: 0 });
+    });
+  }
+  if (sections.length === 0) return;
 
   const nav = document.createElement('nav');
   nav.className = 'reference-section-nav';
@@ -4699,7 +4959,7 @@ function buildBiqRecordSectionNav({ tabKey, sectionCode, rowsRoot, navHost }) {
   sections.forEach((sec) => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'reference-section-nav-item';
+    btn.className = `reference-section-nav-item level-${Number(sec.level) || 0}`;
     btn.textContent = sec.label;
     btn.dataset.targetId = sec.id;
     btn.addEventListener('click', () => {
@@ -4969,7 +5229,8 @@ function renderReferenceTab(tab, tabKey) {
         entry,
         slot: primaryArtSlot,
         editable: referenceEditable,
-        onChanged: () => renderActiveTab({ preserveTabScroll: true })
+        onChanged: () => renderActiveTab({ preserveTabScroll: true }),
+        showTitle: false
       }));
       navCol.appendChild(sidebarArt);
     }
@@ -5124,13 +5385,26 @@ function renderReferenceTab(tab, tabKey) {
           const enumOptions = getEnumOptionsForField(tabKey, field);
           const refOptions = getReferenceOptionsForField(tabKey, field);
           const desiredControl = spec.control || '';
+          const baseKey = String(field.baseKey || field.key || '').toLowerCase();
+          const useColorSlotPicker = tabKey === 'civilizations' && (baseKey === 'defaultcolor' || baseKey === 'uniquecolor');
 
           if (referenceEditable) {
             const hasEnumOptions = enumOptions.length > 0;
             const hasRefOptions = refOptions.length > 0;
             const useReferencePicker = hasRefOptions && (desiredControl === 'reference' || (!desiredControl && !hasEnumOptions));
 
-            if (useReferencePicker) {
+            if (useColorSlotPicker) {
+              const colorPicker = createColorSlotPicker({
+                currentValue: field.value,
+                max: 31,
+                onSelect: (value) => {
+                  rememberUndoSnapshot();
+                  field.value = String(value);
+                  setDirty(true);
+                }
+              });
+              controlWrap.appendChild(colorPicker);
+            } else if (useReferencePicker) {
               const labelText = String(field.label || field.key || 'value').trim();
               const isTechPrereqField = tabKey === 'technologies' && /^prerequisite/i.test(String(field.baseKey || field.key || ''));
               const normalizedCurrentValue = isTechPrereqField
@@ -5339,6 +5613,90 @@ function getTerrainCivilopediaEntryForRecord(tab, sectionCode, record) {
   return entries.find((entry) => String(entry && entry.civilopediaKey || '').toUpperCase() === targetKey) || null;
 }
 
+function parseCsvNumberLikeList(raw) {
+  const text = String(raw == null ? '' : raw).trim();
+  if (!text || text === '(none)') return [];
+  return text.split(',').map((part) => String(part || '').trim());
+}
+
+function extractTimeProgressionModel(groupFields) {
+  const fields = Array.isArray(groupFields) ? groupFields : [];
+  if (fields.length === 0) return null;
+
+  const splitTurnsByIdx = new Map();
+  const splitPerTurnByIdx = new Map();
+  fields.forEach((field) => {
+    const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+    const turnsMatch = base.match(/^turns_in_time_section_(\d+)$/);
+    if (turnsMatch) {
+      splitTurnsByIdx.set(Number.parseInt(turnsMatch[1], 10), field);
+      return;
+    }
+    const perTurnMatch = base.match(/^time_per_turn_in_time_section_(\d+)$/);
+    if (perTurnMatch) {
+      splitPerTurnByIdx.set(Number.parseInt(perTurnMatch[1], 10), field);
+    }
+  });
+
+  if (splitTurnsByIdx.size > 0 || splitPerTurnByIdx.size > 0) {
+    const idxs = new Set([...splitTurnsByIdx.keys(), ...splitPerTurnByIdx.keys()]);
+    const sorted = Array.from(idxs).sort((a, b) => a - b);
+    return {
+      mode: 'split',
+      consumedFields: new Set([
+        ...Array.from(splitTurnsByIdx.values()),
+        ...Array.from(splitPerTurnByIdx.values())
+      ]),
+      rows: sorted.map((idx, rowIdx) => {
+        const turnsField = splitTurnsByIdx.get(idx) || null;
+        const perTurnField = splitPerTurnByIdx.get(idx) || null;
+        return {
+          section: rowIdx + 1,
+          turnsField,
+          perTurnField,
+          turnsValue: String(turnsField && turnsField.value || '').trim(),
+          perTurnValue: String(perTurnField && perTurnField.value || '').trim()
+        };
+      })
+    };
+  }
+
+  let turnsCsvField = null;
+  let perTurnCsvField = null;
+  fields.forEach((field) => {
+    const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+    if (base === 'turns_per_timescale_part') turnsCsvField = field;
+    if (base === 'time_units_per_turn') perTurnCsvField = field;
+  });
+  if (!turnsCsvField && !perTurnCsvField) return null;
+
+  const turnsVals = parseCsvNumberLikeList(turnsCsvField && turnsCsvField.value);
+  const perTurnVals = parseCsvNumberLikeList(perTurnCsvField && perTurnCsvField.value);
+  const rowCount = Math.max(turnsVals.length, perTurnVals.length, 1);
+  const rows = [];
+  for (let i = 0; i < rowCount; i += 1) {
+    rows.push({
+      section: i + 1,
+      turnsValue: String(turnsVals[i] || '').trim(),
+      perTurnValue: String(perTurnVals[i] || '').trim()
+    });
+  }
+  return {
+    mode: 'csv',
+    turnsCsvField,
+    perTurnCsvField,
+    consumedFields: new Set([turnsCsvField, perTurnCsvField].filter(Boolean)),
+    rows
+  };
+}
+
+function serializeTimeProgressionList(rows, key) {
+  const vals = rows.map((row) => String((row && row[key]) || '').trim());
+  let last = vals.length - 1;
+  while (last >= 0 && !vals[last]) last -= 1;
+  return vals.slice(0, last + 1).join(', ');
+}
+
 function renderBiqTab(tab) {
   const wrap = document.createElement('div');
   wrap.className = 'section-editor';
@@ -5497,6 +5855,26 @@ function renderBiqTab(tab) {
     card.appendChild(detailLayout);
 
     if (terrainPediaEntry) {
+      const terrainArtTabKey = selected.code === 'TFRM' ? 'workerActions' : 'terrainPedia';
+      const terrainArtSlots = buildReferenceArtSlots(terrainArtTabKey, terrainPediaEntry);
+      const terrainPrimaryArtSlot = terrainArtSlots.length > 0 ? terrainArtSlots[0] : null;
+      if (terrainPrimaryArtSlot) {
+        const sidebarArt = document.createElement('div');
+        sidebarArt.className = 'section-card reference-sidebar-art';
+        const sidebarTitle = document.createElement('div');
+        sidebarTitle.className = 'section-top';
+        sidebarTitle.innerHTML = `<strong>${terrainPrimaryArtSlot.label}</strong>`;
+        sidebarArt.appendChild(sidebarTitle);
+        sidebarArt.appendChild(makeArtSlotCard({
+          tabKey: terrainArtTabKey,
+          entry: terrainPediaEntry,
+          slot: terrainPrimaryArtSlot,
+          editable: isScenarioMode(),
+          onChanged: () => renderActiveTab({ preserveTabScroll: true }),
+          showTitle: false
+        }));
+        navCol.appendChild(sidebarArt);
+      }
       const sourceBadge = document.createElement('div');
       sourceBadge.className = 'hint';
       sourceBadge.style.marginBottom = '6px';
@@ -5548,40 +5926,16 @@ function renderBiqTab(tab) {
         textCol.appendChild(textBlock);
       }
 
-      const artTabKey = selected.code === 'TFRM' ? 'workerActions' : 'terrainPedia';
-      const artSlots = buildReferenceArtSlots(artTabKey, terrainPediaEntry);
-      if (artSlots.length > 0) {
-        const artBlock = document.createElement('div');
-        artBlock.className = 'section-card source-section';
-        artBlock.style.marginTop = '8px';
-        const artTitle = document.createElement('div');
-        artTitle.className = 'section-top';
-        artTitle.innerHTML = '<strong>Art</strong>';
-        attachRichTooltip(artTitle, formatSourceInfo(terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.iconPaths, 'PediaIcons'));
-        artBlock.appendChild(artTitle);
-        const artHint = document.createElement('p');
-        artHint.className = 'hint';
-        artHint.textContent = isScenarioMode()
-          ? 'Click artwork to replace it, or drag and drop a PCX directly onto a tile.'
-          : 'Preview artwork used by this entry.';
-        artBlock.appendChild(artHint);
-        const artSlotsWrap = document.createElement('div');
-        artSlotsWrap.className = 'art-slot-grid';
-        artSlots.forEach((slot) => {
-          artSlotsWrap.appendChild(makeArtSlotCard({
-            tabKey: artTabKey,
-            entry: terrainPediaEntry,
-            slot,
-            editable: isScenarioMode(),
-            onChanged: () => renderActiveTab({ preserveTabScroll: true })
-          }));
-        });
-        artBlock.appendChild(artSlotsWrap);
-        textCol.appendChild(artBlock);
-      }
     }
 
-    const fields = (record.fields || []).filter((field) => !shouldHideBiqStructureField(selected.code, field));
+    const fields = (record.fields || [])
+      .filter((field) => !shouldHideBiqStructureField(selected.code, field))
+      .sort((a, b) => {
+        const ao = getBiqStructureFieldOrder(selected.code, a);
+        const bo = getBiqStructureFieldOrder(selected.code, b);
+        if (ao !== bo) return ao - bo;
+        return String(a.label || a.key).localeCompare(String(b.label || b.key), 'en', { sensitivity: 'base' });
+      });
     if (fields.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'hint';
@@ -5590,94 +5944,234 @@ function renderBiqTab(tab) {
     } else {
       const rows = document.createElement('div');
       rows.className = 'kv-grid';
+      const grouped = new Map();
       fields.forEach((field) => {
-        const row = document.createElement('div');
-        row.className = 'rule-row';
-        const label = document.createElement('label');
-        label.className = 'field-meta';
-        label.textContent = String(field.label || field.key);
-        attachRichTooltip(
-          label,
-          `Source: BIQ\nFile: ${compactPathFromCiv3Root(tab.sourcePath || '') || '(not available)'}\nSection: ${selected.title || selected.code}\nSection Code: ${selected.code}\nField: ${field.baseKey || field.key}\nRecord: ${record.index + 1}`
-        );
-        row.appendChild(label);
-
-        const controlWrap = document.createElement('div');
-        controlWrap.className = 'rule-control';
-        const editable = !tab.readOnly;
-        const baseKey = String(field.baseKey || field.key || '').toLowerCase();
-        const refSpec = getBiqStructureRefSpec(selected.code, baseKey);
-        const refOptions = refSpec ? makeBiqSectionIndexOptions(refSpec.section, !!refSpec.oneBased) : [];
-        const refTargetTabKey = refSpec ? (BIQ_SECTION_TO_REFERENCE_TAB[String(refSpec.section || '').toUpperCase()] || '') : '';
-        const parsed = parseIntFromDisplayValue(field.value);
-        const rawText = String(field.value || '').trim();
-        const looksNumeric = parsed != null && !/[A-Za-z]/.test(rawText.replace(/\(-?\d+\)\s*$/, ''));
-        const boolRaw = rawText.toLowerCase();
-        const looksBoolean = boolRaw === 'true' || boolRaw === 'false';
-
-        if (editable) {
-          if (refOptions.length > 0) {
-            const picker = createReferencePicker({
-              options: refOptions,
-              targetTabKey: refTargetTabKey,
-              currentValue: parsed == null ? '-1' : String(parsed),
-              searchPlaceholder: `Search ${String(refSpec.section || '').toUpperCase()}...`,
-              noneLabel: '(none)',
-              onSelect: (value) => {
-                rememberUndoSnapshot();
-                field.value = String(value);
-                setDirty(true);
-              }
-            });
-            controlWrap.appendChild(picker);
-          } else if (looksBoolean) {
-            const toggle = document.createElement('label');
-            toggle.className = 'bool-toggle';
-            const check = document.createElement('input');
-            check.type = 'checkbox';
-            check.checked = boolRaw === 'true';
-            const text = document.createElement('span');
-            text.textContent = check.checked ? 'Enabled' : 'Disabled';
-            check.addEventListener('change', () => {
-              rememberUndoSnapshot();
-              field.value = check.checked ? 'true' : 'false';
-              text.textContent = check.checked ? 'Enabled' : 'Disabled';
-              setDirty(true);
-            });
-            toggle.appendChild(check);
-            toggle.appendChild(text);
-            controlWrap.appendChild(toggle);
-          } else if (looksNumeric) {
-            const input = document.createElement('input');
-            input.type = 'number';
-            input.value = parsed == null ? '' : String(parsed);
-            input.addEventListener('input', () => {
-              rememberUndoSnapshot();
-              field.value = input.value;
-              setDirty(true);
-            });
-            controlWrap.appendChild(input);
-          } else {
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.value = String(field.value || '');
-            input.addEventListener('input', () => {
-              rememberUndoSnapshot();
-              field.value = input.value;
-              setDirty(true);
-            });
-            controlWrap.appendChild(input);
-          }
-        } else {
-          const text = document.createElement('div');
-          text.className = 'field-meta';
-          text.textContent = String(field.value || '(none)');
-          controlWrap.appendChild(text);
-        }
-
-        row.appendChild(controlWrap);
-        rows.appendChild(row);
+        const group = getBiqStructureFieldGroup(selected.code, field);
+        if (!grouped.has(group)) grouped.set(group, []);
+        grouped.get(group).push(field);
       });
+      const activeTabKey = String(state.activeTab || '').trim();
+      for (const [groupName, groupFields] of grouped.entries()) {
+        const groupCard = document.createElement('div');
+        groupCard.className = 'rule-group-card';
+        const groupTitle = document.createElement('div');
+        groupTitle.className = 'rule-group-title';
+        groupTitle.textContent = groupName;
+        groupCard.appendChild(groupTitle);
+        const timeProgressionModel = selected.code === 'GAME'
+          ? extractTimeProgressionModel(groupFields)
+          : null;
+        const consumedTimeFields = timeProgressionModel && timeProgressionModel.consumedFields
+          ? timeProgressionModel.consumedFields
+          : new Set();
+        if (timeProgressionModel && Array.isArray(timeProgressionModel.rows) && timeProgressionModel.rows.length > 0) {
+          const tableRow = document.createElement('div');
+          tableRow.className = 'rule-row';
+          const tableLabel = document.createElement('label');
+          tableLabel.className = 'field-meta';
+          tableLabel.textContent = 'Time Progression';
+          attachRichTooltip(
+            tableLabel,
+            `Source: BIQ\nFile: ${compactPathFromCiv3Root(tab.sourcePath || '') || '(not available)'}\nSection: ${selected.title || selected.code}\nSection Code: ${selected.code}\nField: Time progression`
+          );
+          tableRow.appendChild(tableLabel);
+
+          const tableWrap = document.createElement('div');
+          tableWrap.className = 'rule-control';
+          const table = document.createElement('table');
+          table.className = 'time-progression-table';
+          const thead = document.createElement('thead');
+          const headRow = document.createElement('tr');
+          ['Section', 'Turns', 'Time / Turn'].forEach((title) => {
+            const th = document.createElement('th');
+            th.textContent = title;
+            headRow.appendChild(th);
+          });
+          thead.appendChild(headRow);
+          table.appendChild(thead);
+          const tbody = document.createElement('tbody');
+          const editable = !tab.readOnly;
+          timeProgressionModel.rows.forEach((timeRow, idx) => {
+            const tr = document.createElement('tr');
+            const secTd = document.createElement('td');
+            secTd.textContent = String(timeRow.section);
+            tr.appendChild(secTd);
+            const turnsTd = document.createElement('td');
+            const perTurnTd = document.createElement('td');
+            if (editable) {
+              const turnsInput = document.createElement('input');
+              turnsInput.type = 'number';
+              turnsInput.value = String(timeRow.turnsValue || '');
+              turnsInput.addEventListener('input', () => {
+                rememberUndoSnapshot();
+                timeRow.turnsValue = turnsInput.value;
+                if (timeProgressionModel.mode === 'split') {
+                  if (timeRow.turnsField) timeRow.turnsField.value = turnsInput.value;
+                } else if (timeProgressionModel.turnsCsvField) {
+                  timeProgressionModel.turnsCsvField.value = serializeTimeProgressionList(timeProgressionModel.rows, 'turnsValue');
+                }
+                setDirty(true);
+              });
+              turnsTd.appendChild(turnsInput);
+
+              const perInput = document.createElement('input');
+              perInput.type = 'number';
+              perInput.value = String(timeRow.perTurnValue || '');
+              perInput.addEventListener('input', () => {
+                rememberUndoSnapshot();
+                timeRow.perTurnValue = perInput.value;
+                if (timeProgressionModel.mode === 'split') {
+                  if (timeRow.perTurnField) timeRow.perTurnField.value = perInput.value;
+                } else if (timeProgressionModel.perTurnCsvField) {
+                  timeProgressionModel.perTurnCsvField.value = serializeTimeProgressionList(timeProgressionModel.rows, 'perTurnValue');
+                }
+                setDirty(true);
+              });
+              perTurnTd.appendChild(perInput);
+            } else {
+              turnsTd.textContent = String(timeRow.turnsValue || '(none)');
+              perTurnTd.textContent = String(timeRow.perTurnValue || '(none)');
+            }
+            tr.appendChild(turnsTd);
+            tr.appendChild(perTurnTd);
+            tbody.appendChild(tr);
+          });
+          table.appendChild(tbody);
+          tableWrap.appendChild(table);
+          tableRow.appendChild(tableWrap);
+          groupCard.appendChild(tableRow);
+        }
+        groupFields.forEach((field) => {
+          if (consumedTimeFields.has(field)) return;
+          const row = document.createElement('div');
+          row.className = 'rule-row';
+          const label = document.createElement('label');
+          label.className = 'field-meta';
+          label.textContent = String(field.label || field.key);
+          attachRichTooltip(
+            label,
+            `Source: BIQ\nFile: ${compactPathFromCiv3Root(tab.sourcePath || '') || '(not available)'}\nSection: ${selected.title || selected.code}\nSection Code: ${selected.code}\nField: ${field.baseKey || field.key}\nRecord: ${record.index + 1}`
+          );
+          row.appendChild(label);
+
+          const controlWrap = document.createElement('div');
+          controlWrap.className = 'rule-control';
+          const editable = !tab.readOnly;
+          const baseKey = String(field.baseKey || field.key || '').toLowerCase();
+          const refSpec = getBiqStructureRefSpec(selected.code, baseKey);
+          const refOptions = refSpec ? makeBiqSectionIndexOptions(refSpec.section, !!refSpec.oneBased) : [];
+          const refTargetTabKey = refSpec ? (BIQ_SECTION_TO_REFERENCE_TAB[String(refSpec.section || '').toUpperCase()] || '') : '';
+          const parsed = parseIntFromDisplayValue(field.value);
+          const rawText = String(field.value || '').trim();
+          const looksNumeric = parsed != null && !/[A-Za-z]/.test(rawText.replace(/\(-?\d+\)\s*$/, ''));
+          const boolRaw = rawText.toLowerCase();
+          const looksBoolean = boolRaw === 'true' || boolRaw === 'false';
+          const spec = getBiqStructureFieldSpec(selected.code, field) || {};
+          const desiredControl = spec.control || '';
+          const enumOptions = getEnumOptionsForBiqStructureTab(activeTabKey, field);
+          const useColorSlotPicker = selected.code === 'LEAD' && baseKey === 'color';
+
+          if (editable) {
+            if (useColorSlotPicker) {
+              const colorPicker = createColorSlotPicker({
+                currentValue: field.value,
+                max: 31,
+                onSelect: (value) => {
+                  rememberUndoSnapshot();
+                  field.value = String(value);
+                  setDirty(true);
+                }
+              });
+              controlWrap.appendChild(colorPicker);
+            } else if (refOptions.length > 0) {
+              const picker = createReferencePicker({
+                options: refOptions,
+                targetTabKey: refTargetTabKey,
+                currentValue: parsed == null ? '-1' : String(parsed),
+                searchPlaceholder: `Search ${String(refSpec.section || '').toUpperCase()}...`,
+                noneLabel: '(none)',
+                onSelect: (value) => {
+                  rememberUndoSnapshot();
+                  field.value = String(value);
+                  setDirty(true);
+                }
+              });
+              controlWrap.appendChild(picker);
+            } else if (desiredControl === 'select' || enumOptions.length > 0) {
+              const select = document.createElement('select');
+              const hasNone = enumOptions.some((opt) => String(opt.value) === '-1');
+              if (!hasNone) {
+                const empty = document.createElement('option');
+                empty.value = '-1';
+                empty.textContent = '(none)';
+                select.appendChild(empty);
+              }
+              enumOptions.forEach((opt) => {
+                const o = document.createElement('option');
+                o.value = String(opt.value);
+                o.textContent = String(opt.label || opt.value);
+                select.appendChild(o);
+              });
+              const selectValue = parsed == null ? String(field.value || '') : String(parsed);
+              select.value = selectValue;
+              select.addEventListener('change', () => {
+                rememberUndoSnapshot();
+                field.value = String(select.value);
+                setDirty(true);
+              });
+              controlWrap.appendChild(select);
+            } else if (desiredControl === 'bool' || looksBoolean) {
+              const toggle = document.createElement('label');
+              toggle.className = 'bool-toggle';
+              const check = document.createElement('input');
+              check.type = 'checkbox';
+              check.checked = boolRaw === 'true' || rawText === '1';
+              const text = document.createElement('span');
+              text.textContent = check.checked ? 'Enabled' : 'Disabled';
+              check.addEventListener('change', () => {
+                rememberUndoSnapshot();
+                field.value = check.checked ? 'true' : 'false';
+                text.textContent = check.checked ? 'Enabled' : 'Disabled';
+                setDirty(true);
+              });
+              toggle.appendChild(check);
+              toggle.appendChild(text);
+              controlWrap.appendChild(toggle);
+            } else if (desiredControl === 'number' || looksNumeric) {
+              const input = document.createElement('input');
+              input.type = 'number';
+              if (Number.isFinite(spec.min)) input.min = String(spec.min);
+              if (Number.isFinite(spec.max)) input.max = String(spec.max);
+              input.value = parsed == null ? '' : String(parsed);
+              input.addEventListener('input', () => {
+                rememberUndoSnapshot();
+                field.value = input.value;
+                setDirty(true);
+              });
+              controlWrap.appendChild(input);
+            } else {
+              const input = document.createElement('input');
+              input.type = 'text';
+              input.value = String(field.value || '');
+              input.addEventListener('input', () => {
+                rememberUndoSnapshot();
+                field.value = input.value;
+                setDirty(true);
+              });
+              controlWrap.appendChild(input);
+            }
+          } else {
+            const text = document.createElement('div');
+            text.className = 'field-meta';
+            text.textContent = String(field.value || '(none)');
+            controlWrap.appendChild(text);
+          }
+
+          row.appendChild(controlWrap);
+          groupCard.appendChild(row);
+        });
+        rows.appendChild(groupCard);
+      }
       textCol.appendChild(rows);
       buildBiqRecordSectionNav({
         tabKey: tab.key || state.activeTab || 'biq',
