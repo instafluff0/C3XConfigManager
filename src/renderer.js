@@ -37,12 +37,37 @@ const state = {
   referenceSearchCaret: {},
   referenceSearchFocusedTab: null,
   referenceNotice: null,
-  previewCache: new Map()
+  biqSectionSelection: 0,
+  biqRecordSelection: {},
+  biqMapZoom: 6,
+  biqMapLayer: 'terrain',
+  biqMapShowGrid: false,
+  biqMapShowOverlays: true,
+  biqMapShowCityNames: false,
+  biqMapSelectedTile: -1,
+  biqMapScrollLeft: null,
+  biqMapScrollTop: null,
+  biqMapRerenderPending: false,
+  biqMapLastScrollLogTs: 0,
+  biqMapZoomAnchor: null,
+  biqMapSuppressClickUntilTs: 0,
+  biqMapArtCache: {},
+  biqMapArtLoading: {},
+  previewCache: new Map(),
+  isLoading: false,
+  pendingAutoReload: false,
+  autoReloadTimer: null,
+  pathsCollapsed: false,
+  hasAutoCollapsedPaths: false,
+  availableScenarios: []
 };
 
 const el = {
   modeGlobal: document.getElementById('mode-global'),
-  modeScenario: document.getElementById('mode-scenario'),
+  modeScenarioSelect: document.getElementById('mode-scenario-select'),
+  fontDown: document.getElementById('font-down'),
+  fontUp: document.getElementById('font-up'),
+  fontScaleLabel: document.getElementById('font-scale-label'),
   c3xPath: document.getElementById('c3x-path'),
   civ3Path: document.getElementById('civ3-path'),
   scenarioPath: document.getElementById('scenario-path'),
@@ -50,12 +75,18 @@ const el = {
   pickC3x: document.getElementById('pick-c3x'),
   pickCiv3: document.getElementById('pick-civ3'),
   pickScenario: document.getElementById('pick-scenario'),
-  loadBtn: document.getElementById('load-btn'),
+  paths: document.querySelector('.paths'),
+  pathsToggle: document.getElementById('paths-toggle'),
+  pathsSummary: document.getElementById('paths-summary'),
+  modeStateBadge: document.getElementById('mode-state-badge'),
+  modeStateDetail: document.getElementById('mode-state-detail'),
+  scenarioTitleChip: document.getElementById('scenario-title-chip'),
+  loadingOverlay: document.getElementById('loading-overlay'),
+  loadingText: document.getElementById('loading-text'),
   saveBtn: document.getElementById('save-btn'),
   undoBtn: document.getElementById('undo-btn'),
   resetBtn: document.getElementById('reset-btn'),
   dirtyIndicator: document.getElementById('dirty-indicator'),
-  status: document.getElementById('status'),
   debugLog: document.getElementById('debug-log'),
   copyDebugLog: document.getElementById('copy-debug-log'),
   clearDebugLog: document.getElementById('clear-debug-log'),
@@ -76,6 +107,7 @@ const TAB_ICONS = {
   resources: 'icon-resource',
   improvements: 'icon-improv',
   governments: 'icon-gov',
+  biq: 'icon-civ',
   base: 'icon-c3x',
   districts: 'icon-district',
   wonders: 'icon-wonder',
@@ -83,9 +115,28 @@ const TAB_ICONS = {
   animations: 'icon-anim'
 };
 const TAB_GROUPS = [
-  { label: 'CIV 3', keys: ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units'] },
+  { label: 'CIV 3', keys: ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'biq'] },
   { label: 'C3X', keys: ['base', 'districts', 'wonders', 'naturalWonders', 'animations'] }
 ];
+const BIQ_TERRAIN_ATLAS_FILES = [
+  'Art/Terrain/xtgc.pcx',
+  'Art/Terrain/xpgc.pcx',
+  'Art/Terrain/xdgc.pcx',
+  'Art/Terrain/xdpc.pcx',
+  'Art/Terrain/xdgp.pcx',
+  'Art/Terrain/xggc.pcx',
+  'Art/Terrain/wCSO.pcx',
+  'Art/Terrain/wSSS.pcx',
+  'Art/Terrain/wOOO.pcx'
+];
+const BIQ_MAP_OVERLAY_ANCHORS = {
+  resource: { x: 40, y: 41 },
+  unit: { x: 48, y: 41 },
+  city: { x: 46, y: 20 },
+  cityName: { x: 84, y: 50 }
+};
+const BIQ_MAP_ZOOM_MIN = 2;
+const BIQ_MAP_ZOOM_MAX = 18;
 
 const BASE_ENUM_OPTIONS = {
   draw_lines_using_gdi_plus: ['never', 'wine', 'always'],
@@ -253,6 +304,7 @@ const SECTION_SCHEMAS = {
 };
 
 function setStatus(text, isError = false) {
+  if (!el.status) return;
   el.status.textContent = text;
   el.status.style.color = isError ? '#a13514' : '';
 }
@@ -327,13 +379,279 @@ function isScenarioMode() {
   return state.settings && state.settings.mode === 'scenario';
 }
 
+function clampFontScale(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(0.85, Math.min(1.4, Math.round(n * 100) / 100));
+}
+
+function applyUiFontScale(scale) {
+  const next = clampFontScale(scale);
+  document.documentElement.style.setProperty('--ui-scale', String(next));
+  if (el.fontScaleLabel) {
+    el.fontScaleLabel.textContent = `${Math.round(next * 100)}%`;
+  }
+  if (state.settings) {
+    state.settings.uiFontScale = next;
+  }
+}
+
+function setUiFontScale(scale, persist = false) {
+  applyUiFontScale(scale);
+  if (persist && state.settings) {
+    void window.c3xManager.setSettings(state.settings);
+  }
+}
+
+function getScenarioPreviewPaths() {
+  const roots = (state.bundle && Array.isArray(state.bundle.scenarioSearchPaths))
+    ? state.bundle.scenarioSearchPaths
+    : [];
+  return roots;
+}
+
+function getScenarioPreviewPathsKey() {
+  return getScenarioPreviewPaths().join('|');
+}
+
+function getPathTail(anyPath) {
+  const trimmed = String(anyPath || '').trim();
+  if (!trimmed) return '';
+  const parts = trimmed.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || trimmed;
+}
+
+function normalizeSlashes(anyPath) {
+  return String(anyPath || '').replace(/\\/g, '/');
+}
+
+function compactPathFromCiv3Root(anyPath) {
+  const full = normalizeSlashes(anyPath).trim();
+  const civ3Root = normalizeSlashes((state.settings && state.settings.civ3Path) || '').trim();
+  if (!full || !civ3Root) return anyPath;
+  const fullLower = full.toLowerCase();
+  const rootLower = civ3Root.toLowerCase();
+  const idx = fullLower.indexOf(rootLower);
+  if (idx < 0) return anyPath;
+  const rootName = getPathTail(civ3Root);
+  const rest = full.slice(idx + civ3Root.length);
+  return `/${rootName}${rest}`;
+}
+
+function stripBiqExtension(fileName) {
+  return String(fileName || '').replace(/\.biq$/i, '');
+}
+
+function getLoadedScenarioName(bundle = null) {
+  if (!bundle || !bundle.tabs || !bundle.tabs.biq) return '';
+  const biqPath = String(bundle.tabs.biq.sourcePath || '').trim();
+  if (!biqPath) return '';
+  return stripBiqExtension(getPathTail(biqPath));
+}
+
+function updateScenarioTitleChip(bundle = null) {
+  if (!el.scenarioTitleChip || !state.settings) return;
+  const shouldShow = state.settings.mode === 'scenario' && !!bundle;
+  if (!shouldShow) {
+    el.scenarioTitleChip.classList.add('hidden');
+    el.scenarioTitleChip.textContent = 'Scenario: (not loaded)';
+    el.scenarioTitleChip.removeAttribute('title');
+    return;
+  }
+  const scenarioName = getLoadedScenarioName(bundle);
+  if (!scenarioName) {
+    el.scenarioTitleChip.classList.add('hidden');
+    el.scenarioTitleChip.textContent = 'Scenario: (not loaded)';
+    el.scenarioTitleChip.removeAttribute('title');
+    return;
+  }
+  el.scenarioTitleChip.classList.remove('hidden');
+  el.scenarioTitleChip.textContent = `Scenario: ${scenarioName}`;
+  if (bundle.tabs && bundle.tabs.biq && bundle.tabs.biq.sourcePath) {
+    el.scenarioTitleChip.title = bundle.tabs.biq.sourcePath;
+  }
+}
+
+function updatePathsSummary() {
+  if (!el.pathsSummary || !state.settings) return;
+  const modeLabel = state.settings.mode === 'scenario' ? 'Scenario' : 'Standard Game';
+  const c3x = state.settings.c3xPath ? getPathTail(state.settings.c3xPath) : '(no C3X folder)';
+  const scenario = state.settings.scenarioPath ? getPathTail(state.settings.scenarioPath) : '(no scenario)';
+  el.pathsSummary.textContent = state.settings.mode === 'scenario'
+    ? `${modeLabel} | C3X: ${c3x} | BIQ: ${scenario}`
+    : `${modeLabel} | C3X: ${c3x}`;
+}
+
+function updateScenarioSelectValue() {
+  if (!el.modeScenarioSelect || !state.settings) return;
+  const current = String(state.settings.scenarioPath || '').trim();
+  const normalizedCurrent = current.toLowerCase();
+  let hasExact = false;
+  Array.from(el.modeScenarioSelect.options).forEach((opt) => {
+    if (String(opt.value || '').toLowerCase() === normalizedCurrent && normalizedCurrent) {
+      hasExact = true;
+    }
+  });
+  if (state.settings.mode !== 'scenario') {
+    el.modeScenarioSelect.value = '';
+    return;
+  }
+  if (hasExact) {
+    el.modeScenarioSelect.value = current;
+    return;
+  }
+  el.modeScenarioSelect.value = '__manual__';
+}
+
+async function refreshScenarioSelectOptions() {
+  if (!el.modeScenarioSelect || !state.settings) return;
+  const manualValue = '__manual__';
+  const selectedBefore = el.modeScenarioSelect.value;
+  const scenarios = await window.c3xManager.listScenarios(state.settings.civ3Path || '');
+  state.availableScenarios = Array.isArray(scenarios) ? scenarios : [];
+
+  el.modeScenarioSelect.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Scenario...';
+  el.modeScenarioSelect.appendChild(placeholder);
+
+  const manual = document.createElement('option');
+  manual.value = manualValue;
+  manual.textContent = 'Manual / Browse...';
+  el.modeScenarioSelect.appendChild(manual);
+
+  const addGroup = (source, label) => {
+    const groupItems = state.availableScenarios.filter((s) => String(s.source || '') === source);
+    if (groupItems.length === 0) return;
+    const group = document.createElement('optgroup');
+    group.label = label;
+    groupItems.forEach((item) => {
+      const option = document.createElement('option');
+      option.value = item.path;
+      option.textContent = item.name || item.fileName || getPathTail(item.path);
+      option.title = item.path;
+      group.appendChild(option);
+    });
+    el.modeScenarioSelect.appendChild(group);
+  };
+  addGroup('Conquests', 'Conquests Folder');
+  addGroup('Scenarios', 'Scenarios Folder');
+
+  if (selectedBefore && Array.from(el.modeScenarioSelect.options).some((o) => o.value === selectedBefore)) {
+    el.modeScenarioSelect.value = selectedBefore;
+  }
+  updateScenarioSelectValue();
+}
+
+function setPathsCollapsed(collapsed) {
+  state.pathsCollapsed = !!collapsed;
+  if (el.paths) el.paths.classList.toggle('collapsed', state.pathsCollapsed);
+  if (el.pathsToggle) {
+    el.pathsToggle.textContent = state.pathsCollapsed ? 'Show File Paths' : 'Hide File Paths';
+  }
+}
+
+function updateModeState(bundle = null) {
+  if (!state.settings) return;
+  const modeLabel = state.settings.mode === 'scenario' ? 'Scenario' : 'Standard Game';
+  if (el.modeStateBadge) {
+    el.modeStateBadge.textContent = modeLabel;
+  }
+  if (state.settings.mode !== 'scenario') {
+    updateScenarioTitleChip(null);
+  } else if (!bundle) {
+    updateScenarioTitleChip(null);
+  } else {
+    updateScenarioTitleChip(bundle);
+  }
+  if (!el.modeStateDetail) return;
+  if (bundle && bundle.scenarioPath && state.settings.mode === 'scenario') {
+    el.modeStateDetail.textContent = `Loaded from ${compactPathFromCiv3Root(bundle.scenarioPath)}`;
+    updateScenarioTitleChip(bundle);
+    return;
+  }
+  if (bundle && state.settings.mode !== 'scenario') {
+    el.modeStateDetail.textContent = 'Loaded from standard game files';
+    updateScenarioTitleChip(null);
+    return;
+  }
+  if (state.settings.mode === 'scenario') {
+    if (!state.settings.scenarioPath) {
+      el.modeStateDetail.textContent = 'Waiting for scenario .biq';
+    } else {
+      el.modeStateDetail.textContent = `Selected ${getPathTail(state.settings.scenarioPath)} (not loaded yet)`;
+    }
+    return;
+  }
+  el.modeStateDetail.textContent = 'Ready to load standard game files';
+  updateScenarioTitleChip(null);
+}
+
+function setLoadingUi(isLoading, text = 'Loading configs...') {
+  state.isLoading = !!isLoading;
+  if (el.loadingText) {
+    el.loadingText.textContent = text;
+  }
+  if (el.loadingOverlay) {
+    el.loadingOverlay.classList.toggle('hidden', !state.isLoading);
+  }
+  const controls = [
+    el.modeGlobal,
+    el.modeScenarioSelect,
+    el.fontDown,
+    el.fontUp,
+    el.c3xPath,
+    el.civ3Path,
+    el.scenarioPath,
+    el.pickC3x,
+    el.pickCiv3,
+    el.pickScenario,
+    el.pathsToggle,
+    el.saveBtn,
+    el.undoBtn,
+    el.resetBtn
+  ];
+  controls.forEach((control) => {
+    if (control) control.disabled = state.isLoading;
+  });
+}
+
+function clearBundleView() {
+  state.bundle = null;
+  state.trackDirty = false;
+  state.baseFilter = '';
+  state.cleanSnapshot = '';
+  state.undoSnapshot = null;
+  state.isDirty = false;
+  refreshDirtyUi();
+  if (el.tabs) el.tabs.innerHTML = '';
+  if (el.tabContent) el.tabContent.innerHTML = '';
+  if (el.workspace) el.workspace.classList.add('hidden');
+}
+
+function queueAutoReload(reason, delayMs = 320) {
+  if (state.autoReloadTimer) {
+    window.clearTimeout(state.autoReloadTimer);
+  }
+  state.autoReloadTimer = window.setTimeout(() => {
+    state.autoReloadTimer = null;
+    void loadBundleAndRender({ loadingText: reason || 'Loading configs...' });
+  }, delayMs);
+}
+
 function setMode(mode) {
   state.settings.mode = mode;
   el.modeGlobal.classList.toggle('active', mode === 'global');
-  el.modeScenario.classList.toggle('active', mode === 'scenario');
+  if (el.modeScenarioSelect) {
+    el.modeScenarioSelect.classList.toggle('active', mode === 'scenario');
+  }
   el.scenarioPathRow.classList.toggle('hidden', mode !== 'scenario');
   document.body.classList.toggle('mode-standard', mode === 'global');
   document.body.classList.toggle('mode-scenario', mode === 'scenario');
+  updateScenarioSelectValue();
+  updatePathsSummary();
+  updateModeState();
 }
 
 function syncSettingsFromInputs() {
@@ -350,6 +668,12 @@ function fillInputsFromSettings() {
   }
   el.civ3Path.value = state.settings.civ3Path || '';
   el.scenarioPath.value = state.settings.scenarioPath || '';
+  updateScenarioSelectValue();
+  updatePathsSummary();
+}
+
+function isBiqPath(value) {
+  return /\.biq$/i.test(String(value || '').trim());
 }
 
 function prettySourceLabel(source) {
@@ -1151,6 +1475,8 @@ function makeReferencePreviewTasks(tabKey, entry) {
         request: {
           kind: 'civilopediaIcon',
           civ3Path: state.settings.civ3Path,
+          scenarioPath: state.settings.scenarioPath,
+          scenarioPaths: getScenarioPreviewPaths(),
           assetPath
         }
       });
@@ -1164,6 +1490,8 @@ function makeReferencePreviewTasks(tabKey, entry) {
         request: {
           kind: 'civilopediaIcon',
           civ3Path: state.settings.civ3Path,
+          scenarioPath: state.settings.scenarioPath,
+          scenarioPaths: getScenarioPreviewPaths(),
           assetPath
         }
       });
@@ -1176,6 +1504,8 @@ function makeReferencePreviewTasks(tabKey, entry) {
       request: {
         kind: 'unitAnimation',
         civ3Path: state.settings.civ3Path,
+        scenarioPath: state.settings.scenarioPath,
+        scenarioPaths: getScenarioPreviewPaths(),
         animationName: entry.animationName
       }
     });
@@ -1188,7 +1518,9 @@ async function loadPreviewsForReferenceEntry(tabKey, entry, previewWrap) {
     kind: 'reference',
     tabKey,
     key: entry.civilopediaKey,
-    civ3Path: state.settings.civ3Path
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPathsKey()
   });
   if (state.previewCache.has(cacheKey)) {
     const cached = state.previewCache.get(cacheKey);
@@ -1244,7 +1576,15 @@ function drawPreviewFrameToCanvas(preview, canvas) {
 function loadReferenceListThumbnail(tabKey, entry, holder) {
   const assetPath = entry.thumbPath || '';
   if (!assetPath) return;
-  const key = JSON.stringify({ kind: 'list-thumb', tabKey, entry: entry.civilopediaKey, assetPath, civ3Path: state.settings.civ3Path });
+  const key = JSON.stringify({
+    kind: 'list-thumb',
+    tabKey,
+    entry: entry.civilopediaKey,
+    assetPath,
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPathsKey()
+  });
   const paint = (preview) => {
     const canvas = document.createElement('canvas');
     canvas.width = 28;
@@ -1260,7 +1600,13 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
     return;
   }
 
-  window.c3xManager.getPreview({ kind: 'civilopediaIcon', civ3Path: state.settings.civ3Path, assetPath })
+  window.c3xManager.getPreview({
+    kind: 'civilopediaIcon',
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths(),
+    assetPath
+  })
     .then((res) => {
       if (!res || !res.ok) return;
       state.previewCache.set(key, res);
@@ -1328,7 +1674,7 @@ function renderCivilopediaRichText(container, text) {
     container.textContent = '(none)';
     return;
   }
-  const linkPattern = /\$LINK<([^=<>]+)=([A-Za-z0-9_]+)>/g;
+  const linkPattern = /\$LINK<([^=<>]+)=([^<>]+)>/g;
   lines.forEach((line) => {
     const p = document.createElement('p');
     p.className = 'pedia-paragraph';
@@ -1340,7 +1686,7 @@ function renderCivilopediaRichText(container, text) {
         p.appendChild(document.createTextNode(cleaned.slice(pos, index)));
       }
       const label = match[1];
-      const key = match[2];
+      const key = String(match[2] || '').trim();
       const a = document.createElement('a');
       a.href = '#';
       a.className = 'pedia-link';
@@ -1375,7 +1721,9 @@ function renderReferenceTab(tab, tabKey) {
   helperRow.className = 'reference-helper-row';
   const helper = document.createElement('p');
   helper.className = 'hint hint-compact';
-  helper.textContent = 'Read-only Civilopedia view with precedence Conquests > civ3PTW > vanilla.';
+  helper.textContent = isScenarioMode()
+    ? 'Read-only Civilopedia view with precedence Scenario > Conquests > civ3PTW > vanilla.'
+    : 'Read-only Civilopedia view with precedence Conquests > civ3PTW > vanilla.';
   helperRow.appendChild(helper);
   if (state.referenceNotice && state.referenceNotice.text) {
     const note = document.createElement('span');
@@ -1583,6 +1931,881 @@ function renderReferenceTab(tab, tabKey) {
     }
   });
   return wrap;
+}
+
+function renderBiqTab(tab) {
+  const wrap = document.createElement('div');
+  wrap.className = 'section-editor';
+
+  const header = document.createElement('div');
+  header.className = 'section-editor-header sticky';
+  header.appendChild(createIcon(TAB_ICONS.biq));
+  header.insertAdjacentHTML('beforeend', `<h3>${tab.title || 'BIQ'}</h3><span class="source-tag">read-only</span>`);
+  wrap.appendChild(header);
+
+  const helper = document.createElement('p');
+  helper.className = 'hint';
+  helper.textContent = tab.sourcePath
+    ? `Source: ${tab.sourcePath}`
+    : 'No BIQ source selected.';
+  wrap.appendChild(helper);
+
+  if (tab.bridgeError) {
+    const warn = document.createElement('p');
+    warn.className = 'warning';
+    warn.textContent = `Friendly BIQ mapping fallback active: ${tab.bridgeError}`;
+    wrap.appendChild(warn);
+  }
+
+  if (tab.error) {
+    const error = document.createElement('p');
+    error.className = 'warning';
+    error.textContent = tab.error;
+    wrap.appendChild(error);
+    return wrap;
+  }
+
+  const sections = Array.isArray(tab.sections) ? tab.sections : [];
+  if (sections.length === 0) {
+    const note = document.createElement('p');
+    note.className = 'hint';
+    note.textContent = 'No BIQ sections were found.';
+    wrap.appendChild(note);
+    return wrap;
+  }
+
+  state.biqSectionSelection = Math.max(0, Math.min(state.biqSectionSelection || 0, sections.length - 1));
+  const selected = sections[state.biqSectionSelection];
+
+  const subtabRow = document.createElement('div');
+  subtabRow.className = 'biq-subtabs';
+  sections.forEach((section, idx) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'biq-subtab-btn';
+    btn.classList.toggle('active', idx === state.biqSectionSelection);
+    btn.textContent = `${section.code} (${section.count})`;
+    btn.addEventListener('click', () => {
+      state.biqSectionSelection = idx;
+      renderActiveTab({ preserveTabScroll: true });
+    });
+    subtabRow.appendChild(btn);
+  });
+  wrap.appendChild(subtabRow);
+
+  const records = Array.isArray(selected.records) ? selected.records : [];
+
+  if (selected.code === 'TILE') {
+    wrap.appendChild(renderBiqMapSection(tab, selected));
+    return wrap;
+  }
+
+  const selectedRecordIndex = Math.max(
+    0,
+    Math.min(Number(state.biqRecordSelection[selected.id] || 0), Math.max(0, records.length - 1))
+  );
+  state.biqRecordSelection[selected.id] = selectedRecordIndex;
+
+  const title = document.createElement('p');
+  title.className = 'hint';
+  title.textContent = selected.recordsTruncated
+    ? `${selected.title} (${selected.code}) - showing first ${records.length} of ${selected.count} records`
+    : `${selected.title} (${selected.code}) - ${records.length} record(s)`;
+  wrap.appendChild(title);
+
+  const layout = document.createElement('div');
+  layout.className = 'entry-layout';
+
+  const listPane = document.createElement('div');
+  listPane.className = 'entry-list-pane';
+  records.forEach((record, idx) => {
+    const itemBtn = document.createElement('button');
+    itemBtn.className = 'entry-list-item no-thumb';
+    itemBtn.type = 'button';
+    itemBtn.classList.toggle('active', idx === selectedRecordIndex);
+    itemBtn.innerHTML = `<strong>${record.name || `Record ${record.index + 1}`}</strong>`;
+    itemBtn.addEventListener('click', () => {
+      state.biqRecordSelection[selected.id] = idx;
+      renderActiveTab({ preserveTabScroll: true });
+    });
+    listPane.appendChild(itemBtn);
+  });
+  layout.appendChild(listPane);
+
+  const detailPane = document.createElement('div');
+  detailPane.className = 'entry-detail-pane';
+  if (records.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'section-card';
+    empty.innerHTML = '<p class="hint">No records available for this section.</p>';
+    detailPane.appendChild(empty);
+  } else {
+    const record = records[selectedRecordIndex];
+    const card = document.createElement('div');
+    card.className = 'section-card';
+    card.innerHTML = `<div class="section-top"><strong>${record.name || `Record ${record.index + 1}`}</strong></div>`;
+    const rows = document.createElement('div');
+    rows.className = 'kv-grid';
+    (record.fields || []).forEach((field) => {
+      const line = document.createElement('div');
+      line.className = 'field-meta';
+      const strong = document.createElement('strong');
+      strong.textContent = `${field.label || field.key}: `;
+      line.appendChild(strong);
+      line.appendChild(document.createTextNode(String(field.value || '')));
+      rows.appendChild(line);
+    });
+    card.appendChild(rows);
+    detailPane.appendChild(card);
+  }
+  layout.appendChild(detailPane);
+  wrap.appendChild(layout);
+
+  return wrap;
+}
+
+function getFieldByBaseKey(record, baseKey) {
+  if (!record || !Array.isArray(record.fields)) return null;
+  const target = String(baseKey || '').toLowerCase();
+  return record.fields.find((f) => String(f.key || '').toLowerCase() === target) || null;
+}
+
+function parseIntLoose(value, fallback = 0) {
+  const s = String(value == null ? '' : value).trim();
+  const m = s.match(/-?\d+/);
+  if (!m) return fallback;
+  return Number.parseInt(m[0], 10);
+}
+
+function setRecordFieldValue(record, key, value) {
+  const f = getFieldByBaseKey(record, key);
+  if (!f) return false;
+  f.value = String(value);
+  return true;
+}
+
+function colorFromNumber(value) {
+  const n = Number(value) || 0;
+  const x = (Math.abs(n * 1103515245 + 12345) >>> 0) & 0xffffff;
+  const r = 40 + (x & 0x7f);
+  const g = 40 + ((x >> 8) & 0x7f);
+  const b = 40 + ((x >> 16) & 0x7f);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function decodeRgbaBase64(preview) {
+  if (!preview || !preview.rgbaBase64 || !preview.width || !preview.height) return null;
+  const bin = atob(preview.rgbaBase64);
+  const rgba = new Uint8ClampedArray(bin.length);
+  for (let i = 0; i < bin.length; i += 1) rgba[i] = bin.charCodeAt(i);
+  return { width: preview.width, height: preview.height, rgba };
+}
+
+function rgbaToCanvas(preview) {
+  const decoded = decodeRgbaBase64(preview);
+  if (!decoded) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = decoded.width;
+  canvas.height = decoded.height;
+  const ctx = canvas.getContext('2d');
+  const data = new ImageData(decoded.rgba, decoded.width, decoded.height);
+  ctx.putImageData(data, 0, 0);
+  return canvas;
+}
+
+function requestBiqMapArtAsset(assetKey, assetPath) {
+  if (!state.settings || !state.settings.civ3Path) return;
+  if (state.biqMapArtCache[assetKey] || state.biqMapArtLoading[assetKey]) return;
+  state.biqMapArtLoading[assetKey] = true;
+  appendDebugLog('biq-map:asset-load-start', { assetKey, assetPath });
+  window.c3xManager.getPreview({
+    kind: 'civilopediaIcon',
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths(),
+    assetPath
+  }).then((res) => {
+    if (res && res.ok && !res.animated) {
+      const canvas = rgbaToCanvas(res);
+      if (canvas) {
+        state.biqMapArtCache[assetKey] = canvas;
+        appendDebugLog('biq-map:asset-load-ok', { assetKey, width: canvas.width, height: canvas.height, sourcePath: res.sourcePath });
+      } else {
+        appendDebugLog('biq-map:asset-load-decode-failed', { assetKey });
+      }
+    } else {
+      appendDebugLog('biq-map:asset-load-error', { assetKey, error: res && res.error });
+    }
+  }).catch(() => {
+    // best effort
+    appendDebugLog('biq-map:asset-load-exception', { assetKey });
+  }).finally(() => {
+    delete state.biqMapArtLoading[assetKey];
+    if (state.biqMapRerenderPending) return;
+    state.biqMapRerenderPending = true;
+    window.requestAnimationFrame(() => {
+      state.biqMapRerenderPending = false;
+      if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs[state.activeTab] || state.bundle.tabs[state.activeTab].type !== 'biq') {
+        return;
+      }
+      renderActiveTab({ preserveTabScroll: true });
+    });
+  });
+}
+
+function renderBiqMapSection(tab, tileSection) {
+  const container = document.createElement('div');
+  container.className = 'biq-map-layout';
+  appendDebugLog('biq-map:open', { sectionId: tileSection && tileSection.id, sourcePath: tab && tab.sourcePath });
+
+  const wmapSection = (tab.sections || []).find((s) => s.code === 'WMAP');
+  const wmapRecord = wmapSection && Array.isArray(wmapSection.records) ? wmapSection.records[0] : null;
+  const width = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, 0);
+  const height = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, 0);
+  const tiles = Array.isArray(tileSection.records) ? tileSection.records : [];
+
+  if (!width || !height || tiles.length === 0) {
+    const note = document.createElement('p');
+    note.className = 'hint';
+    note.textContent = 'Map data unavailable in this BIQ (missing WMAP/TILE records).';
+    container.appendChild(note);
+    return container;
+  }
+
+  const maxIdx = tiles.length - 1;
+  if (state.biqMapSelectedTile < 0 || state.biqMapSelectedTile > maxIdx) {
+    state.biqMapSelectedTile = Math.floor(maxIdx / 2);
+  }
+  const selectedTile = tiles[state.biqMapSelectedTile] || null;
+  const clampZoom = (z) => Math.max(BIQ_MAP_ZOOM_MIN, Math.min(BIQ_MAP_ZOOM_MAX, Number(z) || state.biqMapZoom || 6));
+
+  const controls = document.createElement('div');
+  controls.className = 'biq-map-toolbar';
+
+  const layerLabel = document.createElement('label');
+  layerLabel.className = 'hint';
+  layerLabel.textContent = 'Layer';
+  const layerSelect = document.createElement('select');
+  [
+    { value: 'terrain', label: 'Terrain' },
+    { value: 'resource', label: 'Resource' },
+    { value: 'owner', label: 'Owner' },
+    { value: 'continent', label: 'Continent' }
+  ].forEach((opt) => {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    layerSelect.appendChild(o);
+  });
+  layerSelect.value = state.biqMapLayer;
+  layerSelect.addEventListener('change', () => {
+    state.biqMapLayer = layerSelect.value;
+    appendDebugLog('biq-map:layer-change', { layer: state.biqMapLayer });
+    renderActiveTab({ preserveTabScroll: true });
+  });
+  layerLabel.appendChild(layerSelect);
+  controls.appendChild(layerLabel);
+
+  const gridWrap = document.createElement('label');
+  gridWrap.className = 'bool-toggle';
+  const grid = document.createElement('input');
+  grid.type = 'checkbox';
+  grid.checked = !!state.biqMapShowGrid;
+  grid.addEventListener('change', () => {
+    state.biqMapShowGrid = grid.checked;
+    appendDebugLog('biq-map:grid-toggle', { enabled: state.biqMapShowGrid });
+    renderActiveTab({ preserveTabScroll: true });
+  });
+  const gridText = document.createElement('span');
+  gridText.textContent = 'Grid';
+  gridWrap.appendChild(grid);
+  gridWrap.appendChild(gridText);
+  controls.appendChild(gridWrap);
+
+  const overlaysWrap = document.createElement('label');
+  overlaysWrap.className = 'bool-toggle';
+  const overlays = document.createElement('input');
+  overlays.type = 'checkbox';
+  overlays.checked = !!state.biqMapShowOverlays;
+  overlays.addEventListener('change', () => {
+    state.biqMapShowOverlays = overlays.checked;
+    appendDebugLog('biq-map:overlays-toggle', { enabled: state.biqMapShowOverlays });
+    renderActiveTab({ preserveTabScroll: true });
+  });
+  const overlaysText = document.createElement('span');
+  overlaysText.textContent = 'Overlays';
+  overlaysWrap.appendChild(overlays);
+  overlaysWrap.appendChild(overlaysText);
+  controls.appendChild(overlaysWrap);
+
+  const namesWrap = document.createElement('label');
+  namesWrap.className = 'bool-toggle';
+  const names = document.createElement('input');
+  names.type = 'checkbox';
+  names.checked = !!state.biqMapShowCityNames;
+  names.addEventListener('change', () => {
+    state.biqMapShowCityNames = names.checked;
+    appendDebugLog('biq-map:city-names-toggle', { enabled: state.biqMapShowCityNames });
+    renderActiveTab({ preserveTabScroll: true });
+  });
+  const namesText = document.createElement('span');
+  namesText.textContent = 'City Names';
+  namesWrap.appendChild(names);
+  namesWrap.appendChild(namesText);
+  controls.appendChild(namesWrap);
+
+  const hint = document.createElement('span');
+  hint.className = 'hint';
+  hint.textContent = isScenarioMode()
+    ? 'Wheel to zoom. Map edits are local UI edits for now (BIQ writing is next).'
+    : 'Wheel to zoom. Standard Game BIQ is read-only.';
+  controls.appendChild(hint);
+
+  container.appendChild(controls);
+
+  const mapFrame = document.createElement('div');
+  mapFrame.className = 'biq-map-frame';
+  const mapPane = document.createElement('div');
+  mapPane.className = 'biq-map-canvas-wrap';
+  let isDraggingMap = false;
+  let dragPointerId = null;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let dragLastX = 0;
+  let dragLastY = 0;
+  let dragMoved = false;
+  const DRAG_THRESHOLD = 4;
+  const onDragMove = (ev) => {
+    if (!isDraggingMap || ev.pointerId !== dragPointerId) return;
+    ev.preventDefault();
+    const totalDx = ev.clientX - dragStartX;
+    const totalDy = ev.clientY - dragStartY;
+    if (Math.abs(totalDx) > DRAG_THRESHOLD || Math.abs(totalDy) > DRAG_THRESHOLD) {
+      dragMoved = true;
+    }
+    const dx = ev.clientX - dragLastX;
+    const dy = ev.clientY - dragLastY;
+    mapPane.scrollLeft -= dx;
+    mapPane.scrollTop -= dy;
+    dragLastX = ev.clientX;
+    dragLastY = ev.clientY;
+  };
+  const onDragEnd = () => {
+    if (!isDraggingMap) return;
+    isDraggingMap = false;
+    dragPointerId = null;
+    mapPane.classList.remove('dragging');
+    if (dragMoved) {
+      state.biqMapSuppressClickUntilTs = Date.now() + 180;
+      appendDebugLog('biq-map:drag-pan', {
+        left: mapPane.scrollLeft,
+        top: mapPane.scrollTop
+      });
+    }
+  };
+  mapPane.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    isDraggingMap = true;
+    dragPointerId = ev.pointerId;
+    dragMoved = false;
+    dragStartX = ev.clientX;
+    dragStartY = ev.clientY;
+    dragLastX = ev.clientX;
+    dragLastY = ev.clientY;
+    mapPane.classList.add('dragging');
+    mapPane.setPointerCapture(ev.pointerId);
+  });
+  mapPane.addEventListener('pointermove', onDragMove);
+  mapPane.addEventListener('pointerup', onDragEnd);
+  mapPane.addEventListener('pointercancel', onDragEnd);
+  mapPane.addEventListener('scroll', () => {
+    state.biqMapScrollLeft = mapPane.scrollLeft;
+    state.biqMapScrollTop = mapPane.scrollTop;
+    const now = Date.now();
+    if (now - state.biqMapLastScrollLogTs > 250) {
+      state.biqMapLastScrollLogTs = now;
+      appendDebugLog('biq-map:scroll', { left: state.biqMapScrollLeft, top: state.biqMapScrollTop });
+    }
+  });
+  const setMapZoom = (nextZoom, source, paneX, paneY, anchorContent) => {
+    const fromZoom = Number(state.biqMapZoom || 6);
+    const clamped = clampZoom(nextZoom);
+    if (clamped === fromZoom) return;
+    const safePaneX = Number.isFinite(paneX) ? paneX : Math.floor(mapPane.clientWidth / 2);
+    const safePaneY = Number.isFinite(paneY) ? paneY : Math.floor(mapPane.clientHeight / 2);
+    state.biqMapZoomAnchor = {
+      fromZoom,
+      paneX: safePaneX,
+      paneY: safePaneY,
+      contentX: anchorContent && Number.isFinite(anchorContent.x)
+        ? anchorContent.x
+        : mapPane.scrollLeft + safePaneX,
+      contentY: anchorContent && Number.isFinite(anchorContent.y)
+        ? anchorContent.y
+        : mapPane.scrollTop + safePaneY
+    };
+    state.biqMapZoom = clamped;
+    appendDebugLog('biq-map:zoom-change', { zoom: state.biqMapZoom, source });
+    renderActiveTab({ preserveTabScroll: true });
+  };
+  mapPane.addEventListener('wheel', (ev) => {
+    ev.preventDefault();
+    const rect = mapPane.getBoundingClientRect();
+    const paneX = ev.clientX - rect.left;
+    const paneY = ev.clientY - rect.top;
+    const canvasX = mapPane.scrollLeft + paneX;
+    const canvasY = mapPane.scrollTop + paneY;
+    const hovered = typeof findTileAtCanvasPx === 'function'
+      ? findTileAtCanvasPx(canvasX, canvasY, false)
+      : null;
+    const anchorContent = hovered
+      ? { x: hovered.centerX, y: hovered.centerY }
+      : null;
+    const delta = ev.deltaY > 0 ? -1 : 1;
+    if (hovered) {
+      appendDebugLog('biq-map:zoom-anchor', {
+        index: hovered.index,
+        metric: Number(hovered.metric || 0).toFixed(3),
+        centerX: Math.round(hovered.centerX),
+        centerY: Math.round(hovered.centerY)
+      });
+    }
+    setMapZoom(Number(state.biqMapZoom || 6) + delta, 'wheel', paneX, paneY, anchorContent);
+  }, { passive: false });
+
+  const zoomControls = document.createElement('div');
+  zoomControls.className = 'biq-map-zoom-controls';
+  const zoomInBtn = document.createElement('button');
+  zoomInBtn.className = 'biq-map-zoom-btn';
+  zoomInBtn.type = 'button';
+  zoomInBtn.textContent = '+';
+  zoomInBtn.title = 'Zoom in';
+  zoomInBtn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    setMapZoom(Number(state.biqMapZoom || 6) + 1, 'button+');
+  });
+  const zoomOutBtn = document.createElement('button');
+  zoomOutBtn.className = 'biq-map-zoom-btn';
+  zoomOutBtn.type = 'button';
+  zoomOutBtn.textContent = '-';
+  zoomOutBtn.title = 'Zoom out';
+  zoomOutBtn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    setMapZoom(Number(state.biqMapZoom || 6) - 1, 'button-');
+  });
+  zoomControls.appendChild(zoomInBtn);
+  zoomControls.appendChild(zoomOutBtn);
+
+  const scaleForZoom = (z) => Math.max(0.18, clampZoom(z) / 16);
+  const canvas = document.createElement('canvas');
+  const tilePx = Math.max(BIQ_MAP_ZOOM_MIN, clampZoom(state.biqMapZoom || 6));
+  const scale = scaleForZoom(tilePx);
+  const tileW = Math.max(24, Math.round(128 * scale));
+  const tileH = Math.max(12, Math.round(64 * scale));
+  const stepX = Math.max(12, Math.round(64 * scale));
+  const stepY = Math.max(6, Math.round(32 * scale));
+  const padX = tileW + 24;
+  const padY = tileH + 24;
+  const worldWrapSpan = width * stepX;
+  const xWrap = parseIntLoose(getFieldByBaseKey(wmapRecord, 'xwrapping')?.value, 0) !== 0 || String(getFieldByBaseKey(wmapRecord, 'xwrapping')?.value || '').toLowerCase() === 'true';
+  const wrapCenterOffset = xWrap ? worldWrapSpan : 0;
+
+  const toTileCoords = (index) => {
+    const pairY = Math.floor(index / width) * 2;
+    const rem = index % width;
+    const half = Math.floor(width / 2);
+    if (rem < half) {
+      return { xPos: rem * 2, yPos: pairY };
+    }
+    return { xPos: (rem - half) * 2 + 1, yPos: pairY + 1 };
+  };
+  const tileGeom = new Array(tiles.length);
+  for (let i = 0; i < tiles.length; i += 1) tileGeom[i] = toTileCoords(i);
+
+  const tileToScreenTopLeft = (xPos, yPos) => ({
+    sx: padX + xPos * stepX - stepX,
+    sy: padY + yPos * stepY - stepY
+  });
+
+  let minSx = Number.POSITIVE_INFINITY;
+  let minSy = Number.POSITIVE_INFINITY;
+  let maxSx = Number.NEGATIVE_INFINITY;
+  let maxSy = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < tileGeom.length; i += 1) {
+    const p = tileToScreenTopLeft(tileGeom[i].xPos, tileGeom[i].yPos);
+    if (p.sx < minSx) minSx = p.sx;
+    if (p.sy < minSy) minSy = p.sy;
+    if (p.sx > maxSx) maxSx = p.sx;
+    if (p.sy > maxSy) maxSy = p.sy;
+  }
+  if (!Number.isFinite(minSx) || !Number.isFinite(minSy)) {
+    minSx = 0;
+    minSy = 0;
+    maxSx = 0;
+    maxSy = 0;
+  }
+  canvas.width = Math.max(1200, (maxSx - minSx) + tileW + padX * 2 + (wrapCenterOffset * 2));
+  canvas.height = Math.max(800, (maxSy - minSy) + tileH + padY * 2);
+  canvas.className = 'biq-map-canvas';
+  const ctx = canvas.getContext('2d');
+  const originX = padX - minSx + wrapCenterOffset;
+  const originY = padY - minSy;
+  appendDebugLog('biq-map:geometry', {
+    width,
+    height,
+    tileCount: tiles.length,
+    expectedTileCount: width * height,
+    stepX,
+    stepY,
+    tileW,
+    tileH,
+    minSx,
+    minSy,
+    maxSx,
+    maxSy,
+    originX,
+    originY,
+    worldWrapSpan,
+    wrapCenterOffset,
+    canvasW: canvas.width,
+    canvasH: canvas.height
+  });
+
+  BIQ_TERRAIN_ATLAS_FILES.forEach((assetPath, idx) => {
+    requestBiqMapArtAsset(`terrain-${idx}`, assetPath);
+  });
+  requestBiqMapArtAsset('resources', 'Art/resources.pcx');
+  requestBiqMapArtAsset('units32', 'Art/Units/units_32.pcx');
+  requestBiqMapArtAsset('terrainBuildings', 'Art/Terrain/TerrainBuildings.PCX');
+
+  const goodSection = (tab.sections || []).find((s) => s.code === 'GOOD');
+  const goodIconById = {};
+  (goodSection?.records || []).forEach((record, idx) => {
+    goodIconById[idx] = parseIntLoose(getFieldByBaseKey(record, 'icon')?.value, -1);
+  });
+  const prtoSection = (tab.sections || []).find((s) => s.code === 'PRTO');
+  const prtoIndexByName = {};
+  const prtoIconById = {};
+  (prtoSection?.records || []).forEach((record, idx) => {
+    prtoIndexByName[String(record.name || '').trim().toLowerCase()] = idx;
+    prtoIconById[idx] = parseIntLoose(getFieldByBaseKey(record, 'iconindex')?.value, -1);
+  });
+  const citySection = (tab.sections || []).find((s) => s.code === 'CITY');
+  const cityRecordById = {};
+  (citySection?.records || []).forEach((record, idx) => {
+    cityRecordById[idx] = record;
+  });
+
+  const drawTerrainSprite = (record, sx, sy) => {
+    const fileIdx = parseIntLoose(getFieldByBaseKey(record, 'file')?.value, -1);
+    const imageIdx = parseIntLoose(getFieldByBaseKey(record, 'image')?.value, -1);
+    const atlas = state.biqMapArtCache[`terrain-${fileIdx}`];
+    if (!atlas || imageIdx < 0) return false;
+    const cols = 9;
+    const rows = 9;
+    const cellW = Math.max(1, Math.floor(atlas.width / cols));
+    const cellH = Math.max(1, Math.floor(atlas.height / rows));
+    const col = imageIdx % cols;
+    const row = Math.floor(imageIdx / cols);
+    if (row >= rows) return false;
+    ctx.drawImage(
+      atlas,
+      col * cellW,
+      row * cellH,
+      cellW,
+      cellH,
+      sx,
+      sy,
+      tileW,
+      tileH
+    );
+    return true;
+  };
+
+  const drawResourceOverlay = (record, sx, sy) => {
+    const atlas = state.biqMapArtCache.resources;
+    if (!atlas) return;
+    const resourceId = parseIntLoose(getFieldByBaseKey(record, 'resource')?.value, -1);
+    if (resourceId < 0) return;
+    const iconIdx = goodIconById[resourceId];
+    if (!Number.isFinite(iconIdx) || iconIdx < 0) return;
+    const cols = 10;
+    const cellW = Math.floor(atlas.width / cols);
+    const cellH = Math.floor(atlas.height / cols);
+    const col = iconIdx % cols;
+    const row = Math.floor(iconIdx / cols);
+    const size = Math.max(6, Math.round(32 * scale));
+    const dx = sx + Math.round(BIQ_MAP_OVERLAY_ANCHORS.resource.x * scale);
+    const dy = sy + Math.round(BIQ_MAP_OVERLAY_ANCHORS.resource.y * scale);
+    ctx.drawImage(atlas, col * cellW, row * cellH, cellW, cellH, dx, dy, size, size);
+  };
+
+  const drawUnitOverlay = (record, screenX, screenY) => {
+    const atlas = state.biqMapArtCache.units32;
+    if (!atlas) return;
+    const rawUnit = String(getFieldByBaseKey(record, 'unit_on_tile')?.value || '').trim();
+    if (!rawUnit) return;
+    const unitName = rawUnit.replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+    const unitId = prtoIndexByName[unitName];
+    if (!Number.isFinite(unitId)) return;
+    const iconIdx = prtoIconById[unitId];
+    if (!Number.isFinite(iconIdx) || iconIdx < 0) return;
+    const cols = 14;
+    const cellW = 32;
+    const cellH = 32;
+    const step = 33;
+    const col = iconIdx % cols;
+    const row = Math.floor(iconIdx / cols);
+    const srcX = col * step;
+    const srcY = row * step;
+    if (srcX + cellW > atlas.width || srcY + cellH > atlas.height) return;
+    const size = Math.max(6, Math.round(32 * scale));
+    const dx = screenX + Math.round(BIQ_MAP_OVERLAY_ANCHORS.unit.x * scale);
+    const dy = screenY + Math.round(BIQ_MAP_OVERLAY_ANCHORS.unit.y * scale);
+    ctx.drawImage(atlas, srcX, srcY, cellW, cellH, dx, dy, size, size);
+  };
+
+  const drawCityOverlay = (record, sx, sy) => {
+    const cityId = parseIntLoose(getFieldByBaseKey(record, 'city')?.value, -1);
+    if (cityId < 0) return;
+    const cityRecord = cityRecordById[cityId];
+    const cityLevel = parseIntLoose(getFieldByBaseKey(cityRecord, 'citylevel')?.value, 0);
+    const hasWalls = parseIntLoose(getFieldByBaseKey(cityRecord, 'haswalls')?.value, 0) !== 0;
+    const cityName = String(getFieldByBaseKey(cityRecord, 'name')?.value || '').trim();
+    const atlas = state.biqMapArtCache.terrainBuildings;
+
+    if (atlas) {
+      const cols = 16;
+      const cellW = Math.floor(atlas.width / cols);
+      const cellH = Math.floor(atlas.height / 8);
+      const levelBase = Math.max(0, Math.min(2, cityLevel));
+      const idx = levelBase + (hasWalls ? 16 : 0);
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      const srcX = col * cellW;
+      const srcY = row * cellH;
+      const size = Math.max(8, Math.round(Math.max(cellW, cellH) * scale));
+      const dx = sx + Math.round(BIQ_MAP_OVERLAY_ANCHORS.city.x * scale) - Math.floor(size / 2);
+      const dy = sy + Math.round(BIQ_MAP_OVERLAY_ANCHORS.city.y * scale) - Math.floor(size / 2);
+      if (srcX + cellW <= atlas.width && srcY + cellH <= atlas.height) {
+        ctx.drawImage(atlas, srcX, srcY, cellW, cellH, dx, dy, size, size);
+      }
+    } else {
+      const cx = sx + Math.floor(tileW / 2);
+      const cy = sy + Math.floor(tileH / 2);
+      const r = Math.max(1, Math.floor(tilePx / 5));
+      ctx.fillStyle = '#f8f8ff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#233045';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    if (state.biqMapShowCityNames && cityName && tilePx >= 8) {
+      ctx.font = `${Math.max(8, Math.floor(tilePx * 0.55))}px sans-serif`;
+      const tx = sx + Math.round(BIQ_MAP_OVERLAY_ANCHORS.cityName.x * scale);
+      const ty = sy + Math.round(BIQ_MAP_OVERLAY_ANCHORS.cityName.y * scale);
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+      ctx.lineWidth = 2;
+      ctx.strokeText(cityName, tx, ty);
+      ctx.fillStyle = '#f3f6ff';
+      ctx.fillText(cityName, tx, ty);
+    }
+  };
+
+  const selGeom = tileGeom[state.biqMapSelectedTile] || { xPos: 0, yPos: 0 };
+  const selPosRaw = tileToScreenTopLeft(selGeom.xPos, selGeom.yPos);
+  const selPos = { sx: selPosRaw.sx + originX, sy: selPosRaw.sy + originY };
+  const drawWrapOffsets = xWrap ? [-worldWrapSpan, 0, worldWrapSpan] : [0];
+  const findTileAtCanvasPx = (px, py, requireInside = false) => {
+    let bestIdx = -1;
+    let bestDist = Number.POSITIVE_INFINITY;
+    let bestCx = 0;
+    let bestCy = 0;
+    for (let i = 0; i <= maxIdx; i += 1) {
+      const geom = tileGeom[i];
+      const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
+      const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
+      for (const wrapDx of drawWrapOffsets) {
+        const tx = basePos.sx + wrapDx + Math.floor(tileW / 2);
+        const ty = basePos.sy + Math.floor(tileH / 2);
+        const nx = Math.abs(px - tx) / Math.max(1, tileW / 2);
+        const ny = Math.abs(py - ty) / Math.max(1, tileH / 2);
+        const metric = nx + ny;
+        if (metric < bestDist) {
+          bestDist = metric;
+          bestIdx = i;
+          bestCx = tx;
+          bestCy = ty;
+        }
+      }
+    }
+    if (bestIdx < 0) return null;
+    if (requireInside && bestDist > 1.02) return null;
+    return { index: bestIdx, centerX: bestCx, centerY: bestCy, metric: bestDist };
+  };
+
+  for (let i = 0; i <= maxIdx; i += 1) {
+    const record = tiles[i];
+    const geom = tileGeom[i];
+    const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
+    const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
+    const terrain = parseIntLoose(getFieldByBaseKey(record, 'baserealterrain')?.value, 0);
+    const resource = parseIntLoose(getFieldByBaseKey(record, 'resource')?.value, -1);
+    const owner = parseIntLoose(getFieldByBaseKey(record, 'owner')?.value, 0);
+    const continent = parseIntLoose(getFieldByBaseKey(record, 'continent')?.value, 0);
+
+    let value = terrain;
+    if (state.biqMapLayer === 'resource') value = resource;
+    if (state.biqMapLayer === 'owner') value = owner;
+    if (state.biqMapLayer === 'continent') value = continent;
+
+    for (const wrapDx of drawWrapOffsets) {
+      const sx = basePos.sx + wrapDx;
+      const sy = basePos.sy;
+      let drewSprite = false;
+      if (state.biqMapLayer === 'terrain') drewSprite = drawTerrainSprite(record, sx, sy);
+      if (!drewSprite) {
+        ctx.fillStyle = value < 0 ? '#222831' : colorFromNumber(value);
+        ctx.beginPath();
+        ctx.moveTo(sx + Math.floor(tileW / 2), sy);
+        ctx.lineTo(sx + tileW, sy + Math.floor(tileH / 2));
+        ctx.lineTo(sx + Math.floor(tileW / 2), sy + tileH);
+        ctx.lineTo(sx, sy + Math.floor(tileH / 2));
+        ctx.closePath();
+        ctx.fill();
+      }
+      if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
+        drawResourceOverlay(record, sx, sy);
+        drawUnitOverlay(record, sx, sy);
+        drawCityOverlay(record, sx, sy);
+      }
+      if (state.biqMapShowGrid && tilePx >= 5) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+        ctx.beginPath();
+        ctx.moveTo(sx + Math.floor(tileW / 2), sy);
+        ctx.lineTo(sx + tileW, sy + Math.floor(tileH / 2));
+        ctx.lineTo(sx + Math.floor(tileW / 2), sy + tileH);
+        ctx.lineTo(sx, sy + Math.floor(tileH / 2));
+        ctx.closePath();
+        ctx.stroke();
+      }
+    }
+  }
+
+  const sx = selPos.sx;
+  const sy = selPos.sy;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = Math.max(1, Math.floor(tilePx / 2.6));
+  ctx.beginPath();
+  ctx.moveTo(sx + Math.floor(tileW / 2), sy);
+  ctx.lineTo(sx + tileW, sy + Math.floor(tileH / 2));
+  ctx.lineTo(sx + Math.floor(tileW / 2), sy + tileH);
+  ctx.lineTo(sx, sy + Math.floor(tileH / 2));
+  ctx.closePath();
+  ctx.stroke();
+  ctx.strokeStyle = '#1a1f2a';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(sx + Math.floor(tileW / 2), sy + 1);
+  ctx.lineTo(sx + tileW - 1, sy + Math.floor(tileH / 2));
+  ctx.lineTo(sx + Math.floor(tileW / 2), sy + tileH - 1);
+  ctx.lineTo(sx + 1, sy + Math.floor(tileH / 2));
+  ctx.closePath();
+  ctx.stroke();
+
+  canvas.addEventListener('click', (ev) => {
+    if (Date.now() < (state.biqMapSuppressClickUntilTs || 0)) {
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const px = ((ev.clientX - rect.left) / rect.width) * canvas.width;
+    const py = ((ev.clientY - rect.top) / rect.height) * canvas.height;
+    const hit = findTileAtCanvasPx(px, py, true);
+    if (hit) {
+      state.biqMapSelectedTile = hit.index;
+      const g = tileGeom[hit.index] || null;
+      appendDebugLog('biq-map:tile-select', { index: hit.index, xPos: g ? g.xPos : null, yPos: g ? g.yPos : null });
+    } else {
+      appendDebugLog('biq-map:tile-select-miss', { px: Math.round(px), py: Math.round(py) });
+    }
+    renderActiveTab({ preserveTabScroll: true });
+  });
+  mapPane.appendChild(canvas);
+  mapFrame.appendChild(mapPane);
+  mapFrame.appendChild(zoomControls);
+  container.appendChild(mapFrame);
+
+  window.requestAnimationFrame(() => {
+    const zoomAnchor = state.biqMapZoomAnchor;
+    if (zoomAnchor && Number.isFinite(zoomAnchor.fromZoom)) {
+      const factor = scaleForZoom(state.biqMapZoom) / scaleForZoom(zoomAnchor.fromZoom);
+      const targetLeft = Math.max(0, Math.round((zoomAnchor.contentX * factor) - zoomAnchor.paneX));
+      const targetTop = Math.max(0, Math.round((zoomAnchor.contentY * factor) - zoomAnchor.paneY));
+      mapPane.scrollLeft = targetLeft;
+      mapPane.scrollTop = targetTop;
+      state.biqMapScrollLeft = targetLeft;
+      state.biqMapScrollTop = targetTop;
+      state.biqMapZoomAnchor = null;
+      return;
+    }
+    if (Number.isFinite(state.biqMapScrollLeft) && Number.isFinite(state.biqMapScrollTop)) {
+      mapPane.scrollLeft = state.biqMapScrollLeft;
+      mapPane.scrollTop = state.biqMapScrollTop;
+      return;
+    }
+    const targetLeft = Math.max(0, sx + Math.floor(tileW / 2) - Math.floor(mapPane.clientWidth / 2));
+    const targetTop = Math.max(0, sy + Math.floor(tileH / 2) - Math.floor(mapPane.clientHeight / 2));
+    mapPane.scrollLeft = targetLeft;
+    mapPane.scrollTop = targetTop;
+    state.biqMapScrollLeft = targetLeft;
+    state.biqMapScrollTop = targetTop;
+    appendDebugLog('biq-map:init-scroll', { left: targetLeft, top: targetTop });
+  });
+
+  const inspector = document.createElement('div');
+  inspector.className = 'section-card';
+  const inspectorPos = tileGeom[state.biqMapSelectedTile] || { xPos: 0, yPos: 0 };
+  inspector.innerHTML = `<div class="section-top"><strong>Tile ${state.biqMapSelectedTile}</strong><span class="hint">x=${inspectorPos.xPos}, y=${inspectorPos.yPos}</span></div>`;
+  const fieldsGrid = document.createElement('div');
+  fieldsGrid.className = 'kv-grid';
+
+  const addFieldEditor = (key, label) => {
+    const row = document.createElement('div');
+    row.className = 'kv-row compact';
+    const name = document.createElement('div');
+    name.className = 'field-meta';
+    name.textContent = label;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = String(getFieldByBaseKey(selectedTile, key)?.value || '');
+    input.addEventListener('change', () => {
+      if (!isScenarioMode()) return;
+      setRecordFieldValue(selectedTile, key, input.value.trim());
+      renderActiveTab({ preserveTabScroll: true });
+    });
+    input.disabled = !isScenarioMode();
+    row.appendChild(name);
+    row.appendChild(input);
+    fieldsGrid.appendChild(row);
+  };
+
+  addFieldEditor('baserealterrain', 'Base Terrain Code');
+  addFieldEditor('resource', 'Resource');
+  addFieldEditor('owner', 'Owner');
+  addFieldEditor('continent', 'Continent');
+  addFieldEditor('city', 'City Ref');
+  addFieldEditor('unit_on_tile', 'Unit');
+  addFieldEditor('rivercrossingdata', 'River Crossing');
+  inspector.appendChild(fieldsGrid);
+  container.appendChild(inspector);
+
+  return container;
 }
 
 function createFieldInput(schemaField, value, onChange) {
@@ -2091,6 +3314,8 @@ function renderActiveTab(options = {}) {
 
   if (tab.type === 'reference') {
     el.tabContent.appendChild(renderReferenceTab(tab, state.activeTab));
+  } else if (tab.type === 'biq') {
+    el.tabContent.appendChild(renderBiqTab(tab));
   } else if (state.activeTab === 'base') {
     el.tabContent.appendChild(renderBaseTab(tab));
   } else {
@@ -2103,21 +3328,43 @@ function renderActiveTab(options = {}) {
   });
 }
 
-async function loadBundleAndRender() {
+async function loadBundleAndRender(options = {}) {
+  if (state.isLoading) {
+    state.pendingAutoReload = true;
+    return;
+  }
+  if (state.autoReloadTimer) {
+    window.clearTimeout(state.autoReloadTimer);
+    state.autoReloadTimer = null;
+  }
   syncSettingsFromInputs();
+  updatePathsSummary();
+  updateModeState();
   await window.c3xManager.setSettings(state.settings);
-
-  if (!state.settings.c3xPath) {
-    setStatus('Set C3X Folder first.', true);
-    return;
-  }
-
-  if (state.settings.mode === 'scenario' && !state.settings.scenarioPath) {
-    setStatus('Set Scenario Folder in Scenario mode.', true);
-    return;
-  }
+  setLoadingUi(true, options.loadingText || 'Loading configs...');
 
   try {
+    if (!state.settings.c3xPath) {
+      clearBundleView();
+      setStatus('Set C3X Folder first.', true);
+      updateModeState();
+      return;
+    }
+
+    if (state.settings.mode === 'scenario' && !state.settings.scenarioPath) {
+      clearBundleView();
+      setStatus('Select a scenario .biq in Scenario mode.', true);
+      updateModeState();
+      return;
+    }
+
+    if (state.settings.mode === 'scenario' && !isBiqPath(state.settings.scenarioPath)) {
+      clearBundleView();
+      setStatus('Scenario mode requires selecting a .biq file.', true);
+      updateModeState();
+      return;
+    }
+
     state.trackDirty = false;
     const bundle = await window.c3xManager.loadBundle({
       mode: state.settings.mode,
@@ -2126,9 +3373,19 @@ async function loadBundleAndRender() {
       scenarioPath: state.settings.scenarioPath
     });
 
+    const previousActiveTab = state.activeTab;
     state.bundle = bundle;
-    state.activeTab = Object.keys(bundle.tabs)[0] || 'base';
+    state.activeTab = bundle.tabs[previousActiveTab]
+      ? previousActiveTab
+      : (Object.keys(bundle.tabs)[0] || 'base');
     state.baseFilter = '';
+    state.biqMapArtCache = {};
+    state.biqMapArtLoading = {};
+    state.biqMapSelectedTile = -1;
+    state.biqMapScrollLeft = null;
+    state.biqMapScrollTop = null;
+    state.biqMapZoomAnchor = null;
+    state.biqMapSuppressClickUntilTs = 0;
     el.workspace.classList.remove('hidden');
     renderTabs();
     renderActiveTab();
@@ -2136,10 +3393,24 @@ async function loadBundleAndRender() {
       captureCleanSnapshot();
       state.trackDirty = true;
     }, 0);
+    if (!state.hasAutoCollapsedPaths) {
+      setPathsCollapsed(true);
+      state.hasAutoCollapsedPaths = true;
+    }
+    updateModeState(bundle);
     setReferenceNotice('Configs loaded.');
+    setStatus('Configs loaded. Changes to mode or paths reload automatically.');
   } catch (err) {
+    clearBundleView();
     state.trackDirty = true;
+    updateModeState();
     setStatus(`Failed to load configs: ${err.message}`, true);
+  } finally {
+    setLoadingUi(false);
+    if (state.pendingAutoReload) {
+      state.pendingAutoReload = false;
+      void loadBundleAndRender({ loadingText: 'Applying latest mode/path changes...' });
+    }
   }
 }
 
@@ -2160,6 +3431,7 @@ async function saveCurrentBundle() {
     const res = await window.c3xManager.saveBundle({
       mode: state.settings.mode,
       c3xPath: state.settings.c3xPath,
+      civ3Path: state.settings.civ3Path,
       scenarioPath: state.settings.scenarioPath,
       tabs: tabsToSave
     });
@@ -2212,7 +3484,29 @@ async function wireBrowseButton(button, input) {
     }
     input.value = dir;
     syncSettingsFromInputs();
+    if (input === el.civ3Path) {
+      await refreshScenarioSelectOptions();
+    }
+    updatePathsSummary();
+    updateModeState();
     await window.c3xManager.setSettings(state.settings);
+    await loadBundleAndRender({ loadingText: 'Reloading after path change...' });
+  });
+}
+
+async function wireScenarioBrowseButton(button, input) {
+  button.addEventListener('click', async () => {
+    const filePath = await window.c3xManager.pickFile({
+      filters: [{ name: 'BIQ Scenario Files', extensions: ['biq'] }]
+    });
+    if (!filePath) return;
+    input.value = filePath;
+    syncSettingsFromInputs();
+    updateScenarioSelectValue();
+    updatePathsSummary();
+    updateModeState();
+    await window.c3xManager.setSettings(state.settings);
+    await loadBundleAndRender({ loadingText: 'Reloading scenario...' });
   });
 }
 
@@ -2224,16 +3518,21 @@ async function shouldAutoLoad() {
   if (state.settings.mode !== 'scenario') {
     return true;
   }
+  if (!isBiqPath(state.settings.scenarioPath)) return false;
   return await window.c3xManager.pathExists(state.settings.scenarioPath);
 }
 
 async function init() {
   state.settings = await window.c3xManager.getSettings();
+  applyUiFontScale(state.settings.uiFontScale || 1);
   state.trackDirty = false;
   state.suppressDirtyUntilInteraction = true;
   refreshDirtyUi();
   fillInputsFromSettings();
+  setPathsCollapsed(false);
   setMode(state.settings.mode || 'global');
+  await refreshScenarioSelectOptions();
+  updateModeState();
 
   const unlockDirtyTracking = () => {
     state.suppressDirtyUntilInteraction = false;
@@ -2244,14 +3543,66 @@ async function init() {
   el.modeGlobal.addEventListener('click', async () => {
     setMode('global');
     await window.c3xManager.setSettings(state.settings);
+    await loadBundleAndRender({ loadingText: 'Switching to standard game...' });
   });
 
-  el.modeScenario.addEventListener('click', async () => {
-    setMode('scenario');
-    await window.c3xManager.setSettings(state.settings);
+  if (el.modeScenarioSelect) {
+    el.modeScenarioSelect.addEventListener('change', async () => {
+      const selected = el.modeScenarioSelect.value;
+      if (!selected) {
+        return;
+      }
+      setMode('scenario');
+      if (selected !== '__manual__') {
+        el.scenarioPath.value = selected;
+      }
+      syncSettingsFromInputs();
+      updateScenarioSelectValue();
+      await window.c3xManager.setSettings(state.settings);
+      await loadBundleAndRender({ loadingText: 'Switching to scenario...' });
+    });
+  }
+
+  if (el.fontDown) {
+    el.fontDown.addEventListener('click', () => {
+      const current = state.settings && state.settings.uiFontScale ? state.settings.uiFontScale : 1;
+      setUiFontScale(current - 0.05, true);
+    });
+  }
+  if (el.fontUp) {
+    el.fontUp.addEventListener('click', () => {
+      const current = state.settings && state.settings.uiFontScale ? state.settings.uiFontScale : 1;
+      setUiFontScale(current + 0.05, true);
+    });
+  }
+
+  [el.c3xPath, el.civ3Path, el.scenarioPath].forEach((input) => {
+    input.addEventListener('input', () => {
+      syncSettingsFromInputs();
+      if (input === el.civ3Path) {
+        void refreshScenarioSelectOptions();
+      } else if (input === el.scenarioPath) {
+        updateScenarioSelectValue();
+      }
+      updatePathsSummary();
+      updateModeState();
+      void window.c3xManager.setSettings(state.settings);
+      queueAutoReload('Reloading after path edit...');
+    });
+    input.addEventListener('blur', () => {
+      if (input === el.civ3Path) {
+        void refreshScenarioSelectOptions();
+      }
+      queueAutoReload('Reloading after path edit...', 80);
+    });
   });
 
-  el.loadBtn.addEventListener('click', loadBundleAndRender);
+  if (el.pathsToggle) {
+    el.pathsToggle.addEventListener('click', () => {
+      setPathsCollapsed(!state.pathsCollapsed);
+    });
+  }
+
   el.saveBtn.addEventListener('click', saveCurrentBundle);
   if (el.undoBtn) {
     el.undoBtn.addEventListener('click', undoOneStep);
@@ -2287,9 +3638,9 @@ async function init() {
 
   wireBrowseButton(el.pickC3x, el.c3xPath);
   wireBrowseButton(el.pickCiv3, el.civ3Path);
-  wireBrowseButton(el.pickScenario, el.scenarioPath);
+  wireScenarioBrowseButton(el.pickScenario, el.scenarioPath);
 
-  setStatus('Choose paths, then load configs.');
+  setStatus('Auto-reload is enabled. Changing mode or paths reloads configs.');
 
   if (await shouldAutoLoad()) {
     await loadBundleAndRender();

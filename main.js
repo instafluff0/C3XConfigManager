@@ -5,6 +5,9 @@ const { loadBundle, saveBundle } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
 
 const APP_SETTINGS_FILE = 'settings.json';
+const JAVA_BIN_RELATIVE_PATHS = process.platform === 'win32'
+  ? [path.join('bin', 'javaw.exe'), path.join('bin', 'java.exe')]
+  : [path.join('bin', 'java')];
 
 function dirExists(dirPath) {
   try {
@@ -12,6 +15,50 @@ function dirExists(dirPath) {
   } catch (_err) {
     return false;
   }
+}
+
+function pathExists(anyPath) {
+  try {
+    return !!anyPath && fs.existsSync(anyPath);
+  } catch (_err) {
+    return false;
+  }
+}
+
+function resolveCiv3RootPath(civ3Path) {
+  if (!civ3Path) return '';
+  const base = path.basename(civ3Path).toLowerCase();
+  if (base === 'conquests' || base === 'civ3ptw') {
+    return path.dirname(civ3Path);
+  }
+  return civ3Path;
+}
+
+function listKnownScenarios(civ3Path) {
+  const root = resolveCiv3RootPath(civ3Path);
+  if (!root) return [];
+  const conquestsRoot = path.join(root, 'Conquests');
+  const groups = [
+    { source: 'Conquests', dir: path.join(conquestsRoot, 'Conquests') },
+    { source: 'Scenarios', dir: path.join(conquestsRoot, 'Scenarios') }
+  ];
+  const out = [];
+  groups.forEach((group) => {
+    if (!dirExists(group.dir)) return;
+    const entries = fs.readdirSync(group.dir, { withFileTypes: true })
+      .filter((d) => d.isFile() && /\.biq$/i.test(d.name))
+      .map((d) => d.name)
+      .sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+    entries.forEach((fileName) => {
+      out.push({
+        source: group.source,
+        fileName,
+        name: fileName.replace(/\.biq$/i, ''),
+        path: path.join(group.dir, fileName)
+      });
+    });
+  });
+  return out;
 }
 
 function looksLikeC3xFolder(dirPath) {
@@ -61,6 +108,32 @@ function inferDefaultPaths(existing) {
 
 function getSettingsPath() {
   return path.join(app.getPath('userData'), APP_SETTINGS_FILE);
+}
+
+function findFirstExisting(paths) {
+  return paths.find((p) => !!p && fs.existsSync(p)) || '';
+}
+
+function resolveBundledJavaPath() {
+  const candidates = [];
+
+  // Packaged app: resources/vendor/jre/<platform>/bin/java
+  if (process.resourcesPath) {
+    const base = path.join(process.resourcesPath, 'vendor', 'jre', process.platform);
+    JAVA_BIN_RELATIVE_PATHS.forEach((rel) => candidates.push(path.join(base, rel)));
+  }
+
+  // Development paths under repo vendor/jre/<platform>/bin/java
+  const devBaseCandidates = [
+    path.join(__dirname, 'vendor', 'jre', process.platform),
+    path.join(path.dirname(__dirname), 'vendor', 'jre', process.platform),
+    path.join(process.cwd(), 'vendor', 'jre', process.platform)
+  ];
+  devBaseCandidates.forEach((base) => {
+    JAVA_BIN_RELATIVE_PATHS.forEach((rel) => candidates.push(path.join(base, rel)));
+  });
+
+  return findFirstExisting(candidates);
 }
 
 function readJsonIfExists(filePath, fallback) {
@@ -117,11 +190,13 @@ ipcMain.handle('manager:get-settings', async () => {
     c3xPath: '',
     civ3Path: '',
     scenarioPath: '',
-    mode: 'global'
+    mode: 'global',
+    uiFontScale: 1
   };
   const saved = readJsonIfExists(getSettingsPath(), defaults);
-  const inferred = inferDefaultPaths(saved);
-  if (JSON.stringify(saved) !== JSON.stringify(inferred)) {
+  const merged = { ...defaults, ...(saved || {}) };
+  const inferred = inferDefaultPaths(merged);
+  if (JSON.stringify(merged) !== JSON.stringify(inferred)) {
     writeJson(getSettingsPath(), inferred);
   }
   return inferred;
@@ -142,10 +217,14 @@ ipcMain.handle('manager:pick-directory', async () => {
   return result.filePaths[0];
 });
 
-ipcMain.handle('manager:pick-file', async () => {
-  const result = await dialog.showOpenDialog({
+ipcMain.handle('manager:pick-file', async (_event, options) => {
+  const dialogOptions = {
     properties: ['openFile']
-  });
+  };
+  if (options && Array.isArray(options.filters) && options.filters.length > 0) {
+    dialogOptions.filters = options.filters;
+  }
+  const result = await dialog.showOpenDialog(dialogOptions);
   if (result.canceled || result.filePaths.length === 0) {
     return null;
   }
@@ -153,15 +232,29 @@ ipcMain.handle('manager:pick-file', async () => {
 });
 
 ipcMain.handle('manager:path-exists', async (_event, dirPath) => {
-  return dirExists(dirPath);
+  return pathExists(dirPath);
+});
+
+ipcMain.handle('manager:list-scenarios', async (_event, civ3Path) => {
+  try {
+    return listKnownScenarios(civ3Path);
+  } catch (_err) {
+    return [];
+  }
 });
 
 ipcMain.handle('manager:load-bundle', async (_event, payload) => {
-  return loadBundle(payload);
+  return loadBundle({
+    ...(payload || {}),
+    javaPath: resolveBundledJavaPath()
+  });
 });
 
 ipcMain.handle('manager:save-bundle', async (_event, payload) => {
-  return saveBundle(payload);
+  return saveBundle({
+    ...(payload || {}),
+    javaPath: resolveBundledJavaPath()
+  });
 });
 
 ipcMain.handle('manager:get-preview', async (_event, payload) => {

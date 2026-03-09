@@ -11,45 +11,57 @@
     <div class="bg-shape bg-shape-b"></div>
 
     <header class="hero">
-      <div>
-        <h1>Civ 3 | C3X Modern Configuration Manager</h1>
-        <p>Manage Civilization 3 and C3X global and scenario settings all in one place</p>
+      <div class="hero-title-wrap">
+        <div class="title-row">
+          <h1>Civ 3 | C3X Modern Configuration Manager</h1>
+          <span id="scenario-title-chip" class="scenario-title-chip hidden">Scenario: (not loaded)</span>
+        </div>
+        <p>Manage Civilization 3 Conquests and C3X global and scenario settings all in one place</p>
+        <div class="mode-state" id="mode-state">
+          <span id="mode-state-badge" class="mode-state-badge">Standard Game</span>
+          <span id="mode-state-detail" class="mode-state-detail">Not loaded yet</span>
+        </div>
       </div>
       <div class="mode-pill-group">
         <button id="mode-global" class="mode-pill">Standard Game</button>
-        <button id="mode-scenario" class="mode-pill">Scenario</button>
+        <select id="mode-scenario-select" class="mode-pill mode-select" aria-label="Choose scenario">
+          <option value="">Scenario...</option>
+          <option value="__manual__">Manual / Browse...</option>
+        </select>
       </div>
     </header>
 
     <section class="paths card">
-      <div class="path-grid">
-        <label class="path-row">
-          <span class="path-label"><span class="path-dot"></span>Civilization 3 Folder</span>
-          <input id="civ3-path" type="text" placeholder="Path containing Conquests/" />
-          <button id="pick-civ3">Browse</button>
-        </label>
-
-        <label class="path-row">
-          <span class="path-label"><span class="path-dot"></span>C3X Folder</span>
-          <input id="c3x-path" type="text" placeholder="Path containing default.c3x_config.ini" />
-          <button id="pick-c3x">Browse</button>
-        </label>
-
-        <label class="path-row" id="scenario-path-row">
-          <span class="path-label"><span class="path-dot"></span>Scenario Folder</span>
-          <input id="scenario-path" type="text" placeholder="Folder for scenario.* config files" />
-          <button id="pick-scenario">Browse</button>
-        </label>
-      </div>
-
       <div class="actions">
-        <button id="load-btn" class="primary"><span class="btn-icon">↻</span>Load Configs</button>
+        <button id="paths-toggle" class="ghost" type="button">Hide File Paths</button>
+        <span id="paths-summary" class="paths-summary"></span>
         <button id="save-btn" class="secondary"><span class="btn-icon">💾</span>Save</button>
         <button id="undo-btn" class="ghost"><span class="btn-icon">↶</span>Undo</button>
         <button id="reset-btn" class="ghost"><span class="btn-icon">⟲</span>Reset</button>
         <span id="dirty-indicator" class="dirty-indicator hidden">Unsaved changes</span>
       </div>
-      <p id="status" class="status"></p>
+
+      <div class="path-grid-wrap" id="paths-body">
+        <div class="path-grid">
+          <label class="path-row">
+            <span class="path-label"><span class="path-dot"></span>Civilization 3 Folder</span>
+            <input id="civ3-path" type="text" placeholder="Path containing Conquests/" />
+            <button id="pick-civ3">Browse</button>
+          </label>
+
+          <label class="path-row">
+            <span class="path-label"><span class="path-dot"></span>C3X Folder</span>
+            <input id="c3x-path" type="text" placeholder="Path containing default.c3x_config.ini" />
+            <button id="pick-c3x">Browse</button>
+          </label>
+
+          <label class="path-row" id="scenario-path-row">
+            <span class="path-label"><span class="path-dot"></span>Scenario .biq File</span>
+            <input id="scenario-path" type="text" placeholder="Select a scenario .biq file" />
+            <button id="pick-scenario">Browse</button>
+          </label>
+        </div>
+      </div>
     </section>
 
     <section class="workspace card hidden" id="workspace">
@@ -69,6 +81,11 @@
     </template>
 
     <button id="debug-toggle" class="debug-fab" title="Open Preview Debug Log">🛠</button>
+    <div class="floating-font-controls" aria-label="Font size controls">
+      <button id="font-down" class="ghost font-btn" type="button" aria-label="Decrease font size">A-</button>
+      <span id="font-scale-label" class="font-scale-label">100%</span>
+      <button id="font-up" class="ghost font-btn" type="button" aria-label="Increase font size">A+</button>
+    </div>
     <section id="debug-drawer" class="debug-drawer hidden">
       <div class="debug-header">
         <strong>Preview Debug Log</strong>
@@ -80,6 +97,13 @@
       </div>
       <pre id="debug-log"></pre>
     </section>
+
+    <div id="loading-overlay" class="loading-overlay hidden" aria-live="polite">
+      <div class="loading-card">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <p id="loading-text">Loading configs...</p>
+      </div>
+    </div>
 
     <script src="./renderer.js"></script>
   </body>

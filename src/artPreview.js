@@ -91,7 +91,8 @@ function decodePcx(filePath) {
     rgba[i * 4] = palette[idx * 3];
     rgba[i * 4 + 1] = palette[idx * 3 + 1];
     rgba[i * 4 + 2] = palette[idx * 3 + 2];
-    rgba[i * 4 + 3] = 255;
+    // Civ3 convention: palette entries 254 (green) and 255 (magenta) are transparent.
+    rgba[i * 4 + 3] = (idx === 254 || idx === 255) ? 0 : 255;
   }
 
   return { width, height, rgba };
@@ -386,31 +387,57 @@ function resolvePtwRoot(civ3Path) {
   return root ? path.join(root, 'civ3PTW') : '';
 }
 
-function resolveConquestsAssetPath(civ3Path, rawAssetPath) {
+function resolveScenarioRoot(scenarioPath) {
+  const raw = String(scenarioPath || '').trim();
+  if (!raw) return '';
+  if (/\.biq$/i.test(raw)) return path.dirname(raw);
+  return raw;
+}
+
+function normalizeScenarioRoots(scenarioPath, scenarioPaths) {
+  const out = [];
+  const seen = new Set();
+  const add = (candidate) => {
+    const resolved = resolveScenarioRoot(candidate);
+    if (!resolved || seen.has(resolved)) return;
+    seen.add(resolved);
+    out.push(resolved);
+  };
+  add(scenarioPath);
+  (Array.isArray(scenarioPaths) ? scenarioPaths : []).forEach((p) => add(p));
+  return out;
+}
+
+function resolveConquestsAssetPath(civ3Path, rawAssetPath, scenarioPath, scenarioPaths) {
   if (!civ3Path || !rawAssetPath) return null;
   const civ3Root = resolveCiv3Root(civ3Path);
   const conquestsRoot = resolveConquestsRoot(civ3Path);
   const ptwRoot = resolvePtwRoot(civ3Path);
+  const scenarioRoots = normalizeScenarioRoots(scenarioPath, scenarioPaths);
   const rel = normalizeAssetPath(rawAssetPath);
   const candidates = [];
   if (path.isAbsolute(rel)) candidates.push(rel);
+  scenarioRoots.forEach((root) => candidates.push(path.join(root, rel)));
   candidates.push(path.join(conquestsRoot, rel));
   candidates.push(path.join(ptwRoot, rel));
   candidates.push(path.join(civ3Root, rel));
   return candidates.find((p) => fileExists(p)) || null;
 }
 
-function resolveUnitIniPath(civ3Path, animationName) {
+function resolveUnitIniPath(civ3Path, animationName, scenarioPath, scenarioPaths) {
   if (!civ3Path || !animationName) return null;
   const civ3Root = resolveCiv3Root(civ3Path);
   const conquestsRoot = resolveConquestsRoot(civ3Path);
   const ptwRoot = resolvePtwRoot(civ3Path);
+  const scenarioRoots = normalizeScenarioRoots(scenarioPath, scenarioPaths);
   const unitName = String(animationName).trim();
-  const candidates = [
+  const candidates = [];
+  scenarioRoots.forEach((root) => candidates.push(path.join(root, 'Art', 'Units', unitName, `${unitName}.ini`)));
+  candidates.push(
     path.join(conquestsRoot, 'Art', 'Units', unitName, `${unitName}.ini`),
     path.join(ptwRoot, 'Art', 'Units', unitName, `${unitName}.ini`),
     path.join(civ3Root, 'Art', 'Units', unitName, `${unitName}.ini`)
-  ];
+  );
   return candidates.find((p) => fileExists(p)) || null;
 }
 
@@ -472,7 +499,7 @@ function parseNaturalWonderAnimationIniPath(animationSpec) {
 }
 
 function getPreview(request) {
-  const { c3xPath, civ3Path, kind } = request;
+  const { c3xPath, civ3Path, scenarioPath, scenarioPaths, kind } = request;
 
   if (kind === 'district' || kind === 'wonder' || kind === 'naturalWonder') {
     const pcx = resolvePcxPath(c3xPath, request.fileName);
@@ -501,13 +528,13 @@ function getPreview(request) {
   }
 
   if (kind === 'civilopediaIcon') {
-    const iconPath = resolveConquestsAssetPath(civ3Path, request.assetPath);
+    const iconPath = resolveConquestsAssetPath(civ3Path, request.assetPath, scenarioPath, scenarioPaths);
     if (!iconPath) return { ok: false, error: 'Civilopedia icon not found' };
     return { ok: true, ...decodeByPath(iconPath) };
   }
 
   if (kind === 'unitAnimation') {
-    const unitIni = resolveUnitIniPath(civ3Path, request.animationName);
+    const unitIni = resolveUnitIniPath(civ3Path, request.animationName, scenarioPath, scenarioPaths);
     if (!unitIni) return { ok: false, error: 'Unit INI not found for animation name' };
     const flc = parseIniForFlc(unitIni);
     if (!flc || !fileExists(flc)) return { ok: false, error: 'No FLC found in unit INI' };

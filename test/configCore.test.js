@@ -8,6 +8,8 @@ const {
   buildBaseModel,
   parseSectionedConfig,
   serializeSectionedConfig,
+  parseBiqSectionsFromBuffer,
+  resolveScenarioDir,
   resolvePaths,
   loadBundle,
   saveBundle
@@ -64,6 +66,42 @@ test('resolvePaths applies replacement precedence for sectioned configs', () => 
 
   assert.equal(globalPaths.districts.effectiveSource, 'user');
   assert.equal(scenarioPaths.districts.effectiveSource, 'scenario');
+});
+
+test('resolveScenarioDir supports scenarioPath as .biq file', () => {
+  assert.equal(resolveScenarioDir('/tmp/MyScenario.biq'), '/tmp');
+  assert.equal(resolveScenarioDir('/tmp/scenarios'), '/tmp/scenarios');
+});
+
+test('parseBiqSectionsFromBuffer reads basic BIQ section metadata', () => {
+  const header = Buffer.alloc(736, 0);
+  header.write('BICX', 0, 'latin1');
+  header.write('VER#', 4, 'latin1');
+  header.writeUInt32LE(1, 8); // num headers
+  header.writeUInt32LE(0x2d0, 12); // header len
+  header.writeUInt32LE(12, 24); // major
+  header.writeUInt32LE(8, 28); // minor
+  header.write('Test BIQ', 672, 'latin1');
+
+  const bldg = Buffer.alloc(4 + 4 + 4 + 4, 0);
+  bldg.write('BLDG', 0, 'latin1');
+  bldg.writeUInt32LE(1, 4); // count
+  bldg.writeUInt32LE(4, 8); // record len
+  bldg.writeUInt32LE(0x12345678, 12); // record payload
+
+  const zeroSections = ['CTZN', 'CULT', 'DIFF', 'ERAS', 'ESPN', 'EXPR', 'GOOD', 'GOVT', 'RULE', 'PRTO', 'RACE', 'TECH', 'TFRM', 'TERR', 'WSIZ', 'GAME'].map((code) => {
+    const sec = Buffer.alloc(8, 0);
+    sec.write(code, 0, 'latin1');
+    sec.writeUInt32LE(0, 4);
+    return sec;
+  });
+
+  const buf = Buffer.concat([header, bldg, ...zeroSections]);
+  const parsed = parseBiqSectionsFromBuffer(buf);
+  assert.equal(parsed.versionTag, 'BICX');
+  assert.equal(parsed.sections[0].code, 'BLDG');
+  assert.equal(parsed.sections[0].count, 1);
+  assert.equal(parsed.sections[parsed.sections.length - 1].code, 'GAME');
 });
 
 test('loadBundle + saveBundle writes to scope targets', () => {

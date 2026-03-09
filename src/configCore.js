@@ -1,5 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
+const crypto = require('node:crypto');
+const { spawnSync } = require('node:child_process');
 
 const FILE_SPECS = {
   base: {
@@ -48,6 +51,1365 @@ const REFERENCE_TAB_SPECS = [
   { key: 'units', title: 'Units', prefix: 'PRTO_' }
 ];
 
+const BIQ_SECTION_DEFS = [
+  { code: 'BLDG', title: 'Buildings', mode: 'len' },
+  { code: 'CTZN', title: 'Citizens', mode: 'len' },
+  { code: 'CULT', title: 'Culture', mode: 'len' },
+  { code: 'DIFF', title: 'Difficulties', mode: 'len' },
+  { code: 'ERAS', title: 'Eras', mode: 'len' },
+  { code: 'ESPN', title: 'Espionage', mode: 'len' },
+  { code: 'EXPR', title: 'Experience', mode: 'len' },
+  { code: 'GOOD', title: 'Resources', mode: 'len' },
+  { code: 'GOVT', title: 'Governments', mode: 'len' },
+  { code: 'RULE', title: 'Rules', mode: 'len' },
+  { code: 'PRTO', title: 'Units', mode: 'len' },
+  { code: 'RACE', title: 'Civilizations', mode: 'len' },
+  { code: 'TECH', title: 'Technologies', mode: 'len' },
+  { code: 'TFRM', title: 'Worker Jobs', mode: 'len' },
+  { code: 'TERR', title: 'Terrain', mode: 'len' },
+  { code: 'WSIZ', title: 'World Sizes', mode: 'len' },
+  { code: 'FLAV', title: 'Flavors', mode: 'len', optional: true },
+  { code: 'WCHR', title: 'World Characteristics', mode: 'len', optional: true },
+  { code: 'WMAP', title: 'World Map', mode: 'len', optional: true },
+  { code: 'TILE', title: 'Tiles', mode: 'fixed', fixedByVersion: true, optional: true },
+  { code: 'CONT', title: 'Continents', mode: 'fixed', fixedSize: 12, optional: true },
+  { code: 'SLOC', title: 'Starting Locations', mode: 'fixed', fixedSize: 20, optional: true },
+  { code: 'CITY', title: 'Cities', mode: 'len', optional: true },
+  { code: 'UNIT', title: 'Map Units', mode: 'len', optional: true },
+  { code: 'CLNY', title: 'Colonies', mode: 'len', optional: true },
+  { code: 'GAME', title: 'Scenario Properties', mode: 'len' },
+  { code: 'LEAD', title: 'Players', mode: 'len', optional: true }
+];
+const MAX_BIQ_RECORDS_PER_SECTION = 400;
+const MAX_BIQ_BRIDGE_RECORDS_PER_SECTION = 600;
+
+function getBiqBridgeRecordLimit(sectionCode) {
+  const code = String(sectionCode || '').toUpperCase();
+  if (code === 'TILE') return Number.POSITIVE_INFINITY;
+  if (code === 'CITY' || code === 'UNIT' || code === 'CLNY') return 8000;
+  return MAX_BIQ_BRIDGE_RECORDS_PER_SECTION;
+}
+
+function readUInt32LESafe(buf, offset) {
+  if (offset < 0 || offset + 4 > buf.length) return null;
+  return buf.readUInt32LE(offset);
+}
+
+function toBiqString(buf, start, end) {
+  const out = buf.subarray(start, end).toString('latin1');
+  const nullPos = out.indexOf('\0');
+  return (nullPos >= 0 ? out.slice(0, nullPos) : out).trim();
+}
+
+function readBiqTag(buf, offset) {
+  if (offset < 0 || offset + 4 > buf.length) return '';
+  return buf.subarray(offset, offset + 4).toString('latin1');
+}
+
+function findBiqDecompressorJar(civ3Path) {
+  const candidates = [
+    process.env.C3X_BIQ_DECOMPRESSOR_JAR || '',
+    process.resourcesPath ? path.join(process.resourcesPath, 'vendor', 'BIQDecompressor.jar') : '',
+    path.join(__dirname, '..', 'vendor', 'BIQDecompressor.jar')
+  ].filter(Boolean);
+  return candidates.find((p) => fs.existsSync(p)) || '';
+}
+
+function findJavaBinary(javaPath) {
+  if (javaPath && fs.existsSync(javaPath)) {
+    return javaPath;
+  }
+  return 'java';
+}
+
+function findBiqBridgeClasspath() {
+  const classDirs = [
+    path.join(__dirname, '..', 'vendor', 'biqbridge'),
+    process.resourcesPath ? path.join(process.resourcesPath, 'vendor', 'biqbridge') : ''
+  ].filter(Boolean);
+  const depsJars = [
+    path.join(__dirname, '..', 'vendor', 'lib', 'xplatformeditor-1.12-jar-with-dependencies.jar'),
+    process.resourcesPath ? path.join(process.resourcesPath, 'vendor', 'lib', 'xplatformeditor-1.12-jar-with-dependencies.jar') : ''
+  ].filter(Boolean);
+  const classDir = classDirs.find((p) => fs.existsSync(path.join(p, 'BiqBridge.class'))) || '';
+  const depsJar = depsJars.find((p) => fs.existsSync(p)) || '';
+  if (!classDir || !depsJar) return '';
+  return [classDir, depsJar].join(path.delimiter);
+}
+
+function inflateBiqIfNeeded(filePath, civ3Path, javaPath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return { ok: false, error: `BIQ file not found: ${filePath || '(empty path)'}` };
+  }
+  const raw = fs.readFileSync(filePath);
+  const magic = raw.subarray(0, 4).toString('latin1');
+  if (magic.startsWith('BIC')) {
+    return { ok: true, buffer: raw, compressed: false, decompressorPath: '' };
+  }
+
+  const decompressorPath = findBiqDecompressorJar(civ3Path);
+  if (!decompressorPath) {
+    return {
+      ok: false,
+      error: 'BIQ appears compressed and no bundled BIQ decompressor was found.'
+    };
+  }
+
+  const tmpBase = path.join(
+    os.tmpdir(),
+    `c3x-biq-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
+  );
+  const outPath = `${tmpBase}.biq`;
+  try {
+    const javaBinary = findJavaBinary(javaPath);
+    const proc = spawnSync(javaBinary, ['-jar', decompressorPath, filePath, outPath], {
+      encoding: 'utf8'
+    });
+    if (proc.status !== 0 || !fs.existsSync(outPath)) {
+      return {
+        ok: false,
+        error: `BIQ decompression failed: ${proc.stderr || proc.stdout || 'unknown error'}`
+      };
+    }
+    const inflated = fs.readFileSync(outPath);
+    return { ok: true, buffer: inflated, compressed: true, decompressorPath };
+  } catch (err) {
+    return { ok: false, error: `BIQ decompression failed: ${err.message}` };
+  } finally {
+    try {
+      if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+    } catch (_err) {
+      // Best effort temp cleanup.
+    }
+  }
+}
+
+function normalizeBiqFieldKey(rawKey) {
+  return String(rawKey || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function cleanDisplayText(value) {
+  return String(value == null ? '' : value)
+    .replace(/[\u0000-\u001f]+/g, '')
+    .trim();
+}
+
+function cleanRecordName(value, fallback = '') {
+  const raw = String(value == null ? '' : value);
+  const truncated = raw.includes('\0') ? raw.slice(0, raw.indexOf('\0')) : raw;
+  const cleaned = cleanDisplayText(truncated);
+  return cleaned || fallback;
+}
+
+function toTitleFromKey(key) {
+  const words = String(key || '')
+    .replace(/_/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .split(/\s+/)
+    .filter(Boolean);
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+function friendlyFieldValue(sectionCode, key, value) {
+  const v = cleanDisplayText(value);
+  if (sectionCode === 'GOVT' && key === 'corruption') {
+    const map = {
+      '0': 'Minimal',
+      '1': 'Nuisance',
+      '2': 'Problematic',
+      '3': 'Rampant',
+      '4': 'Communal'
+    };
+    return map[v] ? `${map[v]} (${v})` : v;
+  }
+  if (sectionCode === 'GOVT' && key === 'hurrying') {
+    const map = {
+      '0': 'Impossible',
+      '1': 'Forced Labor',
+      '2': 'Paid Labor'
+    };
+    return map[v] ? `${map[v]} (${v})` : v;
+  }
+  return value;
+}
+
+function parseEnglishFields(sectionCode, englishText) {
+  const fields = [];
+  const keyCounts = {};
+  const lines = String(englishText || '').split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const colon = line.indexOf(':');
+    if (colon <= 0) {
+      fields.push({ key: 'note', value: line });
+      continue;
+    }
+    const rawKey = line.slice(0, colon).trim();
+    const baseKey = normalizeBiqFieldKey(rawKey) || 'field';
+    keyCounts[baseKey] = (keyCounts[baseKey] || 0) + 1;
+    const key = keyCounts[baseKey] > 1 ? `${baseKey}_${keyCounts[baseKey]}` : baseKey;
+    const rawValue = cleanDisplayText(line.slice(colon + 1));
+    const value = friendlyFieldValue(sectionCode, baseKey, rawValue);
+    fields.push({ key, label: toTitleFromKey(rawKey), value: cleanDisplayText(value) });
+  }
+  return fields;
+}
+
+function parseIntMaybe(value) {
+  const s = cleanDisplayText(value);
+  if (!/^[-+]?\d+$/.test(s)) return null;
+  return Number.parseInt(s, 10);
+}
+
+function getRecordNameByIndex(indexMap, idxValue) {
+  const idx = parseIntMaybe(idxValue);
+  if (idx == null || idx < 0) return '';
+  return indexMap[idx] || '';
+}
+
+function maybeFormatIdReference(indexMap, value, noneLabel = 'None') {
+  const idx = parseIntMaybe(value);
+  if (idx == null) return cleanDisplayText(value);
+  if (idx < 0) return noneLabel;
+  const name = indexMap[idx];
+  return name ? `${name} (${idx})` : String(idx);
+}
+
+function toBoolStringFromInt(value) {
+  const n = parseIntMaybe(value);
+  if (n == null) return cleanDisplayText(value);
+  return n === 0 ? 'false' : 'true';
+}
+
+function normalizeBoolish(value) {
+  const s = cleanDisplayText(value).toLowerCase();
+  if (s === 'true' || s === 'false') return s;
+  return toBoolStringFromInt(value);
+}
+
+function maybeFormatIdReferenceOneBased(indexMap, value, noneLabel = 'None') {
+  const idx = parseIntMaybe(value);
+  if (idx == null) return cleanDisplayText(value);
+  if (idx <= 0) return noneLabel;
+  const name = indexMap[idx - 1];
+  return name ? `${name} (${idx})` : String(idx);
+}
+
+function toMonthName(value) {
+  const n = parseIntMaybe(value);
+  if (n == null || n < 1 || n > 12) return cleanDisplayText(value);
+  const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December'
+  ];
+  return `${months[n - 1]} (${n})`;
+}
+
+function applyFieldLabelOverrides(sectionCode, field) {
+  const key = String(field.key || '').toLowerCase();
+  const overrides = {
+    GOOD: {
+      appearanceratio: 'Appearance Ratio',
+      disapperanceprobability: 'Disappearance Probability',
+      foodbonus: 'Food Bonus',
+      shieldsbonus: 'Shields Bonus',
+      commercebonus: 'Commerce Bonus',
+      type: 'Resource Type',
+      prerequisite: 'Required Technology',
+      icon: 'Civilopedia Icon Index'
+    },
+    TFRM: {
+      turnstocomplete: 'Turns To Complete',
+      requiredadvance: 'Required Technology',
+      requiredresource1: 'Required Resource 1',
+      requiredresource2: 'Required Resource 2',
+      order: 'Worker Order'
+    },
+    CTZN: {
+      defaultcitizen: 'Default Citizen',
+      prerequisite: 'Required Technology',
+      pluralname: 'Plural Name',
+      luxuries: 'Luxury Output',
+      research: 'Research Output',
+      taxes: 'Tax Output',
+      corruption: 'Corruption Output',
+      construction: 'Construction Output'
+    },
+    RULE: {
+      townname: 'Town Name',
+      cityname: 'City Name',
+      metropolisname: 'Metropolis Name',
+      numspaceshipparts: 'Number of Spaceship Parts',
+      advancedbarbarian: 'Advanced Barbarian Unit',
+      basicbarbarian: 'Basic Barbarian Unit',
+      barbarianseaunit: 'Barbarian Sea Unit',
+      citiesforarmy: 'Cities Required For Army',
+      chanceofrioting: 'Chance Of Rioting (%)',
+      draftturnpenalty: 'Draft Turn Penalty',
+      shieldcostingold: 'Shield Cost In Gold',
+      fortressdefencebonus: 'Fortress Defense Bonus (%)',
+      citizensaffectedbyhappyface: 'Citizens Affected By Happy Face',
+      forestvalueinshields: 'Forest Value In Shields',
+      shieldvalueingold: 'Shield Value In Gold',
+      citizenvalueinshields: 'Citizen Value In Shields',
+      battlecreatedunit: 'Battle-Created Unit',
+      buildarmyunit: 'Build Army Unit',
+      buildingdefensivebonus: 'Building Defense Bonus (%)',
+      citizendefensivebonus: 'Citizen Defense Bonus (%)',
+      defaultmoneyresource: 'Default Currency Resource',
+      chancetointerceptairmissions: 'Chance To Intercept Air Missions (%)',
+      chancetointerceptstealthmissions: 'Chance To Intercept Stealth Missions (%)',
+      startingtreasury: 'Starting Treasury',
+      foodconsumptionpercitizen: 'Food Consumption Per Citizen',
+      riverdefensivebonus: 'River Defense Bonus (%)',
+      turnpenaltyforwhip: 'Whip Turn Penalty',
+      scout: 'Scout Unit',
+      slave: 'Slave Unit',
+      roadmovementrate: 'Road Movement Rate',
+      startunit1: 'Start Unit 1',
+      startunit2: 'Start Unit 2',
+      wltkdminimumpop: 'WLTKD Minimum Population',
+      towndefencebonus: 'Town Defense Bonus (%)',
+      citydefencebonus: 'City Defense Bonus (%)',
+      metropolisdefencebonus: 'Metropolis Defense Bonus (%)',
+      maxcity1size: 'Max Town Size',
+      maxcity2size: 'Max City Size',
+      fortificationsdefencebonus: 'Fortification Defense Bonus (%)',
+      numculturallevels: 'Number Of Cultural Levels',
+      borderexpansionmultiplier: 'Border Expansion Multiplier',
+      borderfactor: 'Border Factor',
+      futuretechcost: 'Future Tech Cost',
+      goldenageduration: 'Golden Age Duration',
+      maximumresearchtime: 'Maximum Research Time',
+      minimumresearchtime: 'Minimum Research Time',
+      flagunit: 'Flag Unit',
+      upgradecost: 'Upgrade Cost',
+      defaultdifficultylevel: 'Default Difficulty'
+    },
+    BLDG: {
+      gainineverycity: 'Gain In Every City',
+      gainoncontinent: 'Gain On Continent',
+      reqimprovement: 'Required Improvement',
+      reqgovernment: 'Required Government',
+      reqadvance: 'Required Technology',
+      obsoleteby: 'Obsolete By',
+      reqresource1: 'Required Resource 1',
+      reqresource2: 'Required Resource 2',
+      spaceshippart: 'Spaceship Part',
+      unitproduced: 'Unit Produced',
+      unitfrequency: 'Unit Production Frequency'
+    },
+    PRTO: {
+      requiredtech: 'Required Technology',
+      upgradeto: 'Upgrade To',
+      requiredresource1: 'Required Resource 1',
+      requiredresource2: 'Required Resource 2',
+      requiredresource3: 'Required Resource 3',
+      enslaveresultsin: 'Enslave Results In',
+      enslaveresultsinto: 'Enslave Results Into',
+      requiressupport: 'Requires Support',
+      bombardeffects: 'Bombard Effects',
+      createscraters: 'Creates Craters',
+      hitpointbonus: 'Hit Point Bonus',
+      zoneofcontrol: 'Zone Of Control',
+      iconindex: 'Civilopedia Icon Index',
+      unitclass: 'Unit Class'
+    },
+    RACE: {
+      culturegroup: 'Culture Group',
+      defaultcolor: 'Default Color',
+      diplomacytextindex: 'Diplomacy Text Index',
+      freetech1index: 'Free Tech 1',
+      freetech2index: 'Free Tech 2',
+      freetech3index: 'Free Tech 3',
+      freetech4index: 'Free Tech 4',
+      favoritegovernment: 'Favorite Government',
+      shunnedgovernment: 'Shunned Government',
+      kingunit: 'King Unit',
+      leadername: 'Leader Name',
+      leadertitle: 'Leader Title'
+    },
+    TECH: {
+      prerequisite1: 'Prerequisite 1',
+      prerequisite2: 'Prerequisite 2',
+      prerequisite3: 'Prerequisite 3',
+      prerequisite4: 'Prerequisite 4',
+      advanceicon: 'Advance Icon Index'
+    },
+    TERR: {
+      numpossibleresources: 'Number Of Possible Resources',
+      foodbonus: 'Food Bonus',
+      shieldsbonus: 'Shields Bonus',
+      commercebonus: 'Commerce Bonus',
+      defencebonus: 'Defense Bonus (%)',
+      movementcost: 'Movement Cost',
+      workerjob: 'Related Worker Job',
+      pollutioneffect: 'Pollution Effect',
+      allowcities: 'Allow Cities',
+      allowcolonies: 'Allow Colonies',
+      impassable: 'Impassable',
+      impassablebywheeled: 'Impassable By Wheeled Units',
+      allowairfields: 'Allow Airfields',
+      allowforts: 'Allow Forts',
+      allowoutposts: 'Allow Outposts',
+      allowradartowers: 'Allow Radar Towers',
+      landmarkenabled: 'Landmark Enabled',
+      landmarkfood: 'Landmark Food',
+      landmarkshields: 'Landmark Shields',
+      landmarkcommerce: 'Landmark Commerce',
+      landmarkfoodbonus: 'Landmark Food Bonus',
+      landmarkshieldsbonus: 'Landmark Shields Bonus',
+      landmarkcommercebonus: 'Landmark Commerce Bonus',
+      landmarkmovementcost: 'Landmark Movement Cost',
+      landmarkdefencebonus: 'Landmark Defense Bonus (%)',
+      landmarkname: 'Landmark Name',
+      landmarkcivilopediaentry: 'Landmark Civilopedia Entry',
+      terrainflags: 'Terrain Flags',
+      diseasestrength: 'Disease Strength'
+    },
+    WSIZ: {
+      optimalnumberofcities: 'Optimal Number Of Cities',
+      techrate: 'Tech Rate (%)',
+      distancebetweencivs: 'Distance Between Civilizations',
+      numberofcivs: 'Number Of Civilizations',
+      width: 'Map Width',
+      height: 'Map Height'
+    },
+    ERAS: {
+      usedresearchernames: 'Used Researcher Names',
+      researcher1: 'Researcher Name 1',
+      researcher2: 'Researcher Name 2',
+      researcher3: 'Researcher Name 3',
+      researcher4: 'Researcher Name 4',
+      researcher5: 'Researcher Name 5'
+    },
+    DIFF: {
+      contentcitizens: 'Content Citizens',
+      maxgovttransition: 'Max Government Transition Turns',
+      aidefencestart: 'AI Defense Units At Start',
+      aioffencestart: 'AI Offense Units At Start',
+      extrastart1: 'Extra Start Unit 1',
+      extrastart2: 'Extra Start Unit 2',
+      additionalfreesupport: 'Additional Free Unit Support',
+      bonuspercity: 'Bonus Per City',
+      attackbarbariansbonus: 'Attack Barbarians Bonus (%)',
+      costfactor: 'Cost Factor',
+      percentoptimal: 'Optimal City Number Percent',
+      aiaitrade: 'AI-AI Trade Rate (%)',
+      corruptionpercent: 'Corruption Percent',
+      militarylaw: 'Military Law Units'
+    },
+    ESPN: {
+      missionperformedby: 'Mission Performed By',
+      basecost: 'Base Cost'
+    },
+    EXPR: {
+      basehitpoints: 'Base Hit Points',
+      retreatbonus: 'Retreat Bonus (%)'
+    },
+    FLAV: {
+      numberofflavors: 'Number Of Flavors'
+    },
+    CULT: {
+      initresistancechance: 'Initial Resistance Chance (%)',
+      continuedresistancechance: 'Continued Resistance Chance (%)',
+      propagandasuccess: 'Propaganda Success (%)',
+      rationumerator: 'Culture Ratio Numerator',
+      ratiodenominator: 'Culture Ratio Denominator',
+      cultratiopercent: 'Culture Ratio Percent'
+    },
+    GOVT: {
+      defaulttype: 'Default Type',
+      numberofgovernments: 'Number Of Governments',
+      rulertitlepairsused: 'Ruler Title Pairs Used',
+      malerulertitle1: 'Male Ruler Title 1',
+      malerulertitle2: 'Male Ruler Title 2',
+      malerulertitle3: 'Male Ruler Title 3',
+      malerulertitle4: 'Male Ruler Title 4',
+      femalerulertitle1: 'Female Ruler Title 1',
+      femalerulertitle2: 'Female Ruler Title 2',
+      femalerulertitle3: 'Female Ruler Title 3',
+      femalerulertitle4: 'Female Ruler Title 4',
+      freeunitspertown: 'Free Units Per Town',
+      freeunitspercity: 'Free Units Per City',
+      freeunitspermetropolis: 'Free Units Per Metropolis',
+      costperunit: 'Unit Cost Over Free Limit',
+      militarypolicelimit: 'Military Police Limit',
+      draftlimit: 'Draft Limit',
+      transitiontype: 'Transition Type',
+      resistancemodifier: 'Resistance Modifier',
+      briberymodifier: 'Bribery Modifier',
+      assimilationchance: 'Assimilation Chance (%)',
+      warweariness: 'War Weariness',
+      commercebonus: 'Commerce Bonus (%)',
+      tilepenalty: 'Tile Penalty',
+      sciencecap: 'Science Cap (%)',
+      workerrate: 'Worker Rate',
+      canbribe: 'Can Bribe',
+      requiresmaintenance: 'Requires Maintenance',
+      forceresettlement: 'Force Resettlement',
+      xenophobic: 'Xenophobic'
+    },
+    GAME: {
+      usedefaultrules: 'Use Default Rules',
+      defaultvictoryconditions: 'Default Victory Conditions',
+      numberofplayablecivs: 'Number Of Playable Civilizations',
+      advancementvp: 'Advancement Victory Points',
+      defeatingopposingunitvp: 'Defeating Unit Victory Points',
+      cityconquestvp: 'City Conquest Victory Points',
+      victorypointvp: 'Victory Point Victory Points',
+      capturespecialunitvp: 'Capture Special Unit Victory Points',
+      victorypointlimit: 'Victory Point Limit',
+      cityeliminationcount: 'City Elimination Count',
+      onecityculturewinlimit: 'One-City Culture Win Limit',
+      allcitiesculturewinlimit: 'All-Cities Culture Win Limit',
+      dominationterrainpercent: 'Domination Terrain Percent',
+      dominationpopulationpercent: 'Domination Population Percent',
+      wondervp: 'Wonder Victory Points',
+      usetimelimit: 'Use Time Limit',
+      basetimeunit: 'Base Time Unit',
+      startmonth: 'Start Month',
+      startweek: 'Start Week',
+      startyear: 'Start Year',
+      minutetimelimit: 'Minute Time Limit',
+      turntimelimit: 'Turn Time Limit',
+      scenariosearchfolders: 'Scenario Search Folders',
+      alliancevictorytype: 'Alliance Victory Type',
+      plaugename: 'Plague Name',
+      permitplagues: 'Permit Plagues',
+      plagueearlieststart: 'Plague Earliest Start',
+      plaguevariation: 'Plague Variation',
+      plagueduration: 'Plague Duration',
+      plaguestrength: 'Plague Strength',
+      plaguegraceperiod: 'Plague Grace Period',
+      plaguemaxoccurance: 'Plague Max Occurrence',
+      respawnflagunits: 'Respawn Flag Units',
+      captureanyflag: 'Capture Any Flag',
+      goldforcapture: 'Gold For Capture',
+      mapvisible: 'Map Visible',
+      retainculture: 'Retain Culture',
+      eruptionperiod: 'Eruption Period',
+      mpbasetime: 'Multiplayer Base Time',
+      mpcitytime: 'Multiplayer City Time',
+      mpunittime: 'Multiplayer Unit Time'
+    },
+    LEAD: {
+      civ: 'Civilization',
+      leadername: 'Leader Name',
+      genderofleadername: 'Leader Name Gender',
+      government: 'Government',
+      color: 'Color Index',
+      initialera: 'Initial Era',
+      startcash: 'Start Cash',
+      humanplayer: 'Human Player',
+      customcivdata: 'Custom Civilization Data',
+      startembassies: 'Start Embassies',
+      skipfirstturn: 'Skip First Turn',
+      numberofdifferentstartunits: 'Number Of Different Start Units',
+      numberofstartingtechnologies: 'Number Of Starting Technologies'
+    },
+    WCHR: {
+      worldsize: 'World Size',
+      selectedlandform: 'Selected Landform',
+      selectedtemperature: 'Selected Temperature',
+      selectedclimate: 'Selected Climate',
+      selectedage: 'Selected Age',
+      selectedbarbarianactivity: 'Selected Barbarian Activity',
+      selectedoceancoverage: 'Selected Ocean Coverage',
+      actuallandform: 'Actual Landform',
+      actualtemperature: 'Actual Temperature',
+      actualclimate: 'Actual Climate',
+      actualage: 'Actual Age',
+      actualbarbarianactivity: 'Actual Barbarian Activity',
+      actualoceancoverage: 'Actual Ocean Coverage'
+    },
+    WMAP: {
+      mapseed: 'Map Seed',
+      width: 'Map Width',
+      height: 'Map Height',
+      numcivs: 'Number Of Civilizations',
+      numcontinents: 'Number Of Continents',
+      numresources: 'Number Of Resources',
+      distancebetweencivs: 'Distance Between Civilizations',
+      xwrapping: 'X Wrapping',
+      ywrapping: 'Y Wrapping',
+      polar_ice_caps: 'Polar Ice Caps'
+    },
+    CITY: {
+      owner: 'Owner',
+      ownertype: 'Owner Type',
+      citylevel: 'City Level',
+      useautoname: 'Use Auto Name',
+      haspalace: 'Has Palace',
+      haswalls: 'Has Walls',
+      numbuildings: 'Number Of Buildings',
+      borderlevel: 'Border Level',
+      culture: 'Culture'
+    },
+    UNIT: {
+      unit_index: 'Unit',
+      owner: 'Owner',
+      ownertype: 'Owner Type',
+      experiencelevel: 'Experience Level',
+      aistrategy: 'AI Strategy',
+      ptwcustomname: 'Custom Name',
+      usecivilizationking: 'Use Civilization King'
+    },
+    CLNY: {
+      owner: 'Owner',
+      ownertype: 'Owner Type',
+      improvementtype: 'Improvement Type'
+    },
+    TILE: {
+      tileid: 'Tile Id',
+      baserealterrain: 'Base Real Terrain',
+      c3cbaserealterrain: 'C3C Base Real Terrain',
+      bonuses: 'Bonuses',
+      c3cbonuses: 'C3C Bonuses',
+      overlays: 'Overlays',
+      c3coverlays: 'C3C Overlays',
+      riverconnectioninfo: 'River Connection Info',
+      rivercrossingdata: 'River Crossing Data',
+      resource: 'Resource',
+      city: 'City',
+      colony: 'Colony',
+      continent: 'Continent',
+      owner: 'Owner',
+      border: 'Border',
+      bordercolor: 'Border Color',
+      fogofwar: 'Fog Of War',
+      barbariantribe: 'Barbarian Tribe',
+      victorypointlocation: 'Victory Point Location',
+      unit_on_tile: 'Unit On Tile',
+      ruin: 'Ruin'
+    },
+    CONT: {
+      numtiles: 'Number Of Tiles',
+      continentclass: 'Continent Class'
+    }
+  };
+  if (overrides[sectionCode] && overrides[sectionCode][key]) {
+    field.label = overrides[sectionCode][key];
+  }
+}
+
+function enrichBridgeSections(sections) {
+  const byCode = new Map();
+  sections.forEach((s) => byCode.set(s.code, s));
+  const makeIndex = (code) => {
+    const section = byCode.get(code);
+    const map = {};
+    if (!section || !Array.isArray(section.records)) return map;
+    section.records.forEach((r, idx) => {
+      map[idx] = cleanDisplayText(r.name || `${code} ${idx + 1}`);
+    });
+    return map;
+  };
+
+  const techIndex = makeIndex('TECH');
+  const govIndex = makeIndex('GOVT');
+  const unitIndex = makeIndex('PRTO');
+  const bldgIndex = makeIndex('BLDG');
+  const goodIndex = makeIndex('GOOD');
+  const eraIndex = makeIndex('ERAS');
+  const raceIndex = makeIndex('RACE');
+  const leadIndex = makeIndex('LEAD');
+  const wsizIndex = makeIndex('WSIZ');
+  const cityIndex = makeIndex('CITY');
+  const colonyIndex = makeIndex('CLNY');
+  const contIndex = makeIndex('CONT');
+  const diffIndex = makeIndex('DIFF');
+  const tfrmIndex = makeIndex('TFRM');
+  const terrIndex = makeIndex('TERR');
+  const flavIndex = makeIndex('FLAV');
+
+  sections.forEach((section) => {
+    const code = section.code;
+    (section.records || []).forEach((record) => {
+      (record.fields || []).forEach((field) => {
+        const k = String(field.key || '').toLowerCase();
+        const v = cleanDisplayText(field.value);
+
+        // Batch 1: explicit cross-reference decoding for GOVT/TECH/PRTO/BLDG/RACE.
+        if (code === 'GOVT') {
+          if (k === 'prerequisitetechnology') field.value = maybeFormatIdReference(techIndex, v);
+          else if (k === 'immuneto') field.value = maybeFormatIdReference(govIndex, v);
+          else if (k === 'canbribe' || k === 'requiresmaintenance' || k === 'forceresettlement' || k === 'xenophobic') field.value = toBoolStringFromInt(v);
+        } else if (code === 'TECH') {
+          if (k === 'era') field.value = maybeFormatIdReference(eraIndex, v);
+          else if (k.startsWith('prerequisite')) field.value = maybeFormatIdReference(techIndex, v);
+        } else if (code === 'PRTO') {
+          if (k === 'requiredtech') field.value = maybeFormatIdReference(techIndex, v);
+          else if (k === 'upgradeto') field.value = maybeFormatIdReference(unitIndex, v);
+          else if (k.startsWith('requiredresource')) field.value = maybeFormatIdReference(goodIndex, v);
+          else if (k === 'enslaveresultsin' || k === 'enslaveresultsinto') field.value = maybeFormatIdReference(unitIndex, v);
+          else if (k === 'unitclass') {
+            const unitClassMap = { '0': 'Land (0)', '1': 'Sea (1)', '2': 'Air (2)' };
+            field.value = unitClassMap[v] || v;
+          } else if (k === 'requiressupport' || k === 'bombardeffects' || k === 'createscraters' || k === 'hitpointbonus' || k === 'zoneofcontrol') {
+            field.value = toBoolStringFromInt(v);
+          }
+        } else if (code === 'BLDG') {
+          if (k === 'reqimprovement') field.value = maybeFormatIdReference(bldgIndex, v);
+          else if (k === 'reqgovernment') field.value = maybeFormatIdReference(govIndex, v);
+          else if (k === 'obsoleteby') field.value = maybeFormatIdReference(techIndex, v);
+          else if (k.startsWith('reqresource')) field.value = maybeFormatIdReference(goodIndex, v);
+          else if (k === 'reqadvance' && /^name\s*:/i.test(v)) field.value = cleanDisplayText(v.replace(/^name\s*:/i, ''));
+          else if (k === 'unitproduced') field.value = maybeFormatIdReference(unitIndex, v);
+        } else if (code === 'RACE') {
+          if (k.startsWith('freetech')) field.value = maybeFormatIdReference(techIndex, v);
+          else if (k === 'shunnedgovernment' || k === 'favoritegovernment') field.value = maybeFormatIdReference(govIndex, v);
+          else if (k === 'kingunit') field.value = maybeFormatIdReference(unitIndex, v);
+          else if (k === 'leadergender') field.value = v === '0' ? 'Male (0)' : v === '1' ? 'Female (1)' : v;
+        } else if (code === 'GOOD') {
+          if (k === 'type') {
+            const typeMap = { '0': 'Bonus', '1': 'Luxury', '2': 'Strategic' };
+            const mapped = typeMap[v];
+            if (mapped) field.value = `${mapped} (${v})`;
+          } else if (k === 'prerequisite') {
+            field.value = maybeFormatIdReference(techIndex, v);
+          }
+        } else if (code === 'TFRM') {
+          if (k === 'requiredadvance') field.value = maybeFormatIdReference(techIndex, v);
+          else if (k === 'requiredresource1' || k === 'requiredresource2') field.value = maybeFormatIdReference(goodIndex, v);
+        } else if (code === 'CTZN') {
+          if (k === 'defaultcitizen') field.value = toBoolStringFromInt(v);
+          else if (k === 'prerequisite') field.value = maybeFormatIdReference(techIndex, v);
+        } else if (code === 'RULE') {
+          if (
+            k === 'advancedbarbarian' ||
+            k === 'basicbarbarian' ||
+            k === 'barbarianseaunit' ||
+            k === 'battlecreatedunit' ||
+            k === 'buildarmyunit' ||
+            k === 'scout' ||
+            k === 'slave' ||
+            k === 'startunit1' ||
+            k === 'startunit2' ||
+            k === 'flagunit'
+          ) {
+            field.value = maybeFormatIdReference(unitIndex, v);
+          } else if (k === 'defaultmoneyresource') {
+            field.value = maybeFormatIdReference(goodIndex, v);
+          } else if (k === 'defaultdifficultylevel') {
+            field.value = maybeFormatIdReference(diffIndex, v);
+          }
+        } else if (code === 'TERR') {
+          if (k === 'workerjob') {
+            field.value = maybeFormatIdReference(tfrmIndex, v);
+          } else if (k === 'pollutioneffect') {
+            field.value = maybeFormatIdReference(terrIndex, v);
+          } else if (['allowcities','allowcolonies','impassable','impassablebywheeled','allowairfields','allowforts','allowoutposts','allowradartowers','landmarkenabled'].includes(k)) {
+            field.value = toBoolStringFromInt(v);
+          }
+        } else if (code === 'ESPN') {
+          if (k === 'missionperformedby') {
+            field.value = v.charAt(0).toUpperCase() + v.slice(1);
+          }
+        } else if (code === 'GAME') {
+          if (k === 'startmonth') {
+            field.value = toMonthName(v);
+          } else if (k.startsWith('playable_civ')) {
+            field.value = maybeFormatIdReference(raceIndex, v);
+          } else if (k === 'acceleratedproduction' ||
+            k === 'allowculturalconversions' ||
+            k === 'autoplacekings' ||
+            k === 'autoplacevictorylocations' ||
+            k === 'captureanyflag' ||
+            k === 'capturetheflag' ||
+            k === 'civspecificabilitiesenabled' ||
+            k === 'conquestenabled' ||
+            k === 'culturalenabled' ||
+            k === 'culturallylinkedstart' ||
+            k === 'debugmode' ||
+            k === 'defaultvictoryconditions' ||
+            k === 'diplomacticenabled' ||
+            k === 'dominationenabled' ||
+            k === 'eliminationenabled' ||
+            k === 'mapvisible' ||
+            k === 'massregicideenabled' ||
+            k === 'permitplagues' ||
+            k === 'placecaptureunits' ||
+            k === 'preserverandomseed' ||
+            k === 'regicideenabled' ||
+            k === 'respawnflagunits' ||
+            k === 'restartplayersenabled' ||
+            k === 'retainculture' ||
+            k === 'reversecapturetheflag' ||
+            k === 'spaceraceenabled' ||
+            k === 'usedefaultrules' ||
+            k === 'usetimelimit' ||
+            k === 'victorylocationsenabled' ||
+            k === 'wondervictoryenabled') {
+            field.value = toBoolStringFromInt(v);
+          }
+        } else if (code === 'LEAD') {
+          if (k === 'civ') field.value = maybeFormatIdReference(raceIndex, v);
+          else if (k === 'government') field.value = maybeFormatIdReference(govIndex, v);
+          else if (k === 'initialera') field.value = maybeFormatIdReference(eraIndex, v);
+          else if (k === 'humanplayer' || k === 'customcivdata' || k === 'startembassies' || k === 'skipfirstturn') field.value = normalizeBoolish(v);
+          else if (k === 'genderofleadername') {
+            const g = cleanDisplayText(v).toLowerCase();
+            field.value = g === 'male' || g === 'female' ? g.charAt(0).toUpperCase() + g.slice(1) : v;
+          }
+        } else if (code === 'WCHR') {
+          if (k === 'worldsize') field.value = maybeFormatIdReference(wsizIndex, v);
+        } else if (code === 'WMAP') {
+          if (k === 'xwrapping' || k === 'ywrapping' || k === 'polar_ice_caps') field.value = normalizeBoolish(v);
+        } else if (code === 'CITY') {
+          if (k === 'owner') field.value = maybeFormatIdReferenceOneBased(leadIndex, v);
+          else if (k === 'ownertype') {
+            const ownerType = { '0': 'None (0)', '1': 'Barbarians (1)', '2': 'Civilization (2)' };
+            field.value = ownerType[v] || v;
+          } else if (k === 'citylevel') {
+            const cityLevel = { '0': 'Town (0)', '1': 'City (1)', '2': 'Metropolis (2)' };
+            field.value = cityLevel[v] || v;
+          } else if (k === 'useautoname' || k === 'haspalace' || k === 'haswalls') field.value = toBoolStringFromInt(v);
+          else if (k.startsWith('building')) field.value = maybeFormatIdReference(bldgIndex, v);
+        } else if (code === 'UNIT') {
+          if (k === 'unit_index') field.value = maybeFormatIdReference(unitIndex, v);
+          else if (k === 'owner') field.value = maybeFormatIdReferenceOneBased(leadIndex, v);
+          else if (k === 'ownertype') {
+            const ownerType = { '0': 'None (0)', '1': 'Barbarians (1)', '2': 'Civilization (2)' };
+            field.value = ownerType[v] || v;
+          } else if (k === 'usecivilizationking') field.value = toBoolStringFromInt(v);
+        } else if (code === 'CLNY') {
+          if (k === 'owner') field.value = maybeFormatIdReferenceOneBased(leadIndex, v);
+          else if (k === 'ownertype') {
+            const ownerType = { '0': 'None (0)', '1': 'Barbarians (1)', '2': 'Civilization (2)' };
+            field.value = ownerType[v] || v;
+          }
+        } else if (code === 'TILE') {
+          if (k === 'resource') field.value = maybeFormatIdReference(goodIndex, v);
+          else if (k === 'city') field.value = maybeFormatIdReference(cityIndex, v);
+          else if (k === 'colony') field.value = maybeFormatIdReference(colonyIndex, v);
+          else if (k === 'continent') field.value = maybeFormatIdReference(contIndex, v);
+          else if (k === 'owner') field.value = maybeFormatIdReferenceOneBased(leadIndex, v);
+          else if (k === 'fogofwar' || k === 'ruin') field.value = toBoolStringFromInt(v);
+        } else if (code === 'CONT') {
+          if (k === 'continentclass') {
+            const cls = { '0': 'Water (0)', '1': 'Land (1)' };
+            field.value = cls[v] || v;
+          }
+        } else if (code === 'FLAV') {
+          const relMatch = k.match(/^relation_with_flavor_(\d+)$/);
+          if (relMatch) {
+            const idx = Number.parseInt(relMatch[1], 10);
+            const flavorName = flavIndex[idx];
+            field.label = flavorName ? `Relation With ${flavorName}` : `Relation With Flavor ${idx + 1}`;
+          }
+        }
+
+        if (code === 'RULE') {
+          const partReqMatch = k.match(/^number_of_parts_(\d+)_required$/);
+          if (partReqMatch) {
+            const partIdx = Number.parseInt(partReqMatch[1], 10);
+            field.label = `Spaceship Part ${partIdx + 1} Required`;
+          }
+        } else if (code === 'GOVT') {
+          const vsGovMatch = k.match(/^performance_of_this_government_versus_government_(\d+)$/);
+          if (vsGovMatch) {
+            const idx = Number.parseInt(vsGovMatch[1], 10);
+            const govName = govIndex[idx];
+            field.label = govName
+              ? `Performance Vs ${govName}`
+              : `Performance Vs Government ${idx + 1}`;
+          }
+        } else if (code === 'BLDG' || code === 'TECH' || code === 'RACE') {
+          const flavorMatch = k.match(/^flavor_(\d+)$/);
+          if (flavorMatch) {
+            const idx = Number.parseInt(flavorMatch[1], 10) - 1;
+            const flavorName = flavIndex[idx];
+            field.label = flavorName ? `Flavor ${flavorName}` : `Flavor ${flavorMatch[1]}`;
+          }
+        } else if (code === 'RACE') {
+          const fwdEraMatch = k.match(/^forwardfilename_for_era_(\d+)$/);
+          if (fwdEraMatch) {
+            const idx = Number.parseInt(fwdEraMatch[1], 10);
+            const eraName = eraIndex[idx];
+            field.label = eraName ? `Forward Filename For ${eraName}` : `Forward Filename For Era ${idx + 1}`;
+          }
+          const revEraMatch = k.match(/^reversefilename_for_era_(\d+)$/);
+          if (revEraMatch) {
+            const idx = Number.parseInt(revEraMatch[1], 10);
+            const eraName = eraIndex[idx];
+            field.label = eraName ? `Reverse Filename For ${eraName}` : `Reverse Filename For Era ${idx + 1}`;
+          }
+        } else if (code === 'GAME') {
+          const timeTurnsMatch = k.match(/^turns_in_time_section_(\d+)$/);
+          if (timeTurnsMatch) {
+            const idx = Number.parseInt(timeTurnsMatch[1], 10);
+            field.label = `Turns In Time Section ${idx + 1}`;
+          }
+          const timePerTurnMatch = k.match(/^time_per_turn_in_time_section_(\d+)$/);
+          if (timePerTurnMatch) {
+            const idx = Number.parseInt(timePerTurnMatch[1], 10);
+            field.label = `Time Per Turn In Time Section ${idx + 1}`;
+          }
+          const allianceNameMatch = k.match(/^alliance(\d+)$/);
+          if (allianceNameMatch) {
+            const idx = Number.parseInt(allianceNameMatch[1], 10);
+            field.label = `Alliance ${idx + 1} Name`;
+          }
+          const warMatch = k.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_(\d+)$/);
+          if (warMatch) {
+            const a = Number.parseInt(warMatch[1], 10) + 1;
+            const b = Number.parseInt(warMatch[2], 10) + 1;
+            field.label = `Alliance ${a} At War With Alliance ${b}`;
+            field.value = toBoolStringFromInt(warMatch[3]);
+          }
+        } else if (code === 'CITY') {
+          if (k === 'building') {
+            field.label = 'Building 1';
+          } else {
+            const bldMatch = k.match(/^building_(\d+)$/);
+            if (bldMatch) {
+              const idx = Number.parseInt(bldMatch[1], 10);
+              field.label = `Building ${idx}`;
+            }
+          }
+        }
+
+        field.value = cleanDisplayText(field.value);
+        applyFieldLabelOverrides(code, field);
+      });
+    });
+  });
+  return sections;
+}
+
+function runBiqBridgeOnInflatedBuffer({ buffer, javaPath }) {
+  const classpath = findBiqBridgeClasspath();
+  if (!classpath) {
+    return { ok: false, error: 'BIQ bridge classes not found in vendor/biqbridge and vendor/lib.' };
+  }
+  const tmpPath = path.join(
+    os.tmpdir(),
+    `c3x-biq-bridge-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.biq`
+  );
+  try {
+    fs.writeFileSync(tmpPath, buffer);
+    const javaBinary = findJavaBinary(javaPath);
+    const proc = spawnSync(javaBinary, ['-cp', classpath, 'BiqBridge', tmpPath], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024
+    });
+    if (proc.status !== 0) {
+      return { ok: false, error: `BIQ bridge failed: ${proc.stderr || proc.stdout || 'unknown error'}` };
+    }
+    const raw = String(proc.stdout || '').trim();
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start < 0 || end < start) {
+      return { ok: false, error: 'BIQ bridge output was not valid JSON.' };
+    }
+    const parsed = JSON.parse(raw.slice(start, end + 1));
+    if (!parsed || !parsed.ok) {
+      return { ok: false, error: (parsed && parsed.error) || 'BIQ bridge returned an error.' };
+    }
+
+    const sections = (parsed.sections || []).map((section) => {
+      const limit = getBiqBridgeRecordLimit(section.code);
+      const records = (section.records || [])
+        .slice(0, limit)
+        .map((record) => ({
+          index: record.index || 0,
+          name: cleanRecordName(record.name, `${section.code} ${(record.index || 0) + 1}`),
+          fields: parseEnglishFields(section.code, record.english || '')
+        }));
+      return {
+        id: `${section.code}-${section.count || records.length}`,
+        code: section.code,
+        title: section.title || section.code,
+        count: Number(section.count || records.length),
+        records,
+        recordsTruncated: Number(section.count || 0) > records.length
+      };
+    });
+    return { ok: true, sections: enrichBridgeSections(sections) };
+  } catch (err) {
+    return { ok: false, error: `BIQ bridge parsing failed: ${err.message}` };
+  } finally {
+    try {
+      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    } catch (_err) {
+      // best effort cleanup
+    }
+  }
+}
+
+function getTileRecordLength(versionTag, majorVersion) {
+  if (versionTag === 'BICX' && majorVersion === 12) return 0x2d + 4;
+  if (versionTag === 'BICX') return 33;
+  if (versionTag === 'BIC ' && majorVersion === 2) return 0x16 + 4;
+  return 0x17 + 4;
+}
+
+function decodeAsciiSamples(buf, maxSamples = 3) {
+  const text = buf.toString('latin1');
+  const matches = text.match(/[ -~]{4,}/g) || [];
+  return matches.slice(0, maxSamples).map((s) => s.trim()).filter(Boolean);
+}
+
+function parseGenericRecordFields(recordData) {
+  const fields = [];
+  fields.push({ key: 'byte_length', value: String(recordData.length) });
+  const maxInts = Math.min(16, Math.floor(recordData.length / 4));
+  for (let i = 0; i < maxInts; i += 1) {
+    fields.push({ key: `u32_${i}`, value: String(recordData.readUInt32LE(i * 4)) });
+  }
+  const ascii = decodeAsciiSamples(recordData);
+  if (ascii.length > 0) {
+    fields.push({ key: 'text_preview', value: ascii.join(' | ') });
+  }
+  return fields;
+}
+
+function parseGameRecordFields(recordData) {
+  const fields = [];
+  const readI32 = (off) => (off + 4 <= recordData.length ? recordData.readInt32LE(off) : null);
+  let offset = 0;
+  const pushInt = (key) => {
+    const v = readI32(offset);
+    fields.push({ key, value: v == null ? '(truncated)' : String(v) });
+    offset += 4;
+    return v;
+  };
+
+  pushInt('use_default_rules');
+  pushInt('default_victory_conditions');
+  const numPlayableCivs = pushInt('number_of_playable_civs');
+  const playableCount = Number.isFinite(numPlayableCivs) && numPlayableCivs > 0 ? numPlayableCivs : 0;
+  const playableIds = [];
+  for (let i = 0; i < playableCount; i += 1) {
+    const v = readI32(offset);
+    if (v == null) break;
+    playableIds.push(v);
+    offset += 4;
+  }
+  fields.push({ key: 'playable_civ_ids', value: playableIds.join(', ') || '(none)' });
+  pushInt('victory_conditions_and_rules');
+  pushInt('place_capture_units');
+  pushInt('auto_place_kings');
+  pushInt('auto_place_victory_locations');
+  pushInt('debug_mode');
+  pushInt('use_time_limit');
+  pushInt('base_time_unit');
+  pushInt('start_month');
+  pushInt('start_week');
+  pushInt('start_year');
+  pushInt('minute_time_limit');
+  pushInt('turn_time_limit');
+
+  const turnsPerScale = [];
+  for (let i = 0; i < 7; i += 1) {
+    const v = readI32(offset);
+    if (v == null) break;
+    turnsPerScale.push(v);
+    offset += 4;
+  }
+  fields.push({ key: 'turns_per_timescale_part', value: turnsPerScale.join(', ') || '(none)' });
+
+  const timeUnitsPerTurn = [];
+  for (let i = 0; i < 7; i += 1) {
+    const v = readI32(offset);
+    if (v == null) break;
+    timeUnitsPerTurn.push(v);
+    offset += 4;
+  }
+  fields.push({ key: 'time_units_per_turn', value: timeUnitsPerTurn.join(', ') || '(none)' });
+
+  if (offset + 5200 <= recordData.length) {
+    const folders = toBiqString(recordData, offset, offset + 5200);
+    fields.push({ key: 'scenario_search_folders', value: folders || '(none)' });
+  } else {
+    fields.push({ key: 'scenario_search_folders', value: '(truncated)' });
+  }
+
+  return fields;
+}
+
+function decodeBiqRecordFields(sectionCode, recordData) {
+  if (sectionCode === 'GAME') {
+    return parseGameRecordFields(recordData);
+  }
+  return parseGenericRecordFields(recordData);
+}
+
+function parseSectionRecords(buf, section, versionTag, majorVersion) {
+  const records = [];
+  let pos = section.startOffset + 8;
+  if (pos > section.endOffset) return records;
+
+  if (section.parseMode === 'fixed') {
+    const fixedSize = section.fixedByVersion
+      ? getTileRecordLength(versionTag, majorVersion)
+      : section.fixedSize;
+    if (!fixedSize || fixedSize < 1) return records;
+    for (let i = 0; i < section.count && i < MAX_BIQ_RECORDS_PER_SECTION; i += 1) {
+      const recStart = pos + i * fixedSize;
+      const recEnd = recStart + fixedSize;
+      if (recEnd > section.endOffset) break;
+      const recordData = buf.subarray(recStart, recEnd);
+      records.push({
+        index: i,
+        recordLength: fixedSize,
+        fields: decodeBiqRecordFields(section.code, recordData)
+      });
+    }
+    return records;
+  }
+
+  for (let i = 0; i < section.count && i < MAX_BIQ_RECORDS_PER_SECTION && pos + 4 <= section.endOffset; i += 1) {
+    const recLen = readUInt32LESafe(buf, pos);
+    if (recLen == null || recLen < 0) break;
+    const recStart = pos + 4;
+    const recEnd = recStart + recLen;
+    if (recEnd > section.endOffset) break;
+    const recordData = buf.subarray(recStart, recEnd);
+    records.push({
+      index: i,
+      recordLength: recLen,
+      fields: decodeBiqRecordFields(section.code, recordData)
+    });
+    pos = recEnd;
+  }
+  return records;
+}
+
+function parseBiqSectionsFromBuffer(buf) {
+  const versionTag = readBiqTag(buf, 0);
+  const verHeaderTag = readBiqTag(buf, 4);
+  if (!versionTag.startsWith('BIC') || verHeaderTag !== 'VER#') {
+    throw new Error('Invalid BIQ header');
+  }
+
+  const majorVersion = readUInt32LESafe(buf, 24) || 0;
+  const minorVersion = readUInt32LESafe(buf, 28) || 0;
+  const biqDescription = toBiqString(buf, 32, 672);
+  const biqTitle = toBiqString(buf, 672, 736);
+  const numHeaders = readUInt32LESafe(buf, 8) || 0;
+  const headerLength = readUInt32LESafe(buf, 12) || 0;
+
+  const findSectionStart = (code, fromOffset) => {
+    const needle = Buffer.from(code, 'latin1');
+    let idx = buf.indexOf(needle, fromOffset);
+    while (idx >= 0) {
+      const count = readUInt32LESafe(buf, idx + 4);
+      if (count !== null && count < 50_000_000) {
+        return { offset: idx, count };
+      }
+      idx = buf.indexOf(needle, idx + 1);
+    }
+    return null;
+  };
+
+  let searchFrom = 736;
+  const located = [];
+  for (const def of BIQ_SECTION_DEFS) {
+    const found = findSectionStart(def.code, searchFrom);
+    if (!found) {
+      if (def.optional) continue;
+      throw new Error(`Expected section ${def.code} after 0x${searchFrom.toString(16)}`);
+    }
+    located.push({ ...def, startOffset: found.offset, count: found.count });
+    searchFrom = found.offset + 4;
+  }
+
+  const sections = [];
+  for (let i = 0; i < located.length; i += 1) {
+    const def = located[i];
+    const next = located[i + 1];
+    const endOffset = next ? next.startOffset : buf.length;
+    const section = {
+      id: `${def.code}-${sections.length + 1}`,
+      code: def.code,
+      title: def.title,
+      count: def.count,
+      startOffset: def.startOffset,
+      endOffset,
+      byteLength: endOffset - def.startOffset,
+      parseMode: def.mode
+    };
+    section.records = parseSectionRecords(buf, section, versionTag, majorVersion);
+    section.recordsTruncated = section.count > section.records.length;
+    sections.push(section);
+  }
+
+  return {
+    versionTag,
+    verHeaderTag,
+    majorVersion,
+    minorVersion,
+    numHeaders,
+    headerLength,
+    biqDescription,
+    biqTitle,
+    totalBytes: buf.length,
+    sections
+  };
+}
+
+function resolveScenarioDir(scenarioPath) {
+  const trimmed = String(scenarioPath || '').trim();
+  if (!trimmed) return '';
+  if (/\.biq$/i.test(trimmed)) return path.dirname(trimmed);
+  return trimmed;
+}
+
+function resolveScenarioSearchDirsFromBiq({ scenarioPath, civ3Path, biqTab }) {
+  const biqDir = resolveScenarioDir(scenarioPath);
+  const searchFolders = extractScenarioSearchFolders(biqTab);
+  const root = resolveCiv3RootPath(civ3Path);
+  const ordered = [];
+  const seen = new Set();
+  const pushIfDir = (candidate) => {
+    const p = String(candidate || '').trim();
+    if (!p || seen.has(p)) return;
+    try {
+      if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
+        seen.add(p);
+        ordered.push(p);
+      }
+    } catch (_err) {
+      // ignore invalid paths
+    }
+  };
+
+  // Default scenario folder (directory containing the .biq file) has highest precedence.
+  pushIfDir(biqDir);
+
+  searchFolders.forEach((folder) => {
+    const normalizedFolder = String(folder).replace(/\\/g, '/').trim();
+    if (!normalizedFolder) return;
+    if (path.isAbsolute(folder) || /^[A-Za-z]:\//.test(normalizedFolder)) {
+      pushIfDir(normalizedFolder);
+      return;
+    }
+    pushIfDir(path.join(biqDir, normalizedFolder));
+    if (root) {
+      pushIfDir(path.join(root, 'Conquests', 'Scenarios', normalizedFolder));
+      pushIfDir(path.join(root, 'Conquests', normalizedFolder));
+    }
+  });
+  return ordered;
+}
+
+function extractScenarioSearchFolders(biqTab) {
+  if (!biqTab || !Array.isArray(biqTab.sections)) return [];
+  const game = biqTab.sections.find((s) => s.code === 'GAME');
+  if (!game || !Array.isArray(game.records) || game.records.length === 0) return [];
+  const field = (game.records[0].fields || []).find((f) => {
+    const key = String(f.key || '').toLowerCase();
+    const label = String(f.label || '').toLowerCase();
+    return key.includes('scenario_search') ||
+      key.includes('scenariousearchfolders') ||
+      label.includes('scenariosearchfolders') ||
+      label.includes('scenario search folders');
+  });
+  if (!field || !field.value || field.value === '(none)' || field.value === '(truncated)') return [];
+  return String(field.value)
+    .split(';')
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function resolveScenarioDirFromBiq({ scenarioPath, civ3Path, biqTab }) {
+  const fallback = resolveScenarioDir(scenarioPath);
+  const dirs = resolveScenarioSearchDirsFromBiq({ scenarioPath, civ3Path, biqTab });
+  return dirs[0] || fallback;
+}
+
+function resolveBiqPath({ mode, civ3Path, scenarioPath }) {
+  if (mode === 'scenario') {
+    const raw = String(scenarioPath || '').trim();
+    if (/\.biq$/i.test(raw)) return raw;
+    return '';
+  }
+  const root = resolveCiv3RootPath(civ3Path);
+  if (!root) return '';
+  return path.join(root, 'Conquests', 'conquests.biq');
+}
+
+function loadBiqTab({ mode, civ3Path, scenarioPath, javaPath }) {
+  const biqPath = resolveBiqPath({ mode, civ3Path, scenarioPath });
+  if (!biqPath) {
+    return {
+      title: 'BIQ',
+      type: 'biq',
+      readOnly: true,
+      sourcePath: '',
+      error: mode === 'scenario'
+        ? 'No scenario BIQ selected. Pick a .biq file in Scenario mode.'
+        : 'Could not resolve Conquests/conquests.biq from Civilization 3 path.',
+      sections: []
+    };
+  }
+  const inflated = inflateBiqIfNeeded(biqPath, civ3Path, javaPath);
+  if (!inflated.ok) {
+    return {
+      title: 'BIQ',
+      type: 'biq',
+      readOnly: true,
+      sourcePath: biqPath,
+      error: inflated.error,
+      sections: []
+    };
+  }
+  try {
+    const bridged = runBiqBridgeOnInflatedBuffer({ buffer: inflated.buffer, javaPath });
+    if (bridged.ok) {
+      return {
+        title: 'BIQ',
+        type: 'biq',
+        readOnly: true,
+        sourcePath: biqPath,
+        compressedSource: inflated.compressed,
+        decompressorPath: inflated.decompressorPath || '',
+        sections: bridged.sections,
+        bridgeMode: true
+      };
+    }
+
+    const parsed = parseBiqSectionsFromBuffer(inflated.buffer);
+    return {
+      title: 'BIQ',
+      type: 'biq',
+      readOnly: true,
+      sourcePath: biqPath,
+      compressedSource: inflated.compressed,
+      decompressorPath: inflated.decompressorPath || '',
+      bridgeMode: false,
+      bridgeError: bridged.error || '',
+      ...parsed
+    };
+  } catch (err) {
+    return {
+      title: 'BIQ',
+      type: 'biq',
+      readOnly: true,
+      sourcePath: biqPath,
+      error: `Failed to parse BIQ sections: ${err.message}`,
+      sections: []
+    };
+  }
+}
+
 function readTextIfExists(filePath) {
   try {
     if (!filePath || !fs.existsSync(filePath)) {
@@ -88,13 +1450,42 @@ function getTextLayerFiles(civ3Path, name) {
   ];
 }
 
-function readTextLayers(civ3Path, name) {
+function resolveScenarioTextPath(scenarioPath, name, scenarioPaths = []) {
+  const roots = [];
+  const seen = new Set();
+  const addRoot = (root) => {
+    const normalized = String(root || '').trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    roots.push(normalized);
+  };
+  addRoot(resolveScenarioDir(scenarioPath));
+  (scenarioPaths || []).forEach((p) => addRoot(p));
+
+  const candidates = [];
+  roots.forEach((root) => {
+    candidates.push(path.join(root, 'Text', name));
+    candidates.push(path.join(root, name));
+  });
+  return candidates.find((candidate) => fs.existsSync(candidate)) || '';
+}
+
+function readTextLayers(civ3Path, name, scenarioPath, scenarioPaths = []) {
   const layers = {};
   for (const ref of getTextLayerFiles(civ3Path, name)) {
     layers[ref.layer] = {
       filePath: ref.filePath,
       text: readTextIfExists(ref.filePath)
     };
+  }
+  if (scenarioPath || (scenarioPaths && scenarioPaths.length > 0)) {
+    const scenarioTextPath = resolveScenarioTextPath(scenarioPath, name, scenarioPaths);
+    if (scenarioTextPath) {
+      layers.scenario = {
+        filePath: scenarioTextPath,
+        text: readTextIfExists(scenarioTextPath)
+      };
+    }
   }
   return layers;
 }
@@ -167,9 +1558,9 @@ function toCanonicalKeyMap(rawMap) {
   return out;
 }
 
-function mergeByPrecedence(mapsByLayer) {
+function mergeByPrecedence(mapsByLayer, order = ['vanilla', 'ptw', 'conquests']) {
   const merged = {};
-  for (const layer of ['vanilla', 'ptw', 'conquests']) {
+  for (const layer of order) {
     const src = mapsByLayer[layer] || {};
     for (const [key, value] of Object.entries(src)) {
       merged[key] = value;
@@ -241,11 +1632,78 @@ function extractTechDependenciesFromText(bodyLines) {
   return dedupeStrings(deps);
 }
 
-function mergeSimplePrecedence(vanillaMap, ptwMap, conquestsMap) {
+function mergeSimplePrecedence(...maps) {
+  const out = {};
+  maps.forEach((map) => {
+    Object.assign(out, map || {});
+  });
+  return out;
+}
+
+function parseReferenceIdFromFieldValue(value) {
+  const raw = cleanDisplayText(value);
+  if (!raw) return null;
+  if (/^-?\d+$/.test(raw)) return Number.parseInt(raw, 10);
+  const match = raw.match(/\((-?\d+)\)\s*$/);
+  if (!match) return null;
+  return Number.parseInt(match[1], 10);
+}
+
+function getFieldValueByBaseKey(record, baseKey) {
+  const fields = (record && record.fields) || [];
+  const target = String(baseKey || '').toLowerCase();
+  const found = fields.find((f) => String(f.key || '').toLowerCase() === target);
+  return found ? cleanDisplayText(found.value) : '';
+}
+
+function collectCivilopediaKeysBySection(biqTab, sectionCode, prefix) {
+  const out = new Set();
+  if (!biqTab || !Array.isArray(biqTab.sections)) return out;
+  const section = biqTab.sections.find((s) => s.code === sectionCode);
+  if (!section || !Array.isArray(section.records)) return out;
+  section.records.forEach((record) => {
+    const raw = getFieldValueByBaseKey(record, 'civilopediaentry');
+    const key = String(raw || '').toUpperCase();
+    if (key && key.startsWith(prefix)) {
+      out.add(key);
+    }
+  });
+  return out;
+}
+
+function collectPlayableRaceKeys(biqTab) {
+  const raceKeys = collectCivilopediaKeysBySection(biqTab, 'RACE', 'RACE_');
+  if (raceKeys.size === 0) return raceKeys;
+  if (!biqTab || !Array.isArray(biqTab.sections)) return raceKeys;
+  const gameSection = biqTab.sections.find((s) => s.code === 'GAME');
+  const raceSection = biqTab.sections.find((s) => s.code === 'RACE');
+  if (!gameSection || !raceSection || !Array.isArray(gameSection.records) || gameSection.records.length === 0 || !Array.isArray(raceSection.records)) {
+    return raceKeys;
+  }
+  const gameFields = gameSection.records[0].fields || [];
+  const playableIds = gameFields
+    .filter((f) => String(f.key || '').toLowerCase().startsWith('playable_civ'))
+    .map((f) => parseReferenceIdFromFieldValue(f.value))
+    .filter((n) => Number.isInteger(n) && n >= 0);
+  if (playableIds.length === 0) return raceKeys;
+  const playable = new Set();
+  playableIds.forEach((idx) => {
+    const record = raceSection.records[idx];
+    const key = String(getFieldValueByBaseKey(record, 'civilopediaentry') || '').toUpperCase();
+    if (key && key.startsWith('RACE_')) {
+      playable.add(key);
+    }
+  });
+  return playable.size > 0 ? playable : raceKeys;
+}
+
+function collectScenarioReferenceKeySets(biqTab) {
   return {
-    ...(vanillaMap || {}),
-    ...(ptwMap || {}),
-    ...(conquestsMap || {})
+    civilizations: collectPlayableRaceKeys(biqTab),
+    technologies: collectCivilopediaKeysBySection(biqTab, 'TECH', 'TECH_'),
+    resources: collectCivilopediaKeysBySection(biqTab, 'GOOD', 'GOOD_'),
+    improvements: collectCivilopediaKeysBySection(biqTab, 'BLDG', 'BLDG_'),
+    units: collectCivilopediaKeysBySection(biqTab, 'PRTO', 'PRTO_')
   };
 }
 
@@ -338,36 +1796,47 @@ function mapPediaIconsForKey(pediaBlocks, civilopediaKey) {
   };
 }
 
-function buildReferenceTabs(civ3Path) {
-  const civilopediaLayers = readTextLayers(civ3Path, 'Civilopedia.txt');
-  const pediaIconLayers = readTextLayers(civ3Path, 'PediaIcons.txt');
+function buildReferenceTabs(civ3Path, options = {}) {
+  const mode = options.mode === 'scenario' ? 'scenario' : 'global';
+  const scenarioPath = mode === 'scenario' ? (options.scenarioPath || '') : '';
+  const scenarioPaths = Array.isArray(options.scenarioPaths) ? options.scenarioPaths : [];
+  const scenarioKeySets = mode === 'scenario' ? collectScenarioReferenceKeySets(options.biqTab) : null;
+  const includeScenarioLayer = mode === 'scenario' && !!scenarioPath;
+  const layerOrder = includeScenarioLayer
+    ? ['vanilla', 'ptw', 'conquests', 'scenario']
+    : ['vanilla', 'ptw', 'conquests'];
+  const civilopediaLayers = readTextLayers(civ3Path, 'Civilopedia.txt', scenarioPath, scenarioPaths);
+  const pediaIconLayers = readTextLayers(civ3Path, 'PediaIcons.txt', scenarioPath, scenarioPaths);
   const improvementKindsByKey = mergeSimplePrecedence(
     mergeSimplePrecedence(
       parseImprovementKindsFromPediaIconsBlocks(parsePediaIconsBlocks((pediaIconLayers.vanilla && pediaIconLayers.vanilla.text) || '')),
-      parseImprovementKindsFromCivilopediaText((civilopediaLayers.vanilla && civilopediaLayers.vanilla.text) || ''),
-      {}
+      parseImprovementKindsFromCivilopediaText((civilopediaLayers.vanilla && civilopediaLayers.vanilla.text) || '')
     ),
     mergeSimplePrecedence(
       parseImprovementKindsFromPediaIconsBlocks(parsePediaIconsBlocks((pediaIconLayers.ptw && pediaIconLayers.ptw.text) || '')),
-      parseImprovementKindsFromCivilopediaText((civilopediaLayers.ptw && civilopediaLayers.ptw.text) || ''),
-      {}
+      parseImprovementKindsFromCivilopediaText((civilopediaLayers.ptw && civilopediaLayers.ptw.text) || '')
     ),
     mergeSimplePrecedence(
       parseImprovementKindsFromPediaIconsBlocks(parsePediaIconsBlocks((pediaIconLayers.conquests && pediaIconLayers.conquests.text) || '')),
-      parseImprovementKindsFromCivilopediaText((civilopediaLayers.conquests && civilopediaLayers.conquests.text) || ''),
-      {}
+      parseImprovementKindsFromCivilopediaText((civilopediaLayers.conquests && civilopediaLayers.conquests.text) || '')
+    ),
+    mergeSimplePrecedence(
+      parseImprovementKindsFromPediaIconsBlocks(parsePediaIconsBlocks((pediaIconLayers.scenario && pediaIconLayers.scenario.text) || '')),
+      parseImprovementKindsFromCivilopediaText((civilopediaLayers.scenario && civilopediaLayers.scenario.text) || '')
     )
   );
   const civilopediaSections = mergeByPrecedence({
     vanilla: toCanonicalKeyMap(parseCivilopediaSections((civilopediaLayers.vanilla && civilopediaLayers.vanilla.text) || '')),
     ptw: toCanonicalKeyMap(parseCivilopediaSections((civilopediaLayers.ptw && civilopediaLayers.ptw.text) || '')),
-    conquests: toCanonicalKeyMap(parseCivilopediaSections((civilopediaLayers.conquests && civilopediaLayers.conquests.text) || ''))
-  });
+    conquests: toCanonicalKeyMap(parseCivilopediaSections((civilopediaLayers.conquests && civilopediaLayers.conquests.text) || '')),
+    scenario: toCanonicalKeyMap(parseCivilopediaSections((civilopediaLayers.scenario && civilopediaLayers.scenario.text) || ''))
+  }, layerOrder);
   const pediaBlocks = mergeByPrecedence({
     vanilla: toCanonicalKeyMap(parsePediaIconsBlocks((pediaIconLayers.vanilla && pediaIconLayers.vanilla.text) || '')),
     ptw: toCanonicalKeyMap(parsePediaIconsBlocks((pediaIconLayers.ptw && pediaIconLayers.ptw.text) || '')),
-    conquests: toCanonicalKeyMap(parsePediaIconsBlocks((pediaIconLayers.conquests && pediaIconLayers.conquests.text) || ''))
-  });
+    conquests: toCanonicalKeyMap(parsePediaIconsBlocks((pediaIconLayers.conquests && pediaIconLayers.conquests.text) || '')),
+    scenario: toCanonicalKeyMap(parsePediaIconsBlocks((pediaIconLayers.scenario && pediaIconLayers.scenario.text) || ''))
+  }, layerOrder);
 
   const tabs = {};
   for (const tabSpec of REFERENCE_TAB_SPECS) {
@@ -391,7 +1860,7 @@ function buildReferenceTabs(civ3Path) {
         }
       });
 
-    const entries = Array.from(entriesByKey.values())
+    let entries = Array.from(entriesByKey.values())
       .map((entry) => {
         const civilopediaSection = (civilopediaSections[entry.civilopediaKey] && civilopediaSections[entry.civilopediaKey].value) || null;
         const descSection = (civilopediaSections[`DESC_${entry.civilopediaKey}`] && civilopediaSections[`DESC_${entry.civilopediaKey}`].value) || null;
@@ -409,8 +1878,8 @@ function buildReferenceTabs(civ3Path) {
           id: shortKey,
           civilopediaKey: entry.civilopediaKey,
           name: inferDisplayNameFromKey(shortKey),
-          overview: overviewLines.join('\n'),
-          description: descriptionLines.join('\n'),
+          overview: overviewLines.join(' '),
+          description: descriptionLines.join(' '),
           techDependencies: tabSpec.key === 'technologies' ? [] : extractTechDependenciesFromText(overviewLines),
           improvementKind: tabSpec.key === 'improvements' ? (improvementKindsByKey[entry.civilopediaKey] || 'normal') : null,
           iconPaths: pedia.iconPaths,
@@ -420,6 +1889,10 @@ function buildReferenceTabs(civ3Path) {
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+
+    if (scenarioKeySets && scenarioKeySets[tabSpec.key] instanceof Set && scenarioKeySets[tabSpec.key].size > 0) {
+      entries = entries.filter((entry) => scenarioKeySets[tabSpec.key].has(String(entry.civilopediaKey || '').toUpperCase()));
+    }
 
     if (tabSpec.key === 'civilizations') {
       const fallbackThumb = (entries.find((e) => e.thumbPath) || {}).thumbPath || '';
@@ -436,14 +1909,19 @@ function buildReferenceTabs(civ3Path) {
       title: tabSpec.title,
       type: 'reference',
       readOnly: true,
-      sourcePath: (civilopediaLayers.conquests && civilopediaLayers.conquests.filePath) || '',
+      sourcePath:
+        ((includeScenarioLayer && civilopediaLayers.scenario && civilopediaLayers.scenario.text) ? civilopediaLayers.scenario.filePath : '')
+        || (civilopediaLayers.conquests && civilopediaLayers.conquests.filePath)
+        || '',
       sourceDetails: {
         civilopediaVanilla: (civilopediaLayers.vanilla && civilopediaLayers.vanilla.filePath) || '',
         civilopediaPtw: (civilopediaLayers.ptw && civilopediaLayers.ptw.filePath) || '',
         civilopediaConquests: (civilopediaLayers.conquests && civilopediaLayers.conquests.filePath) || '',
+        civilopediaScenario: (civilopediaLayers.scenario && civilopediaLayers.scenario.filePath) || '',
         pediaIconsVanilla: (pediaIconLayers.vanilla && pediaIconLayers.vanilla.filePath) || '',
         pediaIconsPtw: (pediaIconLayers.ptw && pediaIconLayers.ptw.filePath) || '',
-        pediaIconsConquests: (pediaIconLayers.conquests && pediaIconLayers.conquests.filePath) || ''
+        pediaIconsConquests: (pediaIconLayers.conquests && pediaIconLayers.conquests.filePath) || '',
+        pediaIconsScenario: (pediaIconLayers.scenario && pediaIconLayers.scenario.filePath) || ''
       },
       entries
     };
@@ -772,11 +2250,12 @@ function serializeBaseConfig(baseRows, defaultMap, mode) {
 }
 
 function resolvePaths({ c3xPath, scenarioPath, mode }) {
+  const scenarioDir = resolveScenarioDir(scenarioPath);
   const paths = {};
   for (const [kind, spec] of Object.entries(FILE_SPECS)) {
     const defaultPath = c3xPath ? path.join(c3xPath, spec.defaultName) : null;
     const userPath = c3xPath ? path.join(c3xPath, spec.userName) : null;
-    const scenarioFilePath = scenarioPath ? path.join(scenarioPath, spec.scenarioName) : null;
+    const scenarioFilePath = scenarioDir ? path.join(scenarioDir, spec.scenarioName) : null;
 
     let effectivePath = defaultPath;
     let effectiveSource = 'default';
@@ -819,22 +2298,37 @@ function loadBundle(payload) {
   const c3xPath = payload.c3xPath || '';
   const civ3Path = payload.civ3Path || '';
   const scenarioPath = payload.scenarioPath || '';
+  const javaPath = payload.javaPath || '';
+  const biqTab = loadBiqTab({ mode, civ3Path, scenarioPath, javaPath });
+  const scenarioDir = mode === 'scenario'
+    ? resolveScenarioDirFromBiq({ scenarioPath, civ3Path, biqTab })
+    : resolveScenarioDir(scenarioPath);
+  const scenarioSearchPaths = mode === 'scenario'
+    ? resolveScenarioSearchDirsFromBiq({ scenarioPath, civ3Path, biqTab })
+    : [];
 
-  const filePaths = resolvePaths({ c3xPath, scenarioPath, mode });
+  const filePaths = resolvePaths({ c3xPath, scenarioPath: scenarioDir, mode });
   const bundle = {
     mode,
     c3xPath,
     civ3Path,
-    scenarioPath,
+    scenarioPath: scenarioDir,
+    scenarioInputPath: scenarioPath,
+    scenarioSearchPaths,
     tabs: {}
   };
 
-  if (mode === 'global') {
-    const referenceTabs = buildReferenceTabs(civ3Path);
-    for (const spec of REFERENCE_TAB_SPECS) {
-      if (referenceTabs[spec.key]) {
-        bundle.tabs[spec.key] = referenceTabs[spec.key];
-      }
+  bundle.tabs.biq = biqTab;
+
+  const referenceTabs = buildReferenceTabs(civ3Path, {
+    mode,
+    scenarioPath: scenarioDir,
+    scenarioPaths: scenarioSearchPaths,
+    biqTab
+  });
+  for (const spec of REFERENCE_TAB_SPECS) {
+    if (referenceTabs[spec.key]) {
+      bundle.tabs[spec.key] = referenceTabs[spec.key];
     }
   }
 
@@ -875,9 +2369,15 @@ function loadBundle(payload) {
 function saveBundle(payload) {
   const mode = payload.mode === 'scenario' ? 'scenario' : 'global';
   const c3xPath = payload.c3xPath || '';
+  const civ3Path = payload.civ3Path || '';
   const scenarioPath = payload.scenarioPath || '';
+  const javaPath = payload.javaPath || '';
+  const biqTab = loadBiqTab({ mode, civ3Path, scenarioPath, javaPath });
+  const scenarioDir = mode === 'scenario'
+    ? resolveScenarioDirFromBiq({ scenarioPath, civ3Path, biqTab })
+    : resolveScenarioDir(scenarioPath);
 
-  const filePaths = resolvePaths({ c3xPath, scenarioPath, mode });
+  const filePaths = resolvePaths({ c3xPath, scenarioPath: scenarioDir, mode });
 
   const saveReport = [];
 
@@ -916,6 +2416,9 @@ module.exports = {
   parseIniSectionMap,
   parseSectionFieldDocs,
   buildReferenceTabs,
+  resolveScenarioDir,
+  resolveBiqPath,
+  parseBiqSectionsFromBuffer,
   resolvePaths,
   loadBundle,
   saveBundle
