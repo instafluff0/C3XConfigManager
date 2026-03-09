@@ -10,6 +10,7 @@ const state = {
   trackDirty: false,
   suppressDirtyUntilInteraction: true,
   cleanSnapshot: '',
+  undoSnapshot: null,
   sectionListScrollTop: {
     districts: 0,
     wonders: 0,
@@ -43,6 +44,7 @@ const el = {
   pickScenario: document.getElementById('pick-scenario'),
   loadBtn: document.getElementById('load-btn'),
   saveBtn: document.getElementById('save-btn'),
+  undoBtn: document.getElementById('undo-btn'),
   resetBtn: document.getElementById('reset-btn'),
   dirtyIndicator: document.getElementById('dirty-indicator'),
   status: document.getElementById('status'),
@@ -239,10 +241,24 @@ function setStatus(text, isError = false) {
 function refreshDirtyUi() {
   if (el.saveBtn) el.saveBtn.classList.toggle('dirty', state.isDirty);
   if (el.dirtyIndicator) el.dirtyIndicator.classList.toggle('hidden', !state.isDirty);
+  if (el.undoBtn) el.undoBtn.disabled = !state.undoSnapshot;
+}
+
+function snapshotTabs() {
+  return JSON.stringify(state.bundle ? state.bundle.tabs : null);
+}
+
+function rememberUndoSnapshot() {
+  if (state.isRendering || !state.trackDirty || state.suppressDirtyUntilInteraction) return;
+  if (!state.undoSnapshot) {
+    state.undoSnapshot = snapshotTabs();
+    refreshDirtyUi();
+  }
 }
 
 function captureCleanSnapshot() {
-  state.cleanSnapshot = JSON.stringify(state.bundle ? state.bundle.tabs : null);
+  state.cleanSnapshot = snapshotTabs();
+  state.undoSnapshot = null;
   state.isDirty = false;
   refreshDirtyUi();
 }
@@ -254,7 +270,7 @@ function setDirty(next) {
     refreshDirtyUi();
     return;
   }
-  const currentSnapshot = JSON.stringify(state.bundle ? state.bundle.tabs : null);
+  const currentSnapshot = snapshotTabs();
   state.isDirty = currentSnapshot !== state.cleanSnapshot;
   refreshDirtyUi();
 }
@@ -526,6 +542,7 @@ function makeInputForBaseRow(row, onChange) {
         const del = document.createElement('button');
         del.textContent = 'Remove';
         del.addEventListener('click', () => {
+      rememberUndoSnapshot();
           items.splice(idx, 1);
           if (items.length === 0) items.push('');
           onChange(serializeStructuredEntries(items));
@@ -538,6 +555,7 @@ function makeInputForBaseRow(row, onChange) {
       const add = document.createElement('button');
       add.textContent = 'Add Item';
       add.addEventListener('click', () => {
+    rememberUndoSnapshot();
         items.push('');
         onChange(serializeStructuredEntries(items));
         rerender();
@@ -822,6 +840,7 @@ function renderBaseTab(tab) {
     r.appendChild(keyWrap);
 
     const input = makeInputForBaseRow(row, (newValue) => {
+      rememberUndoSnapshot();
       row.value = String(newValue);
       setDirty(true);
     });
@@ -856,6 +875,7 @@ function getFieldValues(section, key) {
 }
 
 function setSingleFieldValue(section, key, value) {
+  rememberUndoSnapshot();
   section.fields = section.fields.filter((f) => f.key !== key);
   if (value !== '') {
     section.fields.push({ key, value });
@@ -864,6 +884,7 @@ function setSingleFieldValue(section, key, value) {
 }
 
 function setMultiFieldValues(section, key, values) {
+  rememberUndoSnapshot();
   section.fields = section.fields.filter((f) => f.key !== key);
   for (const value of values) {
     if (value !== '') {
@@ -1286,6 +1307,7 @@ function renderAdvancedFields(section, schemaKeys) {
     keyInput.value = field.key || '';
     keyInput.placeholder = 'config key';
     keyInput.addEventListener('input', () => {
+      rememberUndoSnapshot();
       field.key = keyInput.value;
       setDirty(true);
     });
@@ -1294,6 +1316,7 @@ function renderAdvancedFields(section, schemaKeys) {
     valueInput.value = field.value || '';
     valueInput.placeholder = 'value';
     valueInput.addEventListener('input', () => {
+      rememberUndoSnapshot();
       field.value = valueInput.value;
       setDirty(true);
     });
@@ -1301,6 +1324,7 @@ function renderAdvancedFields(section, schemaKeys) {
     const del = document.createElement('button');
     del.textContent = 'Remove';
     del.addEventListener('click', () => {
+      rememberUndoSnapshot();
       const allUnknown = section.fields.filter((f) => !schemaKeys.has(f.key));
       const target = allUnknown[idx];
       const pos = section.fields.indexOf(target);
@@ -1320,6 +1344,7 @@ function renderAdvancedFields(section, schemaKeys) {
   const add = document.createElement('button');
   add.textContent = 'Add Advanced Field';
   add.addEventListener('click', () => {
+    rememberUndoSnapshot();
     section.fields.push({ key: '', value: '' });
     setDirty(true);
     renderActiveTab();
@@ -1340,6 +1365,7 @@ function createSectionFromTemplate(tabKey) {
 }
 
 function addSection(tab, tabKey) {
+  rememberUndoSnapshot();
   tab.model.sections.unshift(createSectionFromTemplate(tabKey));
   state.sectionSelection[tabKey] = 0;
   setDirty(true);
@@ -1431,6 +1457,7 @@ function renderSectionTab(tab, tabKey) {
     const removeSectionBtn = document.createElement('button');
     removeSectionBtn.textContent = `Remove ${schema.entityName}`;
     removeSectionBtn.addEventListener('click', () => {
+      rememberUndoSnapshot();
       tab.model.sections.splice(selectedIndex, 1);
       state.sectionSelection[tabKey] = Math.max(0, selectedIndex - 1);
       setDirty(true);
@@ -1648,6 +1675,24 @@ async function resetCurrentBundle() {
   setStatus('Reset to last saved files.');
 }
 
+function undoOneStep() {
+  if (!state.bundle || !state.undoSnapshot) {
+    setStatus('Nothing to undo.');
+    return;
+  }
+  try {
+    state.bundle.tabs = JSON.parse(state.undoSnapshot);
+    state.undoSnapshot = null;
+    state.isDirty = snapshotTabs() !== state.cleanSnapshot;
+    refreshDirtyUi();
+    renderTabs();
+    renderActiveTab({ preserveTabScroll: true });
+    setStatus('Undid last change.');
+  } catch (err) {
+    setStatus('Undo failed.', true);
+  }
+}
+
 async function wireBrowseButton(button, input) {
   button.addEventListener('click', async () => {
     const dir = await window.c3xManager.pickDirectory();
@@ -1697,6 +1742,9 @@ async function init() {
 
   el.loadBtn.addEventListener('click', loadBundleAndRender);
   el.saveBtn.addEventListener('click', saveCurrentBundle);
+  if (el.undoBtn) {
+    el.undoBtn.addEventListener('click', undoOneStep);
+  }
   if (el.resetBtn) {
     el.resetBtn.addEventListener('click', resetCurrentBundle);
   }

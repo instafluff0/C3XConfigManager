@@ -287,6 +287,13 @@ textarea {
   border-color: rgba(36, 25, 64, 0.2);
 }
 
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
 .secondary.dirty {
   border-color: #4f84e7;
   box-shadow: 0 0 0 2px rgba(79, 132, 231, 0.28), 0 8px 18px rgba(24, 20, 50, 0.12);

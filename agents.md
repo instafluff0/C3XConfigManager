@@ -116,6 +116,9 @@ Scenario scope writes:
   - `node --check src/artPreview.js`
   - `npm test`
 
+# Notes on finding information on Resources, Units, Techs, and so on
+- Check `docs/Editing.md` for detailed information on how Civ 3 stores these and how to manage for scenarios, etc.
+
 ## Future Enhancements
 - Add scenario discovery by reading Civ3 scenario folders.
 - Add diff view against effective defaults.
