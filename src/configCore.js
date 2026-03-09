@@ -192,6 +192,16 @@ function normalizeBiqFieldKey(rawKey) {
     .replace(/^_+|_+$/g, '');
 }
 
+function canonicalFieldKey(raw) {
+  return String(raw || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function toExpectedSetterFromBaseKey(baseKey) {
+  const parts = String(baseKey || '').split(/_+/).filter(Boolean);
+  if (parts.length === 0) return '';
+  return `set${parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join('')}`;
+}
+
 function cleanDisplayText(value) {
   return String(value == null ? '' : value)
     .replace(/[\u0000-\u001f]+/g, '')
@@ -246,7 +256,7 @@ function parseEnglishFields(sectionCode, englishText) {
     if (!line) continue;
     const colon = line.indexOf(':');
     if (colon <= 0) {
-      fields.push({ key: 'note', value: line });
+      fields.push({ key: 'note', baseKey: 'note', label: 'Note', value: line, editable: false });
       continue;
     }
     const rawKey = line.slice(0, colon).trim();
@@ -255,7 +265,7 @@ function parseEnglishFields(sectionCode, englishText) {
     const key = keyCounts[baseKey] > 1 ? `${baseKey}_${keyCounts[baseKey]}` : baseKey;
     const rawValue = cleanDisplayText(line.slice(colon + 1));
     const value = friendlyFieldValue(sectionCode, baseKey, rawValue);
-    fields.push({ key, label: toTitleFromKey(rawKey), value: cleanDisplayText(value) });
+    fields.push({ key, baseKey, label: toTitleFromKey(rawKey), value: cleanDisplayText(value), editable: false });
   }
   return fields;
 }
@@ -741,8 +751,17 @@ function enrichBridgeSections(sections) {
   sections.forEach((section) => {
     const code = section.code;
     (section.records || []).forEach((record) => {
+      const writableBaseKeySet = new Set(
+        Array.isArray(record.writableBaseKeys)
+          ? record.writableBaseKeys.map((k) => canonicalFieldKey(k))
+          : []
+      );
       (record.fields || []).forEach((field) => {
         const k = String(field.key || '').toLowerCase();
+        const baseKey = String(field.baseKey || '').toLowerCase() || k.replace(/_\d+$/, '');
+        field.baseKey = baseKey;
+        field.expectedSetter = toExpectedSetterFromBaseKey(baseKey);
+        field.editable = writableBaseKeySet.has(canonicalFieldKey(baseKey));
         const v = cleanDisplayText(field.value);
 
         // Batch 1: explicit cross-reference decoding for GOVT/TECH/PRTO/BLDG/RACE.
@@ -1030,7 +1049,8 @@ function runBiqBridgeOnInflatedBuffer({ buffer, javaPath }) {
         .map((record) => ({
           index: record.index || 0,
           name: cleanRecordName(record.name, `${section.code} ${(record.index || 0) + 1}`),
-          fields: parseEnglishFields(section.code, record.english || '')
+          fields: parseEnglishFields(section.code, record.english || ''),
+          writableBaseKeys: Array.isArray(record.writableBaseKeys) ? record.writableBaseKeys : []
         }));
       return {
         id: `${section.code}-${section.count || records.length}`,
@@ -1421,6 +1441,85 @@ function readTextIfExists(filePath) {
   }
 }
 
+const WINDOWS_1252_DECODE_MAP = {
+  0x80: 0x20ac,
+  0x82: 0x201a,
+  0x83: 0x0192,
+  0x84: 0x201e,
+  0x85: 0x2026,
+  0x86: 0x2020,
+  0x87: 0x2021,
+  0x88: 0x02c6,
+  0x89: 0x2030,
+  0x8a: 0x0160,
+  0x8b: 0x2039,
+  0x8c: 0x0152,
+  0x8e: 0x017d,
+  0x91: 0x2018,
+  0x92: 0x2019,
+  0x93: 0x201c,
+  0x94: 0x201d,
+  0x95: 0x2022,
+  0x96: 0x2013,
+  0x97: 0x2014,
+  0x98: 0x02dc,
+  0x99: 0x2122,
+  0x9a: 0x0161,
+  0x9b: 0x203a,
+  0x9c: 0x0153,
+  0x9e: 0x017e,
+  0x9f: 0x0178
+};
+
+function decodeWindows1252Buffer(buffer) {
+  let out = '';
+  for (let i = 0; i < buffer.length; i += 1) {
+    const b = buffer[i];
+    if (b >= 0x80 && b <= 0x9f && WINDOWS_1252_DECODE_MAP[b]) {
+      out += String.fromCharCode(WINDOWS_1252_DECODE_MAP[b]);
+      continue;
+    }
+    out += String.fromCharCode(b);
+  }
+  return out;
+}
+
+function readWindows1252TextIfExists(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return null;
+    const buf = fs.readFileSync(filePath);
+    if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
+      return buf.toString('utf8');
+    }
+    return decodeWindows1252Buffer(buf);
+  } catch (_err) {
+    return null;
+  }
+}
+
+const WINDOWS_1252_ENCODE_MAP = Object.fromEntries(
+  Object.entries(WINDOWS_1252_DECODE_MAP).map(([byte, codePoint]) => [codePoint, Number(byte)])
+);
+
+function encodeWindows1252Text(text) {
+  const src = String(text == null ? '' : text);
+  const bytes = [];
+  for (let i = 0; i < src.length; i += 1) {
+    const code = src.charCodeAt(i);
+    if (code <= 0x7f || (code >= 0xa0 && code <= 0xff)) {
+      bytes.push(code);
+      continue;
+    }
+    const mapped = WINDOWS_1252_ENCODE_MAP[code];
+    if (Number.isInteger(mapped)) {
+      bytes.push(mapped);
+      continue;
+    }
+    bytes.push(0x3f); // '?'
+  }
+  return Buffer.from(bytes);
+}
+
 function normalizeRelativePath(raw) {
   return String(raw || '')
     .trim()
@@ -1475,7 +1574,7 @@ function readTextLayers(civ3Path, name, scenarioPath, scenarioPaths = []) {
   for (const ref of getTextLayerFiles(civ3Path, name)) {
     layers[ref.layer] = {
       filePath: ref.filePath,
-      text: readTextIfExists(ref.filePath)
+      text: readWindows1252TextIfExists(ref.filePath)
     };
   }
   if (scenarioPath || (scenarioPaths && scenarioPaths.length > 0)) {
@@ -1483,7 +1582,7 @@ function readTextLayers(civ3Path, name, scenarioPath, scenarioPaths = []) {
     if (scenarioTextPath) {
       layers.scenario = {
         filePath: scenarioTextPath,
-        text: readTextIfExists(scenarioTextPath)
+        text: readWindows1252TextIfExists(scenarioTextPath)
       };
     }
   }
@@ -1590,11 +1689,32 @@ function parseBodyFromCivilopediaSection(civilopediaSection) {
   for (const line of lines) {
     const trimmed = String(line || '').trim();
     if (!trimmed || trimmed.startsWith(';')) continue;
-    const cleaned = trimmed.replace(/\^/g, ' ').replace(/\s+/g, ' ').trim();
+    const cleaned = trimmed
+      .replace(/[{}]/g, ' ')
+      .replace(/\^/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
     if (!cleaned) continue;
     bodyLines.push(cleaned);
   }
   return bodyLines;
+}
+
+function normalizeCivilopediaTextValue(value) {
+  return String(value == null ? '' : value)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function textToCivilopediaLines(value) {
+  const normalized = normalizeCivilopediaTextValue(value);
+  if (!normalized) return [];
+  return normalized.split('\n');
 }
 
 function dedupeStrings(values) {
@@ -1705,6 +1825,43 @@ function collectScenarioReferenceKeySets(biqTab) {
     improvements: collectCivilopediaKeysBySection(biqTab, 'BLDG', 'BLDG_'),
     units: collectCivilopediaKeysBySection(biqTab, 'PRTO', 'PRTO_')
   };
+}
+
+function getSectionCodeForReferencePrefix(prefix) {
+  const p = String(prefix || '').toUpperCase().replace(/_+$/, '');
+  if (!p) return '';
+  if (p === 'GOVT') return 'GOVT';
+  if (p === 'RACE') return 'RACE';
+  if (p === 'TECH') return 'TECH';
+  if (p === 'GOOD') return 'GOOD';
+  if (p === 'BLDG') return 'BLDG';
+  if (p === 'PRTO') return 'PRTO';
+  return p;
+}
+
+function indexBiqRecordsByCivilopediaKey(biqTab, sectionCode) {
+  const out = new Map();
+  if (!biqTab || !Array.isArray(biqTab.sections)) return out;
+  const section = biqTab.sections.find((s) => s.code === sectionCode);
+  if (!section || !Array.isArray(section.records)) return out;
+  section.records.forEach((record) => {
+    const key = String(getFieldValueByBaseKey(record, 'civilopediaentry') || '').toUpperCase();
+    if (key) out.set(key, record);
+  });
+  return out;
+}
+
+function findLayerPathForKey(mapsByLayer, layerFilesByLayer, key, order) {
+  const upperKey = String(key || '').toUpperCase();
+  if (!upperKey) return '';
+  for (let i = order.length - 1; i >= 0; i -= 1) {
+    const layer = order[i];
+    const map = mapsByLayer[layer] || {};
+    if (map[upperKey]) {
+      return (layerFilesByLayer[layer] && layerFilesByLayer[layer].filePath) || '';
+    }
+  }
+  return '';
 }
 
 function parseImprovementKindsFromCivilopediaText(text) {
@@ -1825,21 +1982,32 @@ function buildReferenceTabs(civ3Path, options = {}) {
       parseImprovementKindsFromCivilopediaText((civilopediaLayers.scenario && civilopediaLayers.scenario.text) || '')
     )
   );
-  const civilopediaSections = mergeByPrecedence({
+  const civilopediaSectionsByLayer = {
     vanilla: toCanonicalKeyMap(parseCivilopediaSections((civilopediaLayers.vanilla && civilopediaLayers.vanilla.text) || '')),
     ptw: toCanonicalKeyMap(parseCivilopediaSections((civilopediaLayers.ptw && civilopediaLayers.ptw.text) || '')),
     conquests: toCanonicalKeyMap(parseCivilopediaSections((civilopediaLayers.conquests && civilopediaLayers.conquests.text) || '')),
     scenario: toCanonicalKeyMap(parseCivilopediaSections((civilopediaLayers.scenario && civilopediaLayers.scenario.text) || ''))
-  }, layerOrder);
-  const pediaBlocks = mergeByPrecedence({
+  };
+  const pediaBlocksByLayer = {
     vanilla: toCanonicalKeyMap(parsePediaIconsBlocks((pediaIconLayers.vanilla && pediaIconLayers.vanilla.text) || '')),
     ptw: toCanonicalKeyMap(parsePediaIconsBlocks((pediaIconLayers.ptw && pediaIconLayers.ptw.text) || '')),
     conquests: toCanonicalKeyMap(parsePediaIconsBlocks((pediaIconLayers.conquests && pediaIconLayers.conquests.text) || '')),
     scenario: toCanonicalKeyMap(parsePediaIconsBlocks((pediaIconLayers.scenario && pediaIconLayers.scenario.text) || ''))
-  }, layerOrder);
+  };
+  const scenarioCivilopediaWritePath = mode === 'scenario'
+    ? (
+      ((civilopediaLayers.scenario && civilopediaLayers.scenario.filePath) || '')
+      || resolveScenarioTextPath(scenarioPath, 'Civilopedia.txt', scenarioPaths)
+      || (scenarioPath ? path.join(resolveScenarioDir(scenarioPath), 'Text', 'Civilopedia.txt') : '')
+    )
+    : '';
+  const civilopediaSections = mergeByPrecedence(civilopediaSectionsByLayer, layerOrder);
+  const pediaBlocks = mergeByPrecedence(pediaBlocksByLayer, layerOrder);
 
   const tabs = {};
   for (const tabSpec of REFERENCE_TAB_SPECS) {
+    const biqSectionCode = getSectionCodeForReferencePrefix(tabSpec.prefix);
+    const biqRecordByCivilopediaKey = indexBiqRecordsByCivilopediaKey(options.biqTab, biqSectionCode);
     const entriesByKey = new Map();
     const prefix = tabSpec.prefix;
 
@@ -1874,18 +2042,57 @@ function buildReferenceTabs(civ3Path, options = {}) {
             ? (pedia.racePaths[0] || pedia.iconPaths[pedia.iconPaths.length - 1] || '')
             : (pedia.iconPaths[pedia.iconPaths.length - 1] || pedia.iconPaths[0] || '');
 
+        const overviewSourcePath = findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, entry.civilopediaKey, layerOrder);
+        const descSourcePath = findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, `DESC_${entry.civilopediaKey}`, layerOrder)
+          || overviewSourcePath;
+        const iconBlockSourcePath = findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ICON_${entry.civilopediaKey}`, layerOrder)
+          || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, entry.civilopediaKey, layerOrder)
+          || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `${entry.civilopediaKey}_LARGE`, layerOrder)
+          || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ICON_RACE_${entry.civilopediaKey.replace(/^RACE_/, '')}`, layerOrder);
+        const animSourcePath = findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ANIMNAME_${entry.civilopediaKey}`, layerOrder)
+          || iconBlockSourcePath;
+        const biqRecord = biqRecordByCivilopediaKey.get(entry.civilopediaKey);
+        const biqFields = (biqRecord && Array.isArray(biqRecord.fields))
+          ? biqRecord.fields.filter((f) => String(f.key || '').toLowerCase() !== 'civilopediaentry').map((f) => ({
+            key: f.key,
+            baseKey: f.baseKey || String(f.key || '').replace(/_\d+$/, ''),
+            label: f.label || toTitleFromKey(f.key),
+            value: cleanDisplayText(f.value),
+            originalValue: cleanDisplayText(f.value),
+            editable: !!f.editable,
+            expectedSetter: String(f.expectedSetter || '')
+          }))
+          : [];
+
         return {
           id: shortKey,
           civilopediaKey: entry.civilopediaKey,
+          biqIndex: biqRecord ? Number(biqRecord.index) : null,
           name: inferDisplayNameFromKey(shortKey),
           overview: overviewLines.join(' '),
+          originalOverview: overviewLines.join(' '),
           description: descriptionLines.join(' '),
+          originalDescription: descriptionLines.join(' '),
           techDependencies: tabSpec.key === 'technologies' ? [] : extractTechDependenciesFromText(overviewLines),
           improvementKind: tabSpec.key === 'improvements' ? (improvementKindsByKey[entry.civilopediaKey] || 'normal') : null,
           iconPaths: pedia.iconPaths,
           racePaths: pedia.racePaths,
           thumbPath,
-          animationName: pedia.animationName
+          animationName: pedia.animationName,
+          biqSectionCode,
+          biqSectionTitle: biqSectionCode,
+          biqFields,
+          sourceMeta: {
+            overview: { source: 'Civilopedia', readPath: overviewSourcePath, writePath: scenarioCivilopediaWritePath },
+            description: { source: 'Civilopedia', readPath: descSourcePath, writePath: scenarioCivilopediaWritePath },
+            iconPaths: { source: 'PediaIcons', readPath: iconBlockSourcePath, writePath: '' },
+            animationName: { source: 'PediaIcons', readPath: animSourcePath, writePath: '' },
+            biq: {
+              source: 'BIQ',
+              readPath: (options.biqTab && options.biqTab.sourcePath) || '',
+              writePath: mode === 'scenario' ? ((options.biqTab && options.biqTab.sourcePath) || '') : ''
+            }
+          }
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
@@ -1917,7 +2124,7 @@ function buildReferenceTabs(civ3Path, options = {}) {
         civilopediaVanilla: (civilopediaLayers.vanilla && civilopediaLayers.vanilla.filePath) || '',
         civilopediaPtw: (civilopediaLayers.ptw && civilopediaLayers.ptw.filePath) || '',
         civilopediaConquests: (civilopediaLayers.conquests && civilopediaLayers.conquests.filePath) || '',
-        civilopediaScenario: (civilopediaLayers.scenario && civilopediaLayers.scenario.filePath) || '',
+        civilopediaScenario: scenarioCivilopediaWritePath,
         pediaIconsVanilla: (pediaIconLayers.vanilla && pediaIconLayers.vanilla.filePath) || '',
         pediaIconsPtw: (pediaIconLayers.ptw && pediaIconLayers.ptw.filePath) || '',
         pediaIconsConquests: (pediaIconLayers.conquests && pediaIconLayers.conquests.filePath) || '',
@@ -1930,11 +2137,65 @@ function buildReferenceTabs(civ3Path, options = {}) {
   return tabs;
 }
 
+function buildMapTabFromBiq(biqTab, mode) {
+  const sections = (biqTab && Array.isArray(biqTab.sections)) ? biqTab.sections : [];
+  const hasMapData = sections.some((s) => s.code === 'TILE') && sections.some((s) => s.code === 'WMAP');
+  return {
+    title: 'Map',
+    type: 'map',
+    readOnly: mode !== 'scenario',
+    sourcePath: (biqTab && biqTab.sourcePath) || '',
+    error: (biqTab && biqTab.error) || '',
+    sections: hasMapData ? sections : []
+  };
+}
+
 function ensureTrailingNewline(text) {
   if (!text.endsWith('\n')) {
     return `${text}\n`;
   }
   return text;
+}
+
+function parseCivilopediaDocumentWithOrder(text) {
+  const order = [];
+  const sections = {};
+  if (!text) return { order, sections };
+  const lines = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  let currentKey = '';
+  let currentLines = [];
+  const flush = () => {
+    if (!currentKey) return;
+    sections[currentKey] = { key: currentKey, rawLines: currentLines.slice() };
+    if (!order.includes(currentKey)) order.push(currentKey);
+  };
+  lines.forEach((line) => {
+    if (line.startsWith('#')) {
+      flush();
+      currentKey = line.slice(1).trim().toUpperCase();
+      currentLines = [];
+      return;
+    }
+    if (currentKey) currentLines.push(line);
+  });
+  flush();
+  return { order, sections };
+}
+
+function serializeCivilopediaDocumentWithOrder(doc) {
+  const order = Array.isArray(doc && doc.order) ? doc.order : [];
+  const sections = (doc && doc.sections) || {};
+  const lines = [];
+  order.forEach((rawKey) => {
+    const key = String(rawKey || '').toUpperCase();
+    if (!key || !sections[key]) return;
+    const section = sections[key] || {};
+    const rawLines = Array.isArray(section.rawLines) ? section.rawLines : [];
+    lines.push(`#${key}`);
+    rawLines.forEach((line) => lines.push(String(line || '')));
+    lines.push('');
+  });
+  return ensureTrailingNewline(lines.join('\n'));
 }
 
 function parseIniLines(text) {
@@ -2318,7 +2579,7 @@ function loadBundle(payload) {
     tabs: {}
   };
 
-  bundle.tabs.biq = biqTab;
+  bundle.biq = biqTab;
 
   const referenceTabs = buildReferenceTabs(civ3Path, {
     mode,
@@ -2331,6 +2592,7 @@ function loadBundle(payload) {
       bundle.tabs[spec.key] = referenceTabs[spec.key];
     }
   }
+  bundle.tabs.map = buildMapTabFromBiq(biqTab, mode);
 
   const defaultBaseText = readTextIfExists(filePaths.base.defaultPath) || '';
   const scenarioBaseText = readTextIfExists(filePaths.base.scenarioPath) || '';
@@ -2402,7 +2664,201 @@ function saveBundle(payload) {
     saveReport.push({ kind, path: targetPath });
   }
 
+  if (mode === 'scenario' && isBiqPath(scenarioPath)) {
+    const biqEdits = collectBiqReferenceEdits(payload.tabs || {});
+    if (biqEdits.length > 0) {
+      const biqSave = applyBiqReferenceEdits({
+        biqPath: scenarioPath,
+        edits: biqEdits,
+        javaPath
+      });
+      if (!biqSave.ok) {
+        return { ok: false, error: biqSave.error || 'Failed to save BIQ edits.' };
+      }
+      saveReport.push({
+        kind: 'biq',
+        path: scenarioPath,
+        applied: biqSave.applied || 0,
+        skipped: biqSave.skipped || 0,
+        warning: biqSave.warning || ''
+      });
+    }
+  }
+
+  if (mode === 'scenario') {
+    const civilopediaEdits = collectCivilopediaReferenceEdits(payload.tabs || {});
+    if (civilopediaEdits.length > 0) {
+      const explicitTarget = ((((payload.tabs || {}).civilizations || {}).sourceDetails || {}).civilopediaScenario || '').trim();
+      const targetPath = explicitTarget || path.join(scenarioDir, 'Text', 'Civilopedia.txt');
+      const civilopediaSave = applyScenarioCivilopediaEdits({ targetPath, edits: civilopediaEdits });
+      if (!civilopediaSave.ok) {
+        return { ok: false, error: civilopediaSave.error || 'Failed to save Civilopedia edits.' };
+      }
+      if (civilopediaSave.applied > 0) {
+        saveReport.push({ kind: 'civilopedia', path: targetPath, applied: civilopediaSave.applied });
+      }
+    }
+  }
+
   return { ok: true, saveReport };
+}
+
+function isBiqPath(value) {
+  return /\.biq$/i.test(String(value || '').trim());
+}
+
+function getSectionCodeForReferenceTabKey(tabKey) {
+  const spec = REFERENCE_TAB_SPECS.find((s) => s.key === tabKey);
+  return spec ? getSectionCodeForReferencePrefix(spec.prefix) : '';
+}
+
+function collectBiqReferenceEdits(tabs) {
+  const edits = [];
+  for (const spec of REFERENCE_TAB_SPECS) {
+    const tab = tabs[spec.key];
+    if (!tab || !Array.isArray(tab.entries)) continue;
+    const sectionCode = getSectionCodeForReferenceTabKey(spec.key);
+    if (!sectionCode) continue;
+    tab.entries.forEach((entry) => {
+      const civKey = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+      if (!civKey || !Array.isArray(entry.biqFields)) return;
+      entry.biqFields.forEach((field) => {
+        if (!field) return;
+        const key = String((field && (field.baseKey || field.key)) || '').trim();
+        if (!key || key.toLowerCase() === 'civilopediaentry') return;
+        const value = cleanDisplayText(field && field.value);
+        const originalValue = cleanDisplayText(field && field.originalValue);
+        if (value === originalValue) return;
+        edits.push({
+          sectionCode,
+          civilopediaKey: civKey,
+          fieldKey: key,
+          value
+        });
+      });
+    });
+  }
+  return edits;
+}
+
+function collectCivilopediaReferenceEdits(tabs) {
+  const edits = [];
+  const upsert = (sectionKey, value) => {
+    const key = String(sectionKey || '').trim().toUpperCase();
+    if (!key) return;
+    const normalizedValue = normalizeCivilopediaTextValue(value);
+    const existing = edits.find((entry) => entry.sectionKey === key);
+    if (existing) {
+      existing.value = normalizedValue;
+      return;
+    }
+    edits.push({ sectionKey: key, value: normalizedValue });
+  };
+
+  for (const spec of REFERENCE_TAB_SPECS) {
+    const tab = tabs[spec.key];
+    if (!tab || !Array.isArray(tab.entries)) continue;
+    tab.entries.forEach((entry) => {
+      const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+      if (!key) return;
+      const overview = normalizeCivilopediaTextValue(entry && entry.overview);
+      const originalOverview = normalizeCivilopediaTextValue(entry && entry.originalOverview);
+      if (overview !== originalOverview) {
+        upsert(key, overview);
+      }
+      const description = normalizeCivilopediaTextValue(entry && entry.description);
+      const originalDescription = normalizeCivilopediaTextValue(entry && entry.originalDescription);
+      if (description !== originalDescription) {
+        upsert(`DESC_${key}`, description);
+      }
+    });
+  }
+  return edits;
+}
+
+function applyScenarioCivilopediaEdits({ targetPath, edits }) {
+  if (!targetPath || !Array.isArray(edits) || edits.length === 0) {
+    return { ok: true, applied: 0 };
+  }
+  try {
+    const existing = readTextIfExists(targetPath) || '';
+    const doc = parseCivilopediaDocumentWithOrder(existing);
+    let applied = 0;
+    edits.forEach((edit) => {
+      const sectionKey = String(edit && edit.sectionKey || '').trim().toUpperCase();
+      if (!sectionKey) return;
+      const nextLines = textToCivilopediaLines(edit.value);
+      const prevLines = (doc.sections[sectionKey] && Array.isArray(doc.sections[sectionKey].rawLines))
+        ? doc.sections[sectionKey].rawLines
+        : [];
+      const prevNorm = normalizeCivilopediaTextValue(prevLines.join('\n'));
+      const nextNorm = normalizeCivilopediaTextValue(nextLines.join('\n'));
+      if (prevNorm === nextNorm) return;
+      doc.sections[sectionKey] = { key: sectionKey, rawLines: nextLines };
+      if (!doc.order.includes(sectionKey)) doc.order.push(sectionKey);
+      applied += 1;
+    });
+    if (applied === 0) return { ok: true, applied: 0 };
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    const serialized = serializeCivilopediaDocumentWithOrder(doc);
+    fs.writeFileSync(targetPath, encodeWindows1252Text(serialized));
+    return { ok: true, applied };
+  } catch (err) {
+    return { ok: false, error: `Failed to save Civilopedia edits: ${err.message}` };
+  }
+}
+
+function applyBiqReferenceEdits({ biqPath, edits, javaPath }) {
+  if (!biqPath || !Array.isArray(edits) || edits.length === 0) {
+    return { ok: true, applied: 0, skipped: 0, warning: '' };
+  }
+  const classpath = findBiqBridgeClasspath();
+  if (!classpath) {
+    return { ok: false, error: 'BIQ bridge classes not found in vendor/biqbridge and vendor/lib.' };
+  }
+  const patchPath = path.join(
+    os.tmpdir(),
+    `c3x-biq-edits-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.txt`
+  );
+  try {
+    const lines = edits.map((edit) => {
+      const encoded = Buffer.from(String(edit.value || ''), 'utf8').toString('base64');
+      return `${edit.sectionCode}\t${edit.civilopediaKey}\t${edit.fieldKey}\t${encoded}`;
+    });
+    fs.writeFileSync(patchPath, `${lines.join('\n')}\n`, 'utf8');
+    const javaBinary = findJavaBinary(javaPath);
+    const proc = spawnSync(javaBinary, ['-cp', classpath, 'BiqBridge', '--apply', biqPath, patchPath, biqPath], {
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024
+    });
+    if (proc.status !== 0) {
+      return { ok: false, error: `BIQ bridge apply failed: ${proc.stderr || proc.stdout || 'unknown error'}` };
+    }
+    const out = String(proc.stdout || '').trim();
+    const start = out.indexOf('{');
+    const end = out.lastIndexOf('}');
+    if (start < 0 || end < start) {
+      return { ok: false, error: 'BIQ bridge apply output was not valid JSON.' };
+    }
+    const parsed = JSON.parse(out.slice(start, end + 1));
+    if (!parsed || !parsed.ok) {
+      return { ok: false, error: (parsed && parsed.error) || 'BIQ bridge apply returned an error.' };
+    }
+    return {
+      ok: true,
+      applied: Number(parsed.applied || 0),
+      skipped: Number(parsed.skipped || 0),
+      warning: String(parsed.warning || '')
+    };
+  } catch (err) {
+    return { ok: false, error: `BIQ bridge apply failed: ${err.message}` };
+  } finally {
+    try {
+      if (fs.existsSync(patchPath)) fs.unlinkSync(patchPath);
+    } catch (_err) {
+      // best effort cleanup
+    }
+  }
 }
 
 module.exports = {

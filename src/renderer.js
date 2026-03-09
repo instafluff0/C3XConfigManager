@@ -59,7 +59,16 @@ const state = {
   autoReloadTimer: null,
   pathsCollapsed: false,
   hasAutoCollapsedPaths: false,
-  availableScenarios: []
+  availableScenarios: [],
+  navHistory: [],
+  navHistoryIndex: -1,
+  isApplyingHistory: false,
+  civilopediaEditorOpen: {},
+  civilopediaPreviewVisible: {}
+};
+const richTooltip = {
+  node: null,
+  active: false
 };
 
 const el = {
@@ -83,6 +92,8 @@ const el = {
   scenarioTitleChip: document.getElementById('scenario-title-chip'),
   loadingOverlay: document.getElementById('loading-overlay'),
   loadingText: document.getElementById('loading-text'),
+  backBtn: document.getElementById('back-btn'),
+  forwardBtn: document.getElementById('forward-btn'),
   saveBtn: document.getElementById('save-btn'),
   undoBtn: document.getElementById('undo-btn'),
   resetBtn: document.getElementById('reset-btn'),
@@ -107,7 +118,7 @@ const TAB_ICONS = {
   resources: 'icon-resource',
   improvements: 'icon-improv',
   governments: 'icon-gov',
-  biq: 'icon-civ',
+  map: 'icon-civ',
   base: 'icon-c3x',
   districts: 'icon-district',
   wonders: 'icon-wonder',
@@ -115,7 +126,7 @@ const TAB_ICONS = {
   animations: 'icon-anim'
 };
 const TAB_GROUPS = [
-  { label: 'CIV 3', keys: ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'biq'] },
+  { label: 'CIV 3', keys: ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'map'] },
   { label: 'C3X', keys: ['base', 'districts', 'wonders', 'naturalWonders', 'animations'] }
 ];
 const BIQ_TERRAIN_ATLAS_FILES = [
@@ -165,7 +176,7 @@ const BASE_FIELD_DETAILS = {
   minimum_natural_wonder_separation: 'Minimum tile distance between natural wonders.',
   draw_lines_using_gdi_plus: 'Line rendering strategy.'
 };
-const EDITABLE_TAB_KEYS = ['base', 'districts', 'wonders', 'naturalWonders', 'animations'];
+const EDITABLE_TAB_KEYS = ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units'];
 
 const SECTION_SCHEMAS = {
   districts: {
@@ -443,8 +454,8 @@ function stripBiqExtension(fileName) {
 }
 
 function getLoadedScenarioName(bundle = null) {
-  if (!bundle || !bundle.tabs || !bundle.tabs.biq) return '';
-  const biqPath = String(bundle.tabs.biq.sourcePath || '').trim();
+  if (!bundle) return '';
+  const biqPath = String((bundle.biq && bundle.biq.sourcePath) || (bundle.tabs && bundle.tabs.map && bundle.tabs.map.sourcePath) || '').trim();
   if (!biqPath) return '';
   return stripBiqExtension(getPathTail(biqPath));
 }
@@ -467,8 +478,9 @@ function updateScenarioTitleChip(bundle = null) {
   }
   el.scenarioTitleChip.classList.remove('hidden');
   el.scenarioTitleChip.textContent = `Scenario: ${scenarioName}`;
-  if (bundle.tabs && bundle.tabs.biq && bundle.tabs.biq.sourcePath) {
-    el.scenarioTitleChip.title = bundle.tabs.biq.sourcePath;
+  const biqSource = String((bundle.biq && bundle.biq.sourcePath) || (bundle.tabs && bundle.tabs.map && bundle.tabs.map.sourcePath) || '');
+  if (biqSource) {
+    el.scenarioTitleChip.title = biqSource;
   }
 }
 
@@ -608,6 +620,8 @@ function setLoadingUi(isLoading, text = 'Loading configs...') {
     el.pickCiv3,
     el.pickScenario,
     el.pathsToggle,
+    el.backBtn,
+    el.forwardBtn,
     el.saveBtn,
     el.undoBtn,
     el.resetBtn
@@ -615,6 +629,7 @@ function setLoadingUi(isLoading, text = 'Loading configs...') {
   controls.forEach((control) => {
     if (control) control.disabled = state.isLoading;
   });
+  updateNavButtons();
 }
 
 function clearBundleView() {
@@ -628,6 +643,137 @@ function clearBundleView() {
   if (el.tabs) el.tabs.innerHTML = '';
   if (el.tabContent) el.tabContent.innerHTML = '';
   if (el.workspace) el.workspace.classList.add('hidden');
+  state.navHistory = [];
+  state.navHistoryIndex = -1;
+  updateNavButtons();
+}
+
+function cloneStateMap(mapLike) {
+  return Object.assign({}, mapLike || {});
+}
+
+function captureViewSnapshot() {
+  if (!state.bundle || !state.bundle.tabs) return null;
+  const tabs = state.bundle.tabs;
+  const fallbackTab = Object.keys(tabs)[0] || 'base';
+  const activeTab = tabs[state.activeTab] ? state.activeTab : fallbackTab;
+  return {
+    activeTab,
+    tabContentScrollTop: el.tabContent ? el.tabContent.scrollTop : state.tabContentScrollTop,
+    sectionSelection: cloneStateMap(state.sectionSelection),
+    referenceSelection: cloneStateMap(state.referenceSelection),
+    referenceFilter: cloneStateMap(state.referenceFilter),
+    referenceImprovementKind: cloneStateMap(state.referenceImprovementKind),
+    biqSectionSelection: Number(state.biqSectionSelection || 0),
+    biqRecordSelection: cloneStateMap(state.biqRecordSelection),
+    biqMapSelectedTile: Number(state.biqMapSelectedTile || -1),
+    biqMapLayer: String(state.biqMapLayer || 'terrain'),
+    biqMapZoom: Number(state.biqMapZoom || 6)
+  };
+}
+
+function snapshotKey(snapshot) {
+  return JSON.stringify(snapshot || null);
+}
+
+function updateNavButtons() {
+  if (el.backBtn) {
+    el.backBtn.disabled = state.isLoading || state.navHistoryIndex <= 0;
+  }
+  if (el.forwardBtn) {
+    el.forwardBtn.disabled = state.isLoading || state.navHistoryIndex < 0 || state.navHistoryIndex >= state.navHistory.length - 1;
+  }
+}
+
+function pushNavigationSnapshot(snapshot) {
+  if (!snapshot) {
+    updateNavButtons();
+    return;
+  }
+  const current = (state.navHistoryIndex >= 0 && state.navHistoryIndex < state.navHistory.length)
+    ? state.navHistory[state.navHistoryIndex]
+    : null;
+  if (current && snapshotKey(current) === snapshotKey(snapshot)) {
+    updateNavButtons();
+    return;
+  }
+  if (state.navHistoryIndex < state.navHistory.length - 1) {
+    state.navHistory = state.navHistory.slice(0, state.navHistoryIndex + 1);
+  }
+  state.navHistory.push(snapshot);
+  const maxEntries = 120;
+  if (state.navHistory.length > maxEntries) {
+    const drop = state.navHistory.length - maxEntries;
+    state.navHistory.splice(0, drop);
+    state.navHistoryIndex = Math.max(0, state.navHistoryIndex - drop);
+  }
+  state.navHistoryIndex = state.navHistory.length - 1;
+  updateNavButtons();
+}
+
+function resetNavigationHistory() {
+  state.navHistory = [];
+  state.navHistoryIndex = -1;
+  const current = captureViewSnapshot();
+  if (current) {
+    state.navHistory = [current];
+    state.navHistoryIndex = 0;
+  }
+  updateNavButtons();
+}
+
+function applyViewSnapshot(snapshot) {
+  if (!snapshot || !state.bundle || !state.bundle.tabs) return;
+  const tabs = state.bundle.tabs;
+  const fallbackTab = Object.keys(tabs)[0] || 'base';
+  state.activeTab = tabs[snapshot.activeTab] ? snapshot.activeTab : fallbackTab;
+  state.sectionSelection = Object.assign({}, state.sectionSelection, cloneStateMap(snapshot.sectionSelection));
+  state.referenceSelection = cloneStateMap(snapshot.referenceSelection);
+  state.referenceFilter = cloneStateMap(snapshot.referenceFilter);
+  state.referenceImprovementKind = cloneStateMap(snapshot.referenceImprovementKind);
+  state.biqSectionSelection = Number.isFinite(snapshot.biqSectionSelection) ? snapshot.biqSectionSelection : 0;
+  state.biqRecordSelection = cloneStateMap(snapshot.biqRecordSelection);
+  state.biqMapSelectedTile = Number.isFinite(snapshot.biqMapSelectedTile) ? snapshot.biqMapSelectedTile : -1;
+  state.biqMapLayer = String(snapshot.biqMapLayer || 'terrain');
+  state.biqMapZoom = Number.isFinite(snapshot.biqMapZoom) ? snapshot.biqMapZoom : state.biqMapZoom;
+  state.tabContentScrollTop = Number.isFinite(snapshot.tabContentScrollTop) ? snapshot.tabContentScrollTop : 0;
+  renderTabs();
+  renderActiveTab({ preserveTabScroll: true });
+  updateNavButtons();
+}
+
+function navigateBack() {
+  if (state.navHistoryIndex <= 0) return;
+  state.isApplyingHistory = true;
+  state.navHistoryIndex -= 1;
+  const target = state.navHistory[state.navHistoryIndex];
+  applyViewSnapshot(target);
+  state.isApplyingHistory = false;
+  updateNavButtons();
+}
+
+function navigateForward() {
+  if (state.navHistoryIndex < 0 || state.navHistoryIndex >= state.navHistory.length - 1) return;
+  state.isApplyingHistory = true;
+  state.navHistoryIndex += 1;
+  const target = state.navHistory[state.navHistoryIndex];
+  applyViewSnapshot(target);
+  state.isApplyingHistory = false;
+  updateNavButtons();
+}
+
+function navigateWithHistory(mutateState, renderOptions = { preserveTabScroll: true }) {
+  if (!state.bundle || !state.bundle.tabs) return;
+  const before = captureViewSnapshot();
+  mutateState();
+  const after = captureViewSnapshot();
+  renderTabs();
+  renderActiveTab(renderOptions);
+  if (!state.isApplyingHistory && before && after && snapshotKey(before) !== snapshotKey(after)) {
+    pushNavigationSnapshot(after);
+  } else {
+    updateNavButtons();
+  }
 }
 
 function queueAutoReload(reason, delayMs = 320) {
@@ -1628,6 +1774,599 @@ function formatReferenceList(values) {
   return values.join(', ');
 }
 
+function formatSourceInfo(meta, fallbackLabel = 'Unknown') {
+  const src = meta || {};
+  const source = String(src.source || fallbackLabel);
+  const readPath = String(src.readPath || '').trim();
+  const writePath = String(src.writePath || '').trim();
+  const readLine = readPath ? `Read: ${compactPathFromCiv3Root(readPath)}` : 'Read: (not available)';
+  const writeLine = writePath ? `Write: ${compactPathFromCiv3Root(writePath)}` : 'Write: (not editable yet)';
+  return `${source}\n${readLine}\n${writeLine}`;
+}
+
+function ensureRichTooltipNode() {
+  if (richTooltip.node && richTooltip.node.isConnected) return richTooltip.node;
+  const node = document.createElement('div');
+  node.id = 'rich-tooltip';
+  node.className = 'rich-tooltip hidden';
+  document.body.appendChild(node);
+  richTooltip.node = node;
+  return node;
+}
+
+function showRichTooltip(text, x, y) {
+  const node = ensureRichTooltipNode();
+  node.textContent = text;
+  node.classList.remove('hidden');
+  const pad = 14;
+  const rect = node.getBoundingClientRect();
+  const maxX = Math.max(12, window.innerWidth - rect.width - 12);
+  const maxY = Math.max(12, window.innerHeight - rect.height - 12);
+  node.style.left = `${Math.min(maxX, Math.max(12, x + pad))}px`;
+  node.style.top = `${Math.min(maxY, Math.max(12, y + pad))}px`;
+}
+
+function hideRichTooltip() {
+  if (!richTooltip.node) return;
+  richTooltip.node.classList.add('hidden');
+}
+
+function attachRichTooltip(target, text) {
+  const tip = String(text || '').trim();
+  if (!target || !tip) return;
+  target.classList.add('help-hover-target');
+  target.addEventListener('mouseenter', (ev) => {
+    richTooltip.active = true;
+    showRichTooltip(tip, ev.clientX, ev.clientY);
+  });
+  target.addEventListener('mousemove', (ev) => {
+    if (!richTooltip.active) return;
+    showRichTooltip(tip, ev.clientX, ev.clientY);
+  });
+  target.addEventListener('mouseleave', () => {
+    richTooltip.active = false;
+    hideRichTooltip();
+  });
+}
+
+function parseIntFromDisplayValue(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  if (/^-?\d+$/.test(text)) return Number.parseInt(text, 10);
+  const m = text.match(/\((-?\d+)\)\s*$/);
+  if (m) return Number.parseInt(m[1], 10);
+  return null;
+}
+
+const BIQ_FIELD_REFS = {
+  resources: { prerequisite: 'technologies' },
+  improvements: {
+    reqimprovement: 'improvements',
+    reqgovernment: 'governments',
+    obsoleteby: 'technologies',
+    reqresource1: 'resources',
+    reqresource2: 'resources',
+    unitproduced: 'units'
+  },
+  units: {
+    requiredtech: 'technologies',
+    upgradeto: 'units',
+    requiredresource1: 'resources',
+    requiredresource2: 'resources',
+    requiredresource3: 'resources',
+    enslaveresultsin: 'units',
+    enslaveresultsinto: 'units'
+  },
+  civilizations: {
+    freetech1index: 'technologies',
+    freetech2index: 'technologies',
+    freetech3index: 'technologies',
+    freetech4index: 'technologies',
+    shunnedgovernment: 'governments',
+    favoritegovernment: 'governments',
+    kingunit: 'units'
+  },
+  governments: {
+    prerequisitetechnology: 'technologies',
+    immuneto: 'governments'
+  },
+  technologies: {
+    era: 'eras',
+    prerequisite1: 'technologies',
+    prerequisite2: 'technologies',
+    prerequisite3: 'technologies',
+    prerequisite4: 'technologies'
+  }
+};
+
+const BIQ_FIELD_ENUMS = {
+  resources: {
+    type: [
+      { value: '0', label: 'Bonus' },
+      { value: '1', label: 'Luxury' },
+      { value: '2', label: 'Strategic' }
+    ]
+  },
+  units: {
+    unitclass: [
+      { value: '0', label: 'Land' },
+      { value: '1', label: 'Sea' },
+      { value: '2', label: 'Air' }
+    ]
+  },
+  governments: {
+    corruption: [
+      { value: '0', label: 'Minimal' },
+      { value: '1', label: 'Nuisance' },
+      { value: '2', label: 'Problematic' },
+      { value: '3', label: 'Rampant' },
+      { value: '4', label: 'Catastrophic' },
+      { value: '5', label: 'Communal' },
+      { value: '6', label: 'Off' }
+    ],
+    hurrying: [
+      { value: '0', label: 'Impossible' },
+      { value: '1', label: 'Forced Labor' },
+      { value: '2', label: 'Paid Labor' }
+    ],
+    warweariness: [
+      { value: '0', label: 'None' },
+      { value: '1', label: 'Low' },
+      { value: '2', label: 'High' }
+    ]
+  },
+  civilizations: {
+    culturegroup: [
+      { value: '-1', label: 'None' },
+      { value: '0', label: 'American' },
+      { value: '1', label: 'European' },
+      { value: '2', label: 'Mediterranean' },
+      { value: '3', label: 'Mid East' },
+      { value: '4', label: 'Asian' }
+    ],
+    aggressionlevel: [
+      { value: '-2', label: 'Very Low' },
+      { value: '-1', label: 'Low' },
+      { value: '0', label: 'Neutral' },
+      { value: '1', label: 'High' },
+      { value: '2', label: 'Very High' }
+    ]
+  }
+};
+
+const BIQ_FIELD_HIDDEN = {
+  all: new Set(['byte_length', 'datalength', 'data_length', 'note']),
+  resources: new Set(['icon', 'question_mark', 'prerequisite']),
+  improvements: new Set(['question_mark', 'reqadvance', 'obsoleteby']),
+  units: new Set(['iconindex', 'question_mark', 'requiredtech']),
+  technologies: new Set(['advanceicon', 'question_mark', 'prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4']),
+  governments: new Set(['question_mark', 'prerequisitetechnology']),
+  civilizations: new Set([
+    'question_mark',
+    'freetech1index',
+    'freetech2index',
+    'freetech3index',
+    'freetech4index',
+    'bonuses',
+    'civilizationtraits',
+    'buildoften',
+    'buildnever',
+    'governorsettings',
+    'flavors',
+    'plurality',
+    'uniquecivilizationcounter',
+    'uniquecolor'
+  ]),
+  eras: new Set(['question_mark'])
+};
+
+const REFERENCE_RULE_SCHEMAS = {
+  resources: {
+    order: ['type', 'prerequisite', 'appearanceratio', 'disapperanceprobability', 'foodbonus', 'shieldsbonus', 'commercebonus'],
+    fields: {
+      type: { group: 'Identity', control: 'select' },
+      prerequisite: { group: 'Prerequisites', control: 'reference' },
+      appearanceratio: { group: 'Map Placement', control: 'number', min: 0 },
+      disapperanceprobability: { group: 'Map Placement', control: 'number', min: 0 },
+      foodbonus: { group: 'Tile Yields', control: 'number' },
+      shieldsbonus: { group: 'Tile Yields', control: 'number' },
+      commercebonus: { group: 'Tile Yields', control: 'number' }
+    }
+  },
+  technologies: {
+    order: ['cost', 'era', 'prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4', 'x', 'y'],
+    fields: {
+      cost: { group: 'Core', control: 'number', min: 0 },
+      era: { group: 'Core', control: 'reference' },
+      prerequisite1: { group: 'Prerequisites', control: 'reference' },
+      prerequisite2: { group: 'Prerequisites', control: 'reference' },
+      prerequisite3: { group: 'Prerequisites', control: 'reference' },
+      prerequisite4: { group: 'Prerequisites', control: 'reference' },
+      x: { group: 'Tech Tree Position', control: 'number', min: 0 },
+      y: { group: 'Tech Tree Position', control: 'number', min: 0 }
+    }
+  },
+  improvements: {
+    order: ['reqadvance', 'obsoleteby', 'reqresource1', 'reqresource2', 'reqgovernment', 'reqimprovement', 'unitproduced', 'unitfrequency'],
+    fields: {
+      reqadvance: { group: 'Prerequisites', control: 'reference' },
+      obsoleteby: { group: 'Prerequisites', control: 'reference' },
+      reqresource1: { group: 'Prerequisites', control: 'reference' },
+      reqresource2: { group: 'Prerequisites', control: 'reference' },
+      reqgovernment: { group: 'Prerequisites', control: 'reference' },
+      reqimprovement: { group: 'Prerequisites', control: 'reference' },
+      unitproduced: { group: 'Auto-Produced Unit', control: 'reference' },
+      unitfrequency: { group: 'Auto-Produced Unit', control: 'number', min: 0 }
+    }
+  },
+  governments: {
+    order: ['prerequisitetechnology', 'corruption', 'warweariness', 'hurrying', 'freeunitspertown', 'freeunitspercity', 'freeunitspermetropolis', 'costperunit'],
+    fields: {
+      prerequisitetechnology: { group: 'Core', control: 'reference' },
+      corruption: { group: 'Core', control: 'select' },
+      warweariness: { group: 'Core', control: 'select' },
+      hurrying: { group: 'Core', control: 'select' },
+      freeunitspertown: { group: 'Unit Support', control: 'number' },
+      freeunitspercity: { group: 'Unit Support', control: 'number' },
+      freeunitspermetropolis: { group: 'Unit Support', control: 'number' },
+      costperunit: { group: 'Unit Support', control: 'number' }
+    }
+  },
+  civilizations: {
+    order: ['leadername', 'leadertitle', 'culturegroup', 'favoritegovernment', 'shunnedgovernment', 'freetech1index', 'freetech2index', 'freetech3index', 'freetech4index', 'aggressionlevel'],
+    fields: {
+      leadername: { group: 'Identity', control: 'text' },
+      leadertitle: { group: 'Identity', control: 'text' },
+      culturegroup: { group: 'Identity', control: 'select' },
+      favoritegovernment: { group: 'Governments', control: 'reference' },
+      shunnedgovernment: { group: 'Governments', control: 'reference' },
+      freetech1index: { group: 'Free Techs', control: 'reference' },
+      freetech2index: { group: 'Free Techs', control: 'reference' },
+      freetech3index: { group: 'Free Techs', control: 'reference' },
+      freetech4index: { group: 'Free Techs', control: 'reference' },
+      aggressionlevel: { group: 'AI', control: 'select' }
+    }
+  },
+  units: {
+    order: ['requiredtech', 'upgradeto', 'requiredresource1', 'requiredresource2', 'requiredresource3', 'unitclass', 'attack', 'defense', 'bombard', 'cost'],
+    fields: {
+      requiredtech: { group: 'Prerequisites', control: 'reference' },
+      upgradeto: { group: 'Upgrades', control: 'reference' },
+      requiredresource1: { group: 'Prerequisites', control: 'reference' },
+      requiredresource2: { group: 'Prerequisites', control: 'reference' },
+      requiredresource3: { group: 'Prerequisites', control: 'reference' },
+      unitclass: { group: 'Identity', control: 'select' },
+      attack: { group: 'Combat', control: 'number', min: 0 },
+      defense: { group: 'Combat', control: 'number', min: 0 },
+      bombard: { group: 'Combat', control: 'number', min: 0 },
+      cost: { group: 'Costs', control: 'number', min: 0 }
+    }
+  }
+};
+
+function shouldHideBiqField(tabKey, field) {
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const canon = base.replace(/[^a-z0-9]/g, '');
+  if (!base) return true;
+  if ((BIQ_FIELD_HIDDEN.all && (BIQ_FIELD_HIDDEN.all.has(base) || BIQ_FIELD_HIDDEN.all.has(canon)))) return true;
+  const tabHidden = BIQ_FIELD_HIDDEN[tabKey];
+  return !!(tabHidden && (tabHidden.has(base) || tabHidden.has(canon)));
+}
+
+function getRuleFieldSpec(tabKey, field) {
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const schema = REFERENCE_RULE_SCHEMAS[tabKey] || null;
+  if (!schema || !schema.fields) return null;
+  return schema.fields[base] || null;
+}
+
+function getRuleFieldGroup(tabKey, field) {
+  const spec = getRuleFieldSpec(tabKey, field);
+  if (spec && spec.group) return spec.group;
+  return 'Other';
+}
+
+function getRuleFieldOrder(tabKey, field) {
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const schema = REFERENCE_RULE_SCHEMAS[tabKey] || null;
+  if (!schema || !Array.isArray(schema.order)) return Number.MAX_SAFE_INTEGER;
+  const idx = schema.order.indexOf(base);
+  return idx >= 0 ? idx : Number.MAX_SAFE_INTEGER;
+}
+
+function getReadableSetterReason(field) {
+  const setter = String(field && field.expectedSetter || '').trim();
+  if (!setter) return 'No writable BIQ bridge setter found.';
+  return `No writable BIQ bridge setter found for ${setter}.`;
+}
+
+function makeIndexOptionsForTab(tabKey) {
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+  if (!tab || !Array.isArray(tab.entries)) return [];
+  return tab.entries.map((entry, idx) => ({
+    value: String(Number.isFinite(entry.biqIndex) ? entry.biqIndex : idx),
+    label: String(entry.name || ''),
+    thumbPath: entry.thumbPath || '',
+    entry
+  }));
+}
+
+function getReferenceOptionsForField(tabKey, field) {
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const map = BIQ_FIELD_REFS[tabKey] || {};
+  const target = map[base];
+  if (!target) return [];
+  if (target === 'eras') {
+    const names = ['Ancient', 'Middle Ages', 'Industrial', 'Modern'];
+    return names.map((name, idx) => ({ value: String(idx), label: `${name} (${idx})` }));
+  }
+  return makeIndexOptionsForTab(target);
+}
+
+function getEnumOptionsForField(tabKey, field) {
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const enums = BIQ_FIELD_ENUMS[tabKey] || {};
+  return enums[base] || [];
+}
+
+function formatFieldValueForDisplay(tabKey, field) {
+  const raw = String(field && field.value || '').trim();
+  if (!raw) return '(none)';
+  const parsed = parseIntFromDisplayValue(raw);
+  const enumOptions = getEnumOptionsForField(tabKey, field);
+  if (parsed != null && enumOptions.length > 0) {
+    const m = enumOptions.find((opt) => Number.parseInt(String(opt.value), 10) === parsed);
+    if (m) return m.label;
+  }
+  const refOptions = getReferenceOptionsForField(tabKey, field);
+  if (parsed != null && refOptions.length > 0) {
+    const m = refOptions.find((opt) => Number.parseInt(String(opt.value), 10) === parsed);
+    if (m) return m.label;
+  }
+  if (raw === '-1') return '(none)';
+  return raw;
+}
+
+function getTechEntries() {
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.technologies;
+  if (!tab || !Array.isArray(tab.entries)) return [];
+  return tab.entries;
+}
+
+function getTechLabelByIndex(index) {
+  if (!Number.isFinite(index) || index < 0) return '(none)';
+  const tech = getTechEntries().find((t, fallbackIdx) => {
+    const biqIdx = Number.isFinite(t.biqIndex) ? t.biqIndex : fallbackIdx;
+    return biqIdx === index;
+  });
+  return tech ? String(tech.name || '') : String(index);
+}
+
+function findOptionByValue(options, value) {
+  const normalized = String(value ?? '').trim();
+  if (!Array.isArray(options)) return null;
+  return options.find((opt) => String(opt && opt.value) === normalized) || null;
+}
+
+function createReferencePicker(config) {
+  const opts = config || {};
+  const options = Array.isArray(opts.options) ? opts.options : [];
+  const targetTabKey = String(opts.targetTabKey || '').trim();
+  const noneLabel = String(opts.noneLabel || '(none)');
+  const searchPlaceholder = String(opts.searchPlaceholder || 'Search...');
+  const currentValue = String(opts.currentValue ?? '-1');
+  const onSelect = typeof opts.onSelect === 'function' ? opts.onSelect : null;
+
+  const normalizedOptions = [];
+  normalizedOptions.push({ value: '-1', label: noneLabel, entry: null });
+  options.forEach((opt) => {
+    if (!opt) return;
+    const value = String(opt.value ?? '');
+    if (value === '-1') return;
+    normalizedOptions.push({
+      value,
+      label: String(opt.label || value),
+      entry: opt.entry || null
+    });
+  });
+
+  const wrap = document.createElement('div');
+  wrap.className = 'tech-picker';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'tech-picker-btn';
+  const buttonThumb = document.createElement('span');
+  buttonThumb.className = 'entry-thumb';
+  const buttonText = document.createElement('span');
+  const renderButton = (value) => {
+    const selected = findOptionByValue(normalizedOptions, value) || normalizedOptions[0];
+    buttonText.textContent = selected ? String(selected.label || noneLabel) : noneLabel;
+    buttonThumb.innerHTML = '';
+    if (selected && selected.entry && targetTabKey) {
+      loadReferenceListThumbnail(targetTabKey, selected.entry, buttonThumb);
+    }
+  };
+  renderButton(currentValue);
+  button.appendChild(buttonThumb);
+  button.appendChild(buttonText);
+  wrap.appendChild(button);
+
+  const menu = document.createElement('div');
+  menu.className = 'tech-picker-menu hidden';
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.className = 'tech-picker-search';
+  search.placeholder = searchPlaceholder;
+  menu.appendChild(search);
+  const listWrap = document.createElement('div');
+  listWrap.className = 'tech-picker-list';
+  normalizedOptions.forEach((opt) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'tech-picker-row';
+    row.dataset.search = String(opt.label || '').toLowerCase();
+    if (opt.entry && targetTabKey) {
+      const thumb = document.createElement('span');
+      thumb.className = 'entry-thumb';
+      row.appendChild(thumb);
+      loadReferenceListThumbnail(targetTabKey, opt.entry, thumb);
+    } else {
+      const spacer = document.createElement('span');
+      spacer.className = 'entry-thumb';
+      row.appendChild(spacer);
+    }
+    const text = document.createElement('span');
+    text.textContent = String(opt.label || '');
+    row.appendChild(text);
+    row.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      renderButton(opt.value);
+      menu.classList.add('hidden');
+      if (onSelect) onSelect(opt.value);
+    });
+    listWrap.appendChild(row);
+  });
+  menu.appendChild(listWrap);
+  wrap.appendChild(menu);
+
+  button.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    menu.classList.toggle('hidden');
+    if (!menu.classList.contains('hidden')) {
+      search.value = '';
+      Array.from(listWrap.querySelectorAll('.tech-picker-row')).forEach((row) => row.classList.remove('hidden'));
+      search.focus();
+    }
+  });
+  search.addEventListener('input', () => {
+    const needle = search.value.trim().toLowerCase();
+    Array.from(listWrap.querySelectorAll('.tech-picker-row')).forEach((row) => {
+      const hay = String(row.dataset.search || '');
+      row.classList.toggle('hidden', !!needle && !hay.includes(needle));
+    });
+  });
+  document.addEventListener('click', (ev) => {
+    if (!wrap.contains(ev.target)) menu.classList.add('hidden');
+  });
+  return wrap;
+}
+
+function isLikelyBooleanField(field) {
+  const raw = String(field && field.value || '').toLowerCase().trim();
+  if (raw === 'true' || raw === 'false') return true;
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  return base.startsWith('is') || base.startsWith('can') || base.startsWith('allow') || base.startsWith('enable') || base.startsWith('has');
+}
+
+function getBiqFieldByBaseKey(entry, baseKey) {
+  const target = String(baseKey || '').toLowerCase();
+  if (!entry || !Array.isArray(entry.biqFields) || !target) return null;
+  return entry.biqFields.find((f) => String(f.baseKey || f.key || '').toLowerCase() === target) || null;
+}
+
+function buildIdentityTechContext(tabKey, entry) {
+  const ctx = {
+    label: 'Tech Notes',
+    values: Array.isArray(entry && entry.techDependencies) ? entry.techDependencies : [],
+    fields: [],
+    editable: false
+  };
+  if (!entry || !Array.isArray(entry.biqFields)) return ctx;
+  if (tabKey === 'civilizations') {
+    const keys = ['freetech1index', 'freetech2index', 'freetech3index', 'freetech4index'];
+    const fields = keys.map((k) => getBiqFieldByBaseKey(entry, k)).filter(Boolean);
+    ctx.label = 'Starting Techs';
+    ctx.fields = fields;
+    ctx.values = fields.map((f) => String(f.value || '').trim()).filter((v) => v && !/^none$/i.test(v) && v !== '-1');
+    ctx.editable = fields.some((f) => !!f.editable);
+    return ctx;
+  }
+  if (tabKey === 'technologies') {
+    const keys = ['prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4'];
+    const fields = keys.map((k) => getBiqFieldByBaseKey(entry, k)).filter(Boolean);
+    ctx.label = 'Prerequisite Techs';
+    ctx.fields = fields;
+    ctx.values = fields.map((f) => String(f.value || '').trim()).filter((v) => v && !/^none$/i.test(v) && v !== '-1');
+    ctx.editable = fields.some((f) => !!f.editable);
+    return ctx;
+  }
+  if (tabKey === 'resources') {
+    const f = getBiqFieldByBaseKey(entry, 'prerequisite');
+    if (f) {
+      ctx.label = 'Required Tech';
+      ctx.fields = [f];
+      ctx.values = String(f.value || '').trim() && !/^none$/i.test(String(f.value || '')) ? [String(f.value || '').trim()] : [];
+      ctx.editable = !!f.editable;
+    }
+    return ctx;
+  }
+  if (tabKey === 'improvements') {
+    const req = getBiqFieldByBaseKey(entry, 'reqadvance');
+    const obs = getBiqFieldByBaseKey(entry, 'obsoleteby');
+    const fields = [req, obs].filter(Boolean);
+    ctx.label = 'Tech Requirements';
+    ctx.fields = fields;
+    ctx.values = fields
+      .map((f) => String(f.value || '').trim())
+      .filter((v) => v && !/^none$/i.test(v) && v !== '-1');
+    ctx.editable = fields.some((f) => !!f.editable);
+    return ctx;
+  }
+  if (tabKey === 'units') {
+    const f = getBiqFieldByBaseKey(entry, 'requiredtech');
+    if (f) {
+      ctx.label = 'Required Tech';
+      ctx.fields = [f];
+      ctx.values = String(f.value || '').trim() && !/^none$/i.test(String(f.value || '')) ? [String(f.value || '').trim()] : [];
+      ctx.editable = !!f.editable;
+    }
+    return ctx;
+  }
+  if (tabKey === 'governments') {
+    const f = getBiqFieldByBaseKey(entry, 'prerequisitetechnology');
+    if (f) {
+      ctx.label = 'Required Tech';
+      ctx.fields = [f];
+      ctx.values = String(f.value || '').trim() && !/^none$/i.test(String(f.value || '')) ? [String(f.value || '').trim()] : [];
+      ctx.editable = !!f.editable;
+    }
+    return ctx;
+  }
+  return ctx;
+}
+
+function formatIdentityTechValues(techCtx) {
+  if (!techCtx || !Array.isArray(techCtx.fields) || techCtx.fields.length === 0) {
+    return Array.isArray(techCtx && techCtx.values) ? techCtx.values : [];
+  }
+  return techCtx.fields
+    .map((field) => {
+      const idx = parseIntFromDisplayValue(field.value);
+      return idx == null || idx < 0 ? '' : getTechLabelByIndex(idx);
+    })
+    .filter(Boolean);
+}
+
+function createTechIdentityPicker(field, onChange) {
+  const techOptions = getTechEntries().map((tech, fallbackIdx) => ({
+    value: String(Number.isFinite(tech.biqIndex) ? tech.biqIndex : fallbackIdx),
+    label: String(tech.name || ''),
+    entry: tech
+  }));
+  return createReferencePicker({
+    options: techOptions,
+    targetTabKey: 'technologies',
+    currentValue: field.value,
+    searchPlaceholder: 'Search tech...',
+    noneLabel: '(none)',
+    onSelect: (value) => {
+      rememberUndoSnapshot();
+      field.value = String(value);
+      if (onChange) onChange();
+    }
+  });
+}
+
 function mapCivilopediaKeyToTabKey(civilopediaKey) {
   const key = String(civilopediaKey || '').toUpperCase();
   if (key.startsWith('RACE_')) return 'civilizations';
@@ -1661,10 +2400,10 @@ function navigateToCivilopediaKey(civilopediaKey) {
       state.referenceImprovementKind[tabKey] = 'all';
     }
   }
-  state.activeTab = tabKey;
-  state.referenceSelection[tabKey] = idx;
-  renderTabs();
-  renderActiveTab();
+  navigateWithHistory(() => {
+    state.activeTab = tabKey;
+    state.referenceSelection[tabKey] = idx;
+  }, { preserveTabScroll: false });
   return true;
 }
 
@@ -1707,6 +2446,184 @@ function renderCivilopediaRichText(container, text) {
   });
 }
 
+function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, emptyText }) {
+  const editorKey = `${String(entry && entry.civilopediaKey || '').toUpperCase()}:${fieldKey}`;
+  const isEditing = !!state.civilopediaEditorOpen[editorKey];
+  const block = document.createElement('div');
+  block.className = 'section-card source-section';
+  block.style.marginTop = '8px';
+  const title = document.createElement('div');
+  title.className = 'section-top';
+  const left = document.createElement('strong');
+  left.textContent = titleText;
+  title.appendChild(left);
+  const controls = document.createElement('div');
+  controls.className = 'civilopedia-editor-controls';
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.className = 'ghost civilopedia-edit-toggle';
+  editBtn.textContent = isEditing ? 'Done' : 'Edit';
+  editBtn.addEventListener('click', () => {
+    state.civilopediaEditorOpen[editorKey] = !isEditing;
+    renderActiveTab({ preserveTabScroll: true });
+  });
+  controls.appendChild(editBtn);
+  title.appendChild(controls);
+  attachRichTooltip(title, formatSourceInfo(sourceMeta, 'Civilopedia'));
+  block.appendChild(title);
+
+  if (!isEditing) {
+    const value = String(entry[fieldKey] || '').trim();
+    if (value) {
+      renderCivilopediaRichText(block, value);
+    } else {
+      const hint = document.createElement('p');
+      hint.className = 'hint';
+      hint.textContent = emptyText || '(empty)';
+      block.appendChild(hint);
+    }
+    return block;
+  }
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 'civilopedia-editor-toolbar';
+  const insertLinkBtn = document.createElement('button');
+  insertLinkBtn.type = 'button';
+  insertLinkBtn.className = 'ghost civilopedia-link-btn';
+  insertLinkBtn.textContent = 'Insert Link';
+  toolbar.appendChild(insertLinkBtn);
+
+  if (typeof state.civilopediaPreviewVisible[editorKey] === 'undefined') {
+    state.civilopediaPreviewVisible[editorKey] = true;
+  }
+  const previewBtn = document.createElement('button');
+  previewBtn.type = 'button';
+  previewBtn.className = 'ghost civilopedia-preview-btn';
+  previewBtn.textContent = state.civilopediaPreviewVisible[editorKey] ? 'Hide Preview' : 'Show Preview';
+  previewBtn.addEventListener('click', () => {
+    state.civilopediaPreviewVisible[editorKey] = !state.civilopediaPreviewVisible[editorKey];
+    renderActiveTab({ preserveTabScroll: true });
+  });
+  toolbar.appendChild(previewBtn);
+  block.appendChild(toolbar);
+
+  const linkPanel = document.createElement('div');
+  linkPanel.className = 'civilopedia-link-panel hidden';
+  const linkSearch = document.createElement('input');
+  linkSearch.type = 'search';
+  linkSearch.placeholder = 'Search Civopedia key or name...';
+  linkSearch.className = 'civilopedia-link-search';
+  linkPanel.appendChild(linkSearch);
+  const linkList = document.createElement('div');
+  linkList.className = 'civilopedia-link-list';
+  linkPanel.appendChild(linkList);
+  block.appendChild(linkPanel);
+
+  const editor = document.createElement('textarea');
+  editor.className = 'civilopedia-editor';
+  editor.rows = 7;
+  editor.placeholder = emptyText || '';
+  editor.value = String(entry[fieldKey] || '');
+  editor.addEventListener('input', () => {
+    rememberUndoSnapshot();
+    entry[fieldKey] = editor.value;
+    setDirty(true);
+  });
+  block.appendChild(editor);
+
+  const tokenOptions = [];
+  const tabs = ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units'];
+  tabs.forEach((tabKey) => {
+    const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+    if (!tab || !Array.isArray(tab.entries)) return;
+    tab.entries.forEach((candidate) => {
+      tokenOptions.push({
+        label: String(candidate.name || ''),
+        key: String(candidate.civilopediaKey || ''),
+        tabKey,
+        entry: candidate
+      });
+    });
+  });
+  tokenOptions.sort((a, b) => {
+    const nameCmp = a.label.localeCompare(b.label, 'en', { sensitivity: 'base' });
+    if (nameCmp !== 0) return nameCmp;
+    return a.key.localeCompare(b.key, 'en', { sensitivity: 'base' });
+  });
+
+  const renderLinkRows = () => {
+    const needle = String(linkSearch.value || '').trim().toLowerCase();
+    linkList.innerHTML = '';
+    const shown = tokenOptions.filter((opt) => {
+      if (!needle) return true;
+      return `${opt.label} ${opt.key}`.toLowerCase().includes(needle);
+    }).slice(0, 120);
+    shown.forEach((opt) => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'civilopedia-link-row';
+      const thumb = document.createElement('span');
+      thumb.className = 'entry-thumb';
+      loadReferenceListThumbnail(opt.tabKey, opt.entry, thumb);
+      row.appendChild(thumb);
+      const text = document.createElement('span');
+      text.className = 'civilopedia-link-row-text';
+      text.textContent = `${opt.label} (${opt.key})`;
+      row.appendChild(text);
+      row.addEventListener('click', () => {
+        const safeLabel = String(opt.label || '').replace(/[<>=$]/g, '').trim() || String(opt.key || '');
+        const token = `$LINK<${safeLabel}=${opt.key}>`;
+        const start = editor.selectionStart ?? editor.value.length;
+        const end = editor.selectionEnd ?? editor.value.length;
+        const before = editor.value.slice(0, start);
+        const after = editor.value.slice(end);
+        const spacerBefore = before && !/\s$/.test(before) ? ' ' : '';
+        const spacerAfter = after && !/^\s/.test(after) ? ' ' : '';
+        const next = `${before}${spacerBefore}${token}${spacerAfter}${after}`;
+        rememberUndoSnapshot();
+        editor.value = next;
+        entry[fieldKey] = next;
+        setDirty(true);
+        linkPanel.classList.add('hidden');
+        renderActiveTab({ preserveTabScroll: true });
+      });
+      linkList.appendChild(row);
+    });
+    if (shown.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'hint';
+      empty.textContent = 'No matching entries.';
+      linkList.appendChild(empty);
+    }
+  };
+  renderLinkRows();
+  linkSearch.addEventListener('input', renderLinkRows);
+
+  insertLinkBtn.addEventListener('click', () => {
+    const nextOpen = linkPanel.classList.contains('hidden');
+    linkPanel.classList.toggle('hidden', !nextOpen);
+    if (nextOpen) {
+      linkSearch.value = '';
+      renderLinkRows();
+      linkSearch.focus();
+    }
+  });
+
+  document.addEventListener('click', (ev) => {
+    if (!block.contains(ev.target)) {
+      linkPanel.classList.add('hidden');
+    }
+  });
+
+  if (state.civilopediaPreviewVisible[editorKey]) {
+    const preview = document.createElement('div');
+    preview.className = 'civilopedia-preview';
+    renderCivilopediaRichText(preview, String(entry[fieldKey] || '').trim());
+    block.appendChild(preview);
+  }
+  return block;
+}
+
 function renderReferenceTab(tab, tabKey) {
   const wrap = document.createElement('div');
   wrap.className = 'section-editor';
@@ -1714,7 +2631,8 @@ function renderReferenceTab(tab, tabKey) {
   const header = document.createElement('div');
   header.className = 'section-editor-header sticky';
   header.appendChild(createIcon(TAB_ICONS[tabKey]));
-  header.insertAdjacentHTML('beforeend', `<h3>${tab.title}</h3><span class="source-tag">read-only</span>`);
+  const referenceEditable = isScenarioMode();
+  header.insertAdjacentHTML('beforeend', `<h3>${tab.title}</h3><span class="source-tag">${referenceEditable ? 'editable (scenario)' : 'read-only'}</span>`);
   wrap.appendChild(header);
 
   const helperRow = document.createElement('div');
@@ -1722,8 +2640,8 @@ function renderReferenceTab(tab, tabKey) {
   const helper = document.createElement('p');
   helper.className = 'hint hint-compact';
   helper.textContent = isScenarioMode()
-    ? 'Read-only Civilopedia view with precedence Scenario > Conquests > civ3PTW > vanilla.'
-    : 'Read-only Civilopedia view with precedence Conquests > civ3PTW > vanilla.';
+    ? 'Scenario mode: BIQ rules and Civilopedia text are editable. Hover any field for source + write target.'
+    : 'Read-only Civilopedia view with precedence Conquests > civ3PTW > vanilla. Hover fields for source details.';
   helperRow.appendChild(helper);
   if (state.referenceNotice && state.referenceNotice.text) {
     const note = document.createElement('span');
@@ -1807,10 +2725,11 @@ function renderReferenceTab(tab, tabKey) {
       state.referenceListScrollTop[tabKey] = listPane.scrollTop;
     });
     itemBtn.addEventListener('click', () => {
-      state.referenceListScrollTop[tabKey] = listPane.scrollTop;
-      state.referenceSelection[tabKey] = baseIndex;
-      state.tabContentScrollTop = el.tabContent.scrollTop;
-      renderActiveTab({ preserveTabScroll: true });
+      navigateWithHistory(() => {
+        state.referenceListScrollTop[tabKey] = listPane.scrollTop;
+        state.referenceSelection[tabKey] = baseIndex;
+        state.tabContentScrollTop = el.tabContent.scrollTop;
+      }, { preserveTabScroll: true });
     });
     listPane.appendChild(itemBtn);
   });
@@ -1874,43 +2793,266 @@ function renderReferenceTab(tab, tabKey) {
     artCol.appendChild(previewWrap);
     loadPreviewsForReferenceEntry(tabKey, entry, previewWrap);
 
-    const meta = document.createElement('div');
-    meta.className = 'kv-grid';
-    meta.innerHTML = `
-      <div class="field-meta"><strong>Key:</strong> ${entry.civilopediaKey}</div>
-      <div class="field-meta"><strong>Tech Dependencies:</strong> ${formatReferenceList(entry.techDependencies)}</div>
-      <div class="field-meta"><strong>Animation:</strong> ${entry.animationName || '(none)'}</div>
-      <div class="field-meta"><strong>Icon Paths:</strong> ${formatReferenceList(entry.iconPaths)}</div>
-    `;
+    const identityMeta = document.createElement('div');
+    identityMeta.className = 'section-card source-section';
+    const deferredInfoBlocks = [];
+    const identityTitle = document.createElement('div');
+    identityTitle.className = 'section-top';
+    identityTitle.innerHTML = '<strong>Identity</strong>';
+    identityMeta.appendChild(identityTitle);
+    const identityGrid = document.createElement('div');
+    identityGrid.className = 'kv-grid';
+    const keyLine = document.createElement('div');
+    keyLine.className = 'field-meta';
+    keyLine.innerHTML = `<strong>Key:</strong> ${entry.civilopediaKey}`;
+    attachRichTooltip(keyLine, formatSourceInfo({ source: 'Derived', readPath: '', writePath: '' }, 'Derived'));
+    identityGrid.appendChild(keyLine);
+    const depsLine = document.createElement('div');
+    depsLine.className = 'field-meta';
+    const techCtx = buildIdentityTechContext(tabKey, entry);
+    const identityValues = formatIdentityTechValues(techCtx);
+    depsLine.innerHTML = `<strong>${techCtx.label}:</strong>${referenceEditable && techCtx.fields.length > 0 ? '' : ` ${formatReferenceList(identityValues)}`}`;
+    attachRichTooltip(depsLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
+    identityGrid.appendChild(depsLine);
+    if (referenceEditable && techCtx.editable && techCtx.fields.length > 0) {
+      const techEditRow = document.createElement('div');
+      techEditRow.className = 'rule-control';
+      techCtx.fields.forEach((field) => {
+        const picker = createTechIdentityPicker(field, () => {
+          const nextValues = formatIdentityTechValues(techCtx);
+          depsLine.innerHTML = `<strong>${techCtx.label}:</strong> ${formatReferenceList(
+            nextValues
+          )}`;
+          setDirty(true);
+        });
+        techEditRow.appendChild(picker);
+      });
+      identityGrid.appendChild(techEditRow);
+    }
+    identityMeta.appendChild(identityGrid);
+    textCol.appendChild(identityMeta);
+
+    const artMeta = document.createElement('div');
+    artMeta.className = 'section-card source-section';
+    const artTitle = document.createElement('div');
+    artTitle.className = 'section-top';
+    artTitle.innerHTML = '<strong>Art & Icons</strong>';
+    attachRichTooltip(artTitle, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.iconPaths, 'PediaIcons'));
+    artMeta.appendChild(artTitle);
+    const artGrid = document.createElement('div');
+    artGrid.className = 'kv-grid';
+    const animationLine = document.createElement('div');
+    animationLine.className = 'field-meta';
+    animationLine.innerHTML = `<strong>Animation:</strong> ${entry.animationName || '(none)'}`;
+    attachRichTooltip(animationLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.animationName, 'PediaIcons'));
+    artGrid.appendChild(animationLine);
+    const iconLine = document.createElement('div');
+    iconLine.className = 'field-meta';
+    iconLine.innerHTML = `<strong>Icon Paths:</strong> ${formatReferenceList(entry.iconPaths)}`;
+    attachRichTooltip(iconLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.iconPaths, 'PediaIcons'));
+    artGrid.appendChild(iconLine);
     if (tabKey === 'civilizations') {
       const civMeta = document.createElement('div');
       civMeta.className = 'field-meta';
       civMeta.innerHTML = `<strong>Race Paths:</strong> ${formatReferenceList(entry.racePaths)}`;
-      meta.appendChild(civMeta);
+      artGrid.appendChild(civMeta);
     }
-    textCol.appendChild(meta);
+    artMeta.appendChild(artGrid);
+    deferredInfoBlocks.push(artMeta);
 
-    if (entry.overview) {
-      const overviewBlock = document.createElement('div');
-      overviewBlock.className = 'field-description';
-      overviewBlock.style.marginTop = '8px';
-      const title = document.createElement('div');
-      title.className = 'field-meta';
-      title.textContent = 'Overview';
-      overviewBlock.appendChild(title);
-      renderCivilopediaRichText(overviewBlock, entry.overview);
-      textCol.appendChild(overviewBlock);
+    if (Array.isArray(entry.biqFields) && entry.biqFields.length > 0) {
+      const rulesMeta = document.createElement('div');
+      rulesMeta.className = 'section-card source-section';
+      const rulesTitle = document.createElement('div');
+      rulesTitle.className = 'section-top';
+      rulesTitle.innerHTML = `<strong>Rules (BIQ)</strong><span class="hint">From BIQ section: ${entry.biqSectionCode || '(unknown)'}</span>`;
+      attachRichTooltip(rulesTitle, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
+      rulesMeta.appendChild(rulesTitle);
+      const rulesGrid = document.createElement('div');
+      rulesGrid.className = 'kv-grid';
+      const visibleRuleFields = entry.biqFields
+        .filter((field) => !shouldHideBiqField(tabKey, field))
+        .sort((a, b) => {
+          const ao = getRuleFieldOrder(tabKey, a);
+          const bo = getRuleFieldOrder(tabKey, b);
+          if (ao !== bo) return ao - bo;
+          return String(a.label || a.key).localeCompare(String(b.label || b.key), 'en', { sensitivity: 'base' });
+        });
+      const groups = new Map();
+      visibleRuleFields.forEach((field) => {
+        const group = getRuleFieldGroup(tabKey, field);
+        if (!groups.has(group)) groups.set(group, []);
+        groups.get(group).push(field);
+      });
+      for (const [groupName, fields] of groups.entries()) {
+        const groupCard = document.createElement('div');
+        groupCard.className = 'rule-group-card';
+        const groupTitle = document.createElement('div');
+        groupTitle.className = 'rule-group-title';
+        groupTitle.textContent = groupName;
+        groupCard.appendChild(groupTitle);
+        fields.forEach((field) => {
+          const row = document.createElement('div');
+          row.className = 'rule-row';
+          const label = document.createElement('label');
+          label.className = 'field-meta';
+          label.textContent = field.label || field.key;
+          attachRichTooltip(label, `${formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ')}\nField: ${field.key}`);
+          row.appendChild(label);
+
+          const controlWrap = document.createElement('div');
+          controlWrap.className = 'rule-control';
+          const spec = getRuleFieldSpec(tabKey, field) || {};
+          const enumOptions = getEnumOptionsForField(tabKey, field);
+          const refOptions = getReferenceOptionsForField(tabKey, field);
+          const desiredControl = spec.control || '';
+
+          if (referenceEditable) {
+            const hasEnumOptions = enumOptions.length > 0;
+            const hasRefOptions = refOptions.length > 0;
+            const useReferencePicker = hasRefOptions && (desiredControl === 'reference' || (!desiredControl && !hasEnumOptions));
+
+            if (useReferencePicker) {
+              const labelText = String(field.label || field.key || 'value').trim();
+              const picker = createReferencePicker({
+                options: refOptions,
+                targetTabKey: (BIQ_FIELD_REFS[tabKey] || {})[String(field.baseKey || field.key || '').toLowerCase()] || '',
+                currentValue: field.value,
+                searchPlaceholder: `Search ${labelText}...`,
+                noneLabel: '(none)',
+                onSelect: (value) => {
+                  rememberUndoSnapshot();
+                  field.value = String(value);
+                  setDirty(true);
+                }
+              });
+              controlWrap.appendChild(picker);
+            } else if (desiredControl === 'select' || desiredControl === 'reference' || hasEnumOptions || hasRefOptions) {
+              const options = hasEnumOptions ? enumOptions : refOptions;
+              const select = document.createElement('select');
+              const hasNone = options.some((opt) => String(opt.value) === '-1');
+              if (!hasNone) {
+                const empty = document.createElement('option');
+                empty.value = '-1';
+                empty.textContent = '(none)';
+                select.appendChild(empty);
+              }
+              options.forEach((opt) => {
+                const o = document.createElement('option');
+                o.value = String(opt.value);
+                o.textContent = String(opt.label || `${opt.value}`);
+                select.appendChild(o);
+              });
+              const parsed = parseIntFromDisplayValue(field.value);
+              select.value = parsed == null ? '-1' : String(parsed);
+              select.addEventListener('change', () => {
+                rememberUndoSnapshot();
+                const selectedOpt = options.find((opt) => String(opt.value) === String(select.value));
+                field.value = selectedOpt ? String(selectedOpt.value) : '-1';
+                setDirty(true);
+              });
+              controlWrap.appendChild(select);
+            } else if (desiredControl === 'bool' || isLikelyBooleanField(field)) {
+              const checkWrap = document.createElement('label');
+              checkWrap.className = 'bool-toggle';
+              const check = document.createElement('input');
+              check.type = 'checkbox';
+              check.checked = String(field.value || '').toLowerCase() === 'true';
+              const t = document.createElement('span');
+              t.textContent = check.checked ? 'Enabled' : 'Disabled';
+              check.addEventListener('change', () => {
+                rememberUndoSnapshot();
+                field.value = check.checked ? 'true' : 'false';
+                t.textContent = check.checked ? 'Enabled' : 'Disabled';
+                setDirty(true);
+              });
+              checkWrap.appendChild(check);
+              checkWrap.appendChild(t);
+              controlWrap.appendChild(checkWrap);
+            } else if (desiredControl === 'number' || (parseIntFromDisplayValue(field.value) != null && !/[A-Za-z]/.test(String(field.value || '').replace(/\(-?\d+\)\s*$/, '')))) {
+              const num = document.createElement('input');
+              num.type = 'number';
+              if (Number.isFinite(spec.min)) num.min = String(spec.min);
+              if (Number.isFinite(spec.max)) num.max = String(spec.max);
+              const n = parseIntFromDisplayValue(field.value);
+              num.value = n == null ? '' : String(n);
+              num.addEventListener('input', () => {
+                rememberUndoSnapshot();
+                field.value = num.value;
+                setDirty(true);
+              });
+              controlWrap.appendChild(num);
+            } else {
+              const input = document.createElement('input');
+              input.type = 'text';
+              input.value = String(field.value || '');
+              input.addEventListener('input', () => {
+                rememberUndoSnapshot();
+                field.value = input.value;
+                setDirty(true);
+              });
+              controlWrap.appendChild(input);
+            }
+          } else {
+            const text = document.createElement('div');
+            text.className = 'field-meta';
+            text.textContent = formatFieldValueForDisplay(tabKey, field);
+            controlWrap.appendChild(text);
+          }
+          row.appendChild(controlWrap);
+          groupCard.appendChild(row);
+        });
+        rulesGrid.appendChild(groupCard);
+      }
+      rulesMeta.appendChild(rulesGrid);
+      deferredInfoBlocks.push(rulesMeta);
     }
 
-    const textBlock = document.createElement('div');
-    textBlock.className = 'field-description';
-    textBlock.style.marginTop = '8px';
-    const descTitle = document.createElement('div');
-    descTitle.className = 'field-meta';
-    descTitle.textContent = 'Civilopedia';
-    textBlock.appendChild(descTitle);
-    renderCivilopediaRichText(textBlock, entry.description || '(No Civilopedia body found)');
-    textCol.appendChild(textBlock);
+    if (referenceEditable) {
+      textCol.appendChild(createCivilopediaEditorBlock({
+        entry,
+        fieldKey: 'overview',
+        titleText: 'Overview',
+        sourceMeta: entry.sourceMeta && entry.sourceMeta.overview,
+        emptyText: 'Overview text'
+      }));
+      textCol.appendChild(createCivilopediaEditorBlock({
+        entry,
+        fieldKey: 'description',
+        titleText: 'Civilopedia',
+        sourceMeta: entry.sourceMeta && entry.sourceMeta.description,
+        emptyText: 'Civilopedia description'
+      }));
+    } else {
+      if (entry.overview) {
+        const overviewBlock = document.createElement('div');
+        overviewBlock.className = 'section-card source-section';
+        overviewBlock.style.marginTop = '8px';
+        const title = document.createElement('div');
+        title.className = 'section-top';
+        const left = document.createElement('strong');
+        left.textContent = 'Overview';
+        title.appendChild(left);
+        attachRichTooltip(title, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.overview, 'Civilopedia'));
+        overviewBlock.appendChild(title);
+        renderCivilopediaRichText(overviewBlock, entry.overview);
+        textCol.appendChild(overviewBlock);
+      }
+
+      const textBlock = document.createElement('div');
+      textBlock.className = 'section-card source-section';
+      textBlock.style.marginTop = '8px';
+      const descTitle = document.createElement('div');
+      descTitle.className = 'section-top';
+      const descLeft = document.createElement('strong');
+      descLeft.textContent = 'Civilopedia';
+      descTitle.appendChild(descLeft);
+      attachRichTooltip(descTitle, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.description, 'Civilopedia'));
+      textBlock.appendChild(descTitle);
+      renderCivilopediaRichText(textBlock, entry.description || '(No Civilopedia body found)');
+      textCol.appendChild(textBlock);
+    }
+    deferredInfoBlocks.forEach((block) => textCol.appendChild(block));
 
     detailPane.appendChild(card);
   }
@@ -1939,7 +3081,7 @@ function renderBiqTab(tab) {
 
   const header = document.createElement('div');
   header.className = 'section-editor-header sticky';
-  header.appendChild(createIcon(TAB_ICONS.biq));
+  header.appendChild(createIcon(TAB_ICONS.map));
   header.insertAdjacentHTML('beforeend', `<h3>${tab.title || 'BIQ'}</h3><span class="source-tag">read-only</span>`);
   wrap.appendChild(header);
 
@@ -1986,8 +3128,9 @@ function renderBiqTab(tab) {
     btn.classList.toggle('active', idx === state.biqSectionSelection);
     btn.textContent = `${section.code} (${section.count})`;
     btn.addEventListener('click', () => {
-      state.biqSectionSelection = idx;
-      renderActiveTab({ preserveTabScroll: true });
+      navigateWithHistory(() => {
+        state.biqSectionSelection = idx;
+      }, { preserveTabScroll: true });
     });
     subtabRow.appendChild(btn);
   });
@@ -2025,8 +3168,9 @@ function renderBiqTab(tab) {
     itemBtn.classList.toggle('active', idx === selectedRecordIndex);
     itemBtn.innerHTML = `<strong>${record.name || `Record ${record.index + 1}`}</strong>`;
     itemBtn.addEventListener('click', () => {
-      state.biqRecordSelection[selected.id] = idx;
-      renderActiveTab({ preserveTabScroll: true });
+      navigateWithHistory(() => {
+        state.biqRecordSelection[selected.id] = idx;
+      }, { preserveTabScroll: true });
     });
     listPane.appendChild(itemBtn);
   });
@@ -2061,6 +3205,43 @@ function renderBiqTab(tab) {
   layout.appendChild(detailPane);
   wrap.appendChild(layout);
 
+  return wrap;
+}
+
+function renderMapTab(tab) {
+  const wrap = document.createElement('div');
+  wrap.className = 'section-editor';
+
+  const header = document.createElement('div');
+  header.className = 'section-editor-header sticky';
+  header.appendChild(createIcon(TAB_ICONS.map));
+  header.insertAdjacentHTML('beforeend', `<h3>${tab.title || 'Map'}</h3><span class="source-tag">${tab.readOnly ? 'read-only' : 'editable (scenario)'}</span>`);
+  wrap.appendChild(header);
+
+  const helper = document.createElement('p');
+  helper.className = 'hint';
+  helper.textContent = tab.sourcePath
+    ? `Source BIQ: ${compactPathFromCiv3Root(tab.sourcePath)}`
+    : 'No BIQ source selected.';
+  wrap.appendChild(helper);
+
+  if (tab.error) {
+    const error = document.createElement('p');
+    error.className = 'warning';
+    error.textContent = tab.error;
+    wrap.appendChild(error);
+    return wrap;
+  }
+  const sections = Array.isArray(tab.sections) ? tab.sections : [];
+  const tileSection = sections.find((s) => s.code === 'TILE');
+  if (!tileSection) {
+    const note = document.createElement('p');
+    note.className = 'hint';
+    note.textContent = 'No map tile section found in this BIQ.';
+    wrap.appendChild(note);
+    return wrap;
+  }
+  wrap.appendChild(renderBiqMapSection(tab, tileSection));
   return wrap;
 }
 
@@ -2145,7 +3326,7 @@ function requestBiqMapArtAsset(assetKey, assetPath) {
     state.biqMapRerenderPending = true;
     window.requestAnimationFrame(() => {
       state.biqMapRerenderPending = false;
-      if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs[state.activeTab] || state.bundle.tabs[state.activeTab].type !== 'biq') {
+      if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs[state.activeTab] || state.bundle.tabs[state.activeTab].type !== 'map') {
         return;
       }
       renderActiveTab({ preserveTabScroll: true });
@@ -3132,10 +4313,11 @@ function renderSectionTab(tab, tabKey) {
       state.tabContentScrollTop = el.tabContent.scrollTop;
     });
     itemBtn.addEventListener('click', () => {
-      state.tabContentScrollTop = el.tabContent.scrollTop;
-      state.sectionListScrollTop[tabKey] = listPane.scrollTop;
-      state.sectionSelection[tabKey] = sectionIndex;
-      renderActiveTab({ preserveTabScroll: true });
+      navigateWithHistory(() => {
+        state.tabContentScrollTop = el.tabContent.scrollTop;
+        state.sectionListScrollTop[tabKey] = listPane.scrollTop;
+        state.sectionSelection[tabKey] = sectionIndex;
+      }, { preserveTabScroll: true });
     });
     listPane.appendChild(itemBtn);
   });
@@ -3288,9 +4470,9 @@ function renderTabs() {
       button.appendChild(text);
       button.classList.toggle('active', state.activeTab === key);
       button.addEventListener('click', () => {
-        state.activeTab = key;
-        renderTabs();
-        renderActiveTab();
+        navigateWithHistory(() => {
+          state.activeTab = key;
+        }, { preserveTabScroll: false });
       });
       row.appendChild(button);
     });
@@ -3305,6 +4487,7 @@ function renderActiveTab(options = {}) {
     state.tabContentScrollTop = el.tabContent.scrollTop;
   }
   state.isRendering = true;
+  hideRichTooltip();
   el.tabContent.innerHTML = '';
   const tab = state.bundle.tabs[state.activeTab];
   if (!tab) {
@@ -3314,6 +4497,8 @@ function renderActiveTab(options = {}) {
 
   if (tab.type === 'reference') {
     el.tabContent.appendChild(renderReferenceTab(tab, state.activeTab));
+  } else if (tab.type === 'map') {
+    el.tabContent.appendChild(renderMapTab(tab));
   } else if (tab.type === 'biq') {
     el.tabContent.appendChild(renderBiqTab(tab));
   } else if (state.activeTab === 'base') {
@@ -3389,6 +4574,7 @@ async function loadBundleAndRender(options = {}) {
     el.workspace.classList.remove('hidden');
     renderTabs();
     renderActiveTab();
+    resetNavigationHistory();
     window.setTimeout(() => {
       captureCleanSnapshot();
       state.trackDirty = true;
@@ -3425,7 +4611,7 @@ async function saveCurrentBundle() {
 
   try {
     const tabsToSave = {};
-    ['base', 'districts', 'wonders', 'naturalWonders', 'animations'].forEach((key) => {
+    ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units'].forEach((key) => {
       if (state.bundle.tabs[key]) tabsToSave[key] = state.bundle.tabs[key];
     });
     const res = await window.c3xManager.saveBundle({
@@ -3442,8 +4628,13 @@ async function saveCurrentBundle() {
     }
 
     const paths = res.saveReport.map((r) => r.path).join(' | ');
+    const biqReport = res.saveReport.find((r) => r.kind === 'biq');
     captureCleanSnapshot();
-    setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
+    if (biqReport && (Number(biqReport.skipped || 0) > 0 || String(biqReport.warning || '').trim())) {
+      setStatus(`Saved ${res.saveReport.length} file(s): ${paths} | BIQ applied ${biqReport.applied || 0}, skipped ${biqReport.skipped || 0}.`, true);
+    } else {
+      setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
+    }
   } catch (err) {
     setStatus(`Failed to save: ${err.message}`, true);
   }
@@ -3528,6 +4719,7 @@ async function init() {
   state.trackDirty = false;
   state.suppressDirtyUntilInteraction = true;
   refreshDirtyUi();
+  updateNavButtons();
   fillInputsFromSettings();
   setPathsCollapsed(false);
   setMode(state.settings.mode || 'global');
@@ -3609,6 +4801,12 @@ async function init() {
   }
   if (el.resetBtn) {
     el.resetBtn.addEventListener('click', resetCurrentBundle);
+  }
+  if (el.backBtn) {
+    el.backBtn.addEventListener('click', navigateBack);
+  }
+  if (el.forwardBtn) {
+    el.forwardBtn.addEventListener('click', navigateForward);
   }
   if (el.debugToggle && el.debugDrawer) {
     el.debugToggle.addEventListener('click', () => {
