@@ -1928,6 +1928,18 @@ function collectScenarioReferenceKeySets(biqTab) {
   };
 }
 
+function collectStandardReferenceKeySets(biqTab) {
+  return {
+    civilizations: collectCivilopediaKeysBySection(biqTab, 'RACE', 'RACE_'),
+    technologies: collectCivilopediaKeysBySection(biqTab, 'TECH', 'TECH_'),
+    resources: collectCivilopediaKeysBySection(biqTab, 'GOOD', 'GOOD_'),
+    improvements: collectCivilopediaKeysBySection(biqTab, 'BLDG', 'BLDG_'),
+    units: collectCivilopediaKeysBySection(biqTab, 'PRTO', 'PRTO_'),
+    terrainPedia: collectCivilopediaKeysBySection(biqTab, 'TERR', 'TERR_'),
+    workerActions: collectCivilopediaKeysBySection(biqTab, 'TFRM', 'TFRM_')
+  };
+}
+
 function getSectionCodeForReferencePrefix(prefix) {
   const p = String(prefix || '').toUpperCase().replace(/_+$/, '');
   if (!p) return '';
@@ -2058,7 +2070,9 @@ function buildReferenceTabs(civ3Path, options = {}) {
   const mode = options.mode === 'scenario' ? 'scenario' : 'global';
   const scenarioPath = mode === 'scenario' ? (options.scenarioPath || '') : '';
   const scenarioPaths = Array.isArray(options.scenarioPaths) ? options.scenarioPaths : [];
-  const scenarioKeySets = mode === 'scenario' ? collectScenarioReferenceKeySets(options.biqTab) : null;
+  const biqKeySets = options.biqTab
+    ? (mode === 'scenario' ? collectScenarioReferenceKeySets(options.biqTab) : collectStandardReferenceKeySets(options.biqTab))
+    : null;
   const includeScenarioLayer = mode === 'scenario' && !!scenarioPath;
   const layerOrder = includeScenarioLayer
     ? ['vanilla', 'ptw', 'conquests', 'scenario']
@@ -2125,11 +2139,18 @@ function buildReferenceTabs(civ3Path, options = {}) {
       .forEach((civilopediaKey) => entriesByKey.set(civilopediaKey, { civilopediaKey }));
 
     Object.keys(pediaBlocks)
-      .filter((key) => key.startsWith(`ICON_${canonicalPrefix}`) || key.startsWith(`ANIMNAME_${canonicalPrefix}`) || key.startsWith(`ICON_RACE_`) || (canonicalPrefix === 'RACE_' && key.startsWith(canonicalPrefix)))
+      .filter((key) => key.startsWith(`ICON_${canonicalPrefix}`)
+        || key.startsWith(`ANIMNAME_${canonicalPrefix}`)
+        || key.startsWith(`ICON_RACE_`)
+        || (canonicalPrefix === 'RACE_' && key.startsWith(canonicalPrefix))
+        || (tabSpec.key === 'technologies' && key.startsWith(canonicalPrefix)))
       .forEach((key) => {
         let civilopediaKey = key.startsWith('ICON_') ? key.slice(5) : key.startsWith('ANIMNAME_') ? key.slice(9) : key;
         if (canonicalPrefix === 'RACE_' && key.startsWith('ICON_RACE_')) {
           civilopediaKey = `RACE_${key.slice('ICON_RACE_'.length)}`;
+        }
+        if (tabSpec.key === 'technologies' && civilopediaKey.startsWith('TECH_') && civilopediaKey.endsWith('_LARGE')) {
+          civilopediaKey = civilopediaKey.slice(0, -6);
         }
         if (civilopediaKey.startsWith(canonicalPrefix)) {
           entriesByKey.set(civilopediaKey, { civilopediaKey });
@@ -2208,8 +2229,8 @@ function buildReferenceTabs(civ3Path, options = {}) {
       })
       .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
 
-    if (scenarioKeySets && scenarioKeySets[tabSpec.key] instanceof Set && scenarioKeySets[tabSpec.key].size > 0) {
-      entries = entries.filter((entry) => scenarioKeySets[tabSpec.key].has(String(entry.civilopediaKey || '').toUpperCase()));
+    if (biqKeySets && biqKeySets[tabSpec.key] instanceof Set && biqKeySets[tabSpec.key].size > 0) {
+      entries = entries.filter((entry) => biqKeySets[tabSpec.key].has(String(entry.civilopediaKey || '').toUpperCase()));
     }
 
     if (tabSpec.key === 'civilizations') {

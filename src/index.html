@@ -35,12 +35,12 @@
       <div class="actions">
         <button id="paths-toggle" class="ghost" type="button">Hide File Paths</button>
         <span id="paths-summary" class="paths-summary"></span>
+        <button id="global-search-btn" class="ghost" type="button" title="Jump Search (Ctrl/Cmd+K)"><span class="btn-icon">🔎</span>Search</button>
         <button id="back-btn" class="ghost nav-btn" type="button" aria-label="Back" title="Back">←</button>
         <button id="forward-btn" class="ghost nav-btn" type="button" aria-label="Forward" title="Forward">→</button>
         <button id="save-btn" class="secondary"><span class="btn-icon">💾</span>Save</button>
         <button id="undo-btn" class="ghost"><span class="btn-icon">↶</span>Undo</button>
         <button id="reset-btn" class="ghost"><span class="btn-icon">⟲</span>Reset</button>
-        <span id="dirty-indicator" class="dirty-indicator hidden">Unsaved changes</span>
       </div>
 
       <div class="path-grid-wrap" id="paths-body">
@@ -83,6 +83,7 @@
     </template>
 
     <button id="debug-toggle" class="debug-fab" title="Open Preview Debug Log">🛠</button>
+    <button id="scroll-top-fab" class="scroll-top-fab hidden" type="button" title="Back to top" aria-label="Back to top">↑</button>
     <div class="floating-font-controls" aria-label="Font size controls">
       <button id="font-down" class="ghost font-btn" type="button" aria-label="Decrease font size">A-</button>
       <span id="font-scale-label" class="font-scale-label">100%</span>
@@ -104,6 +105,28 @@
       <div class="loading-card">
         <div class="loading-spinner" aria-hidden="true"></div>
         <p id="loading-text">Loading configs...</p>
+      </div>
+    </div>
+
+    <div id="unsaved-modal-overlay" class="confirm-modal-overlay hidden" aria-hidden="true">
+      <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="unsaved-modal-title" aria-describedby="unsaved-modal-body">
+        <h3 id="unsaved-modal-title">Unsaved Changes</h3>
+        <p id="unsaved-modal-body">You have unsaved changes.</p>
+        <div class="confirm-modal-actions">
+          <button id="unsaved-save-continue" class="secondary" type="button">Save and Continue</button>
+          <button id="unsaved-discard" class="ghost" type="button">Discard Changes</button>
+          <button id="unsaved-cancel" class="ghost" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="global-search-overlay" class="global-search-overlay hidden" aria-hidden="true">
+      <div class="global-search-panel" role="dialog" aria-modal="true" aria-label="Jump to tab, entry, or field">
+        <div class="global-search-head">
+          <input id="global-search-input" class="app-search-input global-search-input" type="search" placeholder="Jump to tab, entry, or field..." />
+          <span class="global-search-shortcut">Esc to close</span>
+        </div>
+        <div id="global-search-results" class="global-search-results"></div>
       </div>
     </div>
 

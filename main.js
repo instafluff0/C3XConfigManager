@@ -191,7 +191,8 @@ ipcMain.handle('manager:get-settings', async () => {
     civ3Path: '',
     scenarioPath: '',
     mode: 'global',
-    uiFontScale: 1
+    uiFontScale: 1,
+    uiStateByContext: {}
   };
   const saved = readJsonIfExists(getSettingsPath(), defaults);
   const merged = { ...defaults, ...(saved || {}) };
