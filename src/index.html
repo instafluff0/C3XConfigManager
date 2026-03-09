@@ -43,8 +43,10 @@
       </div>
 
       <div class="actions">
-        <button id="load-btn" class="primary">Load Configs</button>
-        <button id="save-btn" class="secondary">Save Current Mode</button>
+        <button id="load-btn" class="primary"><span class="btn-icon">↻</span>Load Configs</button>
+        <button id="save-btn" class="secondary"><span class="btn-icon">💾</span>Save</button>
+        <button id="reset-btn" class="ghost"><span class="btn-icon">⟲</span>Reset</button>
+        <span id="dirty-indicator" class="dirty-indicator hidden">Unsaved changes</span>
       </div>
       <p id="status" class="status"></p>
     </section>
@@ -64,6 +66,19 @@
         <div class="section-list"></div>
       </div>
     </template>
+
+    <button id="debug-toggle" class="debug-fab" title="Open Preview Debug Log">🛠</button>
+    <section id="debug-drawer" class="debug-drawer hidden">
+      <div class="debug-header">
+        <strong>Preview Debug Log</strong>
+        <button id="debug-close">Close</button>
+      </div>
+      <div class="debug-actions">
+        <button id="copy-debug-log">Copy Log</button>
+        <button id="clear-debug-log">Clear</button>
+      </div>
+      <pre id="debug-log"></pre>
+    </section>
 
     <script src="./renderer.js"></script>
   </body>

@@ -252,6 +252,7 @@ function decodeFlcFrames(filePath, maxFrames = 48) {
 
   const frames = [];
   let frame = new Uint8Array(w * h);
+  const chunkCounts = {};
   let off = 128;
   while (off + 6 <= b.length) {
     const chunkSize = u32(b, off);
@@ -266,6 +267,7 @@ function decodeFlcFrames(filePath, maxFrames = 48) {
       for (let i = 0; i < subCount && sub + 6 <= off + chunkSize; i += 1) {
         const ss = u32(b, sub);
         const st = u16(b, sub + 4);
+        chunkCounts[st] = (chunkCounts[st] || 0) + 1;
         if (ss < 6 || sub + ss > off + chunkSize) break;
         const payload = b.subarray(sub + 6, sub + ss);
 
@@ -318,7 +320,7 @@ function decodeFlcFrames(filePath, maxFrames = 48) {
     return Buffer.from(rgba).toString('base64');
   });
 
-  return { width: w, height: h, framesBase64 };
+  return { width: w, height: h, framesBase64, debug: { chunkCounts, maxFramesRequested: maxFrames, framesDecoded: frames.length } };
 }
 
 function cropCell(image, row, col, cellW, cellH) {
@@ -397,7 +399,8 @@ function decodeByPath(filePath, crop) {
     return {
       ...base,
       animated: true,
-      framesBase64: image.framesBase64
+      framesBase64: image.framesBase64,
+      debug: image.debug || null
     };
   }
   return {

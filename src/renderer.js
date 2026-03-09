@@ -5,6 +5,11 @@ const state = {
   baseFilter: '',
   previewSize: 220,
   tabContentScrollTop: 0,
+  isDirty: false,
+  isRendering: false,
+  trackDirty: false,
+  suppressDirtyUntilInteraction: true,
+  cleanSnapshot: '',
   sectionListScrollTop: {
     districts: 0,
     wonders: 0,
@@ -38,7 +43,15 @@ const el = {
   pickScenario: document.getElementById('pick-scenario'),
   loadBtn: document.getElementById('load-btn'),
   saveBtn: document.getElementById('save-btn'),
+  resetBtn: document.getElementById('reset-btn'),
+  dirtyIndicator: document.getElementById('dirty-indicator'),
   status: document.getElementById('status'),
+  debugLog: document.getElementById('debug-log'),
+  copyDebugLog: document.getElementById('copy-debug-log'),
+  clearDebugLog: document.getElementById('clear-debug-log'),
+  debugToggle: document.getElementById('debug-toggle'),
+  debugDrawer: document.getElementById('debug-drawer'),
+  debugClose: document.getElementById('debug-close'),
   workspace: document.getElementById('workspace'),
   tabs: document.getElementById('tabs'),
   tabContent: document.getElementById('tab-content')
@@ -221,6 +234,37 @@ const SECTION_SCHEMAS = {
 function setStatus(text, isError = false) {
   el.status.textContent = text;
   el.status.style.color = isError ? '#a13514' : '';
+}
+
+function refreshDirtyUi() {
+  if (el.saveBtn) el.saveBtn.classList.toggle('dirty', state.isDirty);
+  if (el.dirtyIndicator) el.dirtyIndicator.classList.toggle('hidden', !state.isDirty);
+}
+
+function captureCleanSnapshot() {
+  state.cleanSnapshot = JSON.stringify(state.bundle ? state.bundle.tabs : null);
+  state.isDirty = false;
+  refreshDirtyUi();
+}
+
+function setDirty(next) {
+  if (state.isRendering || !state.trackDirty || state.suppressDirtyUntilInteraction) return;
+  if (!next) {
+    state.isDirty = false;
+    refreshDirtyUi();
+    return;
+  }
+  const currentSnapshot = JSON.stringify(state.bundle ? state.bundle.tabs : null);
+  state.isDirty = currentSnapshot !== state.cleanSnapshot;
+  refreshDirtyUi();
+}
+
+function appendDebugLog(message, data) {
+  if (!el.debugLog) return;
+  const stamp = new Date().toISOString().split('T')[1].replace('Z', '');
+  const payload = data ? ` ${JSON.stringify(data)}` : '';
+  el.debugLog.textContent += `[${stamp}] ${message}${payload}\n`;
+  el.debugLog.scrollTop = el.debugLog.scrollHeight;
 }
 
 function isScenarioMode() {
@@ -683,18 +727,20 @@ function makeInputForBaseRow(row, onChange) {
   }
 
   if (row.type === 'boolean') {
-    const select = document.createElement('select');
-    const t = document.createElement('option');
-    t.value = 'true';
-    t.textContent = 'Enabled';
-    const f = document.createElement('option');
-    f.value = 'false';
-    f.textContent = 'Disabled';
-    select.appendChild(t);
-    select.appendChild(f);
-    select.value = String(row.value).trim().toLowerCase() === 'false' ? 'false' : 'true';
-    select.addEventListener('change', () => onChange(select.value));
-    return select;
+    const wrap = document.createElement('label');
+    wrap.className = 'bool-toggle';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = String(row.value).trim().toLowerCase() !== 'false';
+    check.addEventListener('change', () => onChange(check.checked ? 'true' : 'false'));
+    const text = document.createElement('span');
+    text.textContent = check.checked ? 'Enabled' : 'Disabled';
+    check.addEventListener('change', () => {
+      text.textContent = check.checked ? 'Enabled' : 'Disabled';
+    });
+    wrap.appendChild(check);
+    wrap.appendChild(text);
+    return wrap;
   }
 
   const enumOptions = BASE_ENUM_OPTIONS[row.key];
@@ -777,6 +823,7 @@ function renderBaseTab(tab) {
 
     const input = makeInputForBaseRow(row, (newValue) => {
       row.value = String(newValue);
+      setDirty(true);
     });
     r.appendChild(input);
 
@@ -813,6 +860,7 @@ function setSingleFieldValue(section, key, value) {
   if (value !== '') {
     section.fields.push({ key, value });
   }
+  setDirty(true);
 }
 
 function setMultiFieldValues(section, key, values) {
@@ -822,6 +870,7 @@ function setMultiFieldValues(section, key, values) {
       section.fields.push({ key, value });
     }
   }
+  setDirty(true);
 }
 
 function getFieldValue(section, key) {
@@ -885,25 +934,6 @@ function renderRgbaPreview(container, preview, title, delayMsProvider) {
   canvas.style.width = `${state.previewSize}px`;
   canvas.style.height = 'auto';
   const ctx = canvas.getContext('2d');
-
-  if (preview.animated && Array.isArray(preview.framesBase64) && preview.framesBase64.length > 0) {
-    const frames = preview.framesBase64.map((b64) =>
-      new ImageData(new Uint8ClampedArray(fromBase64ToUint8(b64)), preview.width, preview.height)
-    );
-    let frameIdx = 0;
-    const drawNext = () => {
-      if (!canvas.isConnected) return;
-      ctx.putImageData(frames[frameIdx], 0, 0);
-      frameIdx = (frameIdx + 1) % frames.length;
-      const delay = Math.max(16, Number(delayMsProvider ? delayMsProvider() : 100) || 100);
-      window.setTimeout(drawNext, delay);
-    };
-    drawNext();
-  } else if (preview.rgbaBase64) {
-    const rgba = fromBase64ToUint8(preview.rgbaBase64);
-    const data = new ImageData(new Uint8ClampedArray(rgba), preview.width, preview.height);
-    ctx.putImageData(data, 0, 0);
-  }
   card.appendChild(canvas);
 
   const meta = document.createElement('div');
@@ -912,12 +942,40 @@ function renderRgbaPreview(container, preview, title, delayMsProvider) {
   meta.textContent = `${preview.width}x${preview.height} - ${motion} - ${preview.sourcePath.split(/[\\\\/]/).pop()}`;
   card.appendChild(meta);
   container.appendChild(card);
+
+  if (preview.animated && Array.isArray(preview.framesBase64) && preview.framesBase64.length > 0) {
+    const frames = preview.framesBase64.map((b64) =>
+      new ImageData(new Uint8ClampedArray(fromBase64ToUint8(b64)), preview.width, preview.height)
+    );
+    appendDebugLog('preview:animated:init', { title, frames: frames.length, w: preview.width, h: preview.height, sourcePath: preview.sourcePath });
+    let frameIdx = 0;
+    let lastTick = performance.now();
+    const step = () => {
+      if (!canvas.isConnected) return;
+      const delay = Math.max(16, Number(delayMsProvider ? delayMsProvider() : 100) || 100);
+      const now = performance.now();
+      if (now - lastTick >= delay) {
+        ctx.putImageData(frames[frameIdx], 0, 0);
+        frameIdx = (frameIdx + 1) % frames.length;
+        lastTick = now;
+      }
+      window.requestAnimationFrame(step);
+    };
+    ctx.putImageData(frames[0], 0, 0);
+    window.requestAnimationFrame(step);
+  } else if (preview.rgbaBase64) {
+    const rgba = fromBase64ToUint8(preview.rgbaBase64);
+    const data = new ImageData(new Uint8ClampedArray(rgba), preview.width, preview.height);
+    ctx.putImageData(data, 0, 0);
+    appendDebugLog('preview:static:drawn', { title, w: preview.width, h: preview.height, sourcePath: preview.sourcePath });
+  }
 }
 
 async function loadPreviewsForSection(tabKey, section, previewWrap) {
   const cacheKey = JSON.stringify({ tabKey, fields: section.fields, c3xPath: state.settings.c3xPath });
   if (state.previewCache.has(cacheKey)) {
     const cached = state.previewCache.get(cacheKey);
+    appendDebugLog('preview:cache-hit', { tabKey, count: cached.length });
     cached.forEach((p) => renderRgbaPreview(previewWrap, p.preview, p.title, () => getPreviewDelayMs(tabKey, section, p.title)));
     return;
   }
@@ -925,10 +983,11 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
   const tasks = [];
   if (tabKey === 'districts') {
     const imgPaths = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths'));
-    imgPaths.slice(0, 3).forEach((name, idx) => {
+    imgPaths.forEach((name, idx) => {
+      const cleaned = name.trim().replace(/^\"|\"$/g, '');
       tasks.push({
-        title: `Art ${idx + 1}`,
-        request: { kind: 'district', c3xPath: state.settings.c3xPath, fileName: name.trim().replace(/^\"|\"$/g, '') }
+        title: `img_paths[${idx}] - ${cleaned}`,
+        request: { kind: 'district', c3xPath: state.settings.c3xPath, fileName: cleaned }
       });
     });
   } else if (tabKey === 'wonders') {
@@ -960,7 +1019,7 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
     const fileName = getFieldValue(section, 'img_path');
     const row = parseInt(getFieldValue(section, 'img_row') || '0', 10) || 0;
     const col = parseInt(getFieldValue(section, 'img_column') || '0', 10) || 0;
-    const crop = getCropDimensions(section, { w: 128, h: 96 });
+    const crop = getCropDimensions(section, { w: 128, h: 88 });
     tasks.push({
       title: 'Natural Wonder',
       request: {
@@ -985,15 +1044,20 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
   }
 
   const resolved = [];
+  appendDebugLog('preview:load-start', { tabKey, taskCount: tasks.length });
   for (const task of tasks) {
     try {
+      appendDebugLog('preview:request', { tabKey, title: task.title, request: task.request });
       const res = await window.c3xManager.getPreview(task.request);
       if (res && res.ok) {
+        appendDebugLog('preview:response:ok', { tabKey, title: task.title, animated: !!res.animated, width: res.width, height: res.height, sourcePath: res.sourcePath, frames: res.framesBase64 ? res.framesBase64.length : 0, debug: res.debug || null });
         renderRgbaPreview(previewWrap, res, task.title, () => getPreviewDelayMs(tabKey, section, task.title));
         resolved.push({ title: task.title, preview: res });
+      } else {
+        appendDebugLog('preview:response:err', { tabKey, title: task.title, error: res && res.error });
       }
-    } catch (_err) {
-      // Ignore preview failure
+    } catch (err) {
+      appendDebugLog('preview:response:exception', { tabKey, title: task.title, error: err && err.message });
     }
   }
 
@@ -1012,16 +1076,20 @@ function getSectionTitle(section, schema, index) {
 
 function createFieldInput(schemaField, value, onChange) {
   if (schemaField.type === 'bool') {
-    const select = document.createElement('select');
-    ['1', '0'].forEach((v) => {
-      const o = document.createElement('option');
-      o.value = v;
-      o.textContent = v === '1' ? 'Enabled' : 'Disabled';
-      select.appendChild(o);
+    const wrap = document.createElement('label');
+    wrap.className = 'bool-toggle';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = String(value || '').trim() !== '0';
+    check.addEventListener('change', () => onChange(check.checked ? '1' : '0'));
+    const text = document.createElement('span');
+    text.textContent = check.checked ? 'Enabled' : 'Disabled';
+    check.addEventListener('change', () => {
+      text.textContent = check.checked ? 'Enabled' : 'Disabled';
     });
-    select.value = String(value || '').trim() === '0' ? '0' : '1';
-    select.addEventListener('change', () => onChange(select.value));
-    return select;
+    wrap.appendChild(check);
+    wrap.appendChild(text);
+    return wrap;
   }
 
   if (schemaField.type === 'select') {
@@ -1219,6 +1287,7 @@ function renderAdvancedFields(section, schemaKeys) {
     keyInput.placeholder = 'config key';
     keyInput.addEventListener('input', () => {
       field.key = keyInput.value;
+      setDirty(true);
     });
 
     const valueInput = document.createElement('input');
@@ -1226,6 +1295,7 @@ function renderAdvancedFields(section, schemaKeys) {
     valueInput.placeholder = 'value';
     valueInput.addEventListener('input', () => {
       field.value = valueInput.value;
+      setDirty(true);
     });
 
     const del = document.createElement('button');
@@ -1237,6 +1307,7 @@ function renderAdvancedFields(section, schemaKeys) {
       if (pos >= 0) {
         section.fields.splice(pos, 1);
       }
+      setDirty(true);
       renderActiveTab();
     });
 
@@ -1250,6 +1321,7 @@ function renderAdvancedFields(section, schemaKeys) {
   add.textContent = 'Add Advanced Field';
   add.addEventListener('click', () => {
     section.fields.push({ key: '', value: '' });
+    setDirty(true);
     renderActiveTab();
   });
 
@@ -1270,6 +1342,7 @@ function createSectionFromTemplate(tabKey) {
 function addSection(tab, tabKey) {
   tab.model.sections.unshift(createSectionFromTemplate(tabKey));
   state.sectionSelection[tabKey] = 0;
+  setDirty(true);
   renderActiveTab();
 }
 
@@ -1316,11 +1389,14 @@ function renderSectionTab(tab, tabKey) {
     itemBtn.classList.toggle('active', sectionIndex === selectedIndex);
     itemBtn.type = 'button';
     itemBtn.innerHTML = `<strong>${getSectionTitle(section, schema, sectionIndex)}</strong>`;
+    itemBtn.addEventListener('mousedown', () => {
+      state.tabContentScrollTop = el.tabContent.scrollTop;
+    });
     itemBtn.addEventListener('click', () => {
       state.tabContentScrollTop = el.tabContent.scrollTop;
       state.sectionListScrollTop[tabKey] = listPane.scrollTop;
       state.sectionSelection[tabKey] = sectionIndex;
-      renderActiveTab();
+      renderActiveTab({ preserveTabScroll: true });
     });
     listPane.appendChild(itemBtn);
   });
@@ -1357,6 +1433,7 @@ function renderSectionTab(tab, tabKey) {
     removeSectionBtn.addEventListener('click', () => {
       tab.model.sections.splice(selectedIndex, 1);
       state.sectionSelection[tabKey] = Math.max(0, selectedIndex - 1);
+      setDirty(true);
       renderActiveTab();
     });
     top.appendChild(removeSectionBtn);
@@ -1393,7 +1470,26 @@ function renderSectionTab(tab, tabKey) {
     const previewWrap = document.createElement('div');
     previewWrap.className = 'preview-wrap';
     card.appendChild(previewWrap);
-    loadPreviewsForSection(tabKey, section, previewWrap);
+    const refreshPreviews = () => {
+      const scopedKey = JSON.stringify({ tabKey, section: section.fields });
+      for (const key of Array.from(state.previewCache.keys())) {
+        if (key.includes(`\"tabKey\":\"${tabKey}\"`)) {
+          state.previewCache.delete(key);
+        }
+      }
+      void scopedKey;
+      previewWrap.innerHTML = '';
+      loadPreviewsForSection(tabKey, section, previewWrap);
+    };
+    refreshPreviews();
+
+    const previewFieldKeysByTab = {
+      districts: new Set(['img_paths', 'custom_width', 'custom_height']),
+      wonders: new Set(['img_path', 'img_row', 'img_column', 'img_construct_row', 'img_construct_column', 'custom_width', 'custom_height']),
+      naturalWonders: new Set(['img_path', 'img_row', 'img_column', 'animation', 'custom_width', 'custom_height']),
+      animations: new Set(['ini_path', 'frame_time_seconds'])
+    };
+    const previewFields = previewFieldKeysByTab[tabKey] || new Set();
 
     const form = document.createElement('div');
     form.className = 'form-grid';
@@ -1405,6 +1501,10 @@ function renderSectionTab(tab, tabKey) {
             titleEl.textContent = value || `${schema.entityName}`;
           }
         }
+        if (previewFields.has(key)) {
+          refreshPreviews();
+        }
+        setDirty(true);
       }));
     });
     card.appendChild(form);
@@ -1445,11 +1545,16 @@ function renderTabs() {
   });
 }
 
-function renderActiveTab() {
-  state.tabContentScrollTop = el.tabContent.scrollTop;
+function renderActiveTab(options = {}) {
+  const preserveTabScroll = !!options.preserveTabScroll;
+  if (!preserveTabScroll) {
+    state.tabContentScrollTop = el.tabContent.scrollTop;
+  }
+  state.isRendering = true;
   el.tabContent.innerHTML = '';
   const tab = state.bundle.tabs[state.activeTab];
   if (!tab) {
+    state.isRendering = false;
     return;
   }
 
@@ -1458,7 +1563,11 @@ function renderActiveTab() {
   } else {
     el.tabContent.appendChild(renderSectionTab(tab, state.activeTab));
   }
-  el.tabContent.scrollTop = state.tabContentScrollTop || 0;
+  state.isRendering = false;
+  const targetTop = state.tabContentScrollTop || 0;
+  window.requestAnimationFrame(() => {
+    el.tabContent.scrollTop = targetTop;
+  });
 }
 
 async function loadBundleAndRender() {
@@ -1476,6 +1585,7 @@ async function loadBundleAndRender() {
   }
 
   try {
+    state.trackDirty = false;
     const bundle = await window.c3xManager.loadBundle({
       mode: state.settings.mode,
       c3xPath: state.settings.c3xPath,
@@ -1488,8 +1598,13 @@ async function loadBundleAndRender() {
     el.workspace.classList.remove('hidden');
     renderTabs();
     renderActiveTab();
+    window.setTimeout(() => {
+      captureCleanSnapshot();
+      state.trackDirty = true;
+    }, 0);
     setStatus('Configs loaded.');
   } catch (err) {
+    state.trackDirty = true;
     setStatus(`Failed to load configs: ${err.message}`, true);
   }
 }
@@ -1517,10 +1632,20 @@ async function saveCurrentBundle() {
     }
 
     const paths = res.saveReport.map((r) => r.path).join(' | ');
+    captureCleanSnapshot();
     setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
   } catch (err) {
     setStatus(`Failed to save: ${err.message}`, true);
   }
+}
+
+async function resetCurrentBundle() {
+  if (!state.bundle) {
+    setStatus('Load configs before resetting.', true);
+    return;
+  }
+  await loadBundleAndRender();
+  setStatus('Reset to last saved files.');
 }
 
 async function wireBrowseButton(button, input) {
@@ -1548,8 +1673,17 @@ async function shouldAutoLoad() {
 
 async function init() {
   state.settings = await window.c3xManager.getSettings();
+  state.trackDirty = false;
+  state.suppressDirtyUntilInteraction = true;
+  refreshDirtyUi();
   fillInputsFromSettings();
   setMode(state.settings.mode || 'global');
+
+  const unlockDirtyTracking = () => {
+    state.suppressDirtyUntilInteraction = false;
+  };
+  document.addEventListener('pointerdown', unlockDirtyTracking, { capture: true });
+  document.addEventListener('keydown', unlockDirtyTracking, { capture: true });
 
   el.modeGlobal.addEventListener('click', async () => {
     setMode('global');
@@ -1563,6 +1697,34 @@ async function init() {
 
   el.loadBtn.addEventListener('click', loadBundleAndRender);
   el.saveBtn.addEventListener('click', saveCurrentBundle);
+  if (el.resetBtn) {
+    el.resetBtn.addEventListener('click', resetCurrentBundle);
+  }
+  if (el.debugToggle && el.debugDrawer) {
+    el.debugToggle.addEventListener('click', () => {
+      el.debugDrawer.classList.toggle('hidden');
+    });
+  }
+  if (el.debugClose && el.debugDrawer) {
+    el.debugClose.addEventListener('click', () => {
+      el.debugDrawer.classList.add('hidden');
+    });
+  }
+  if (el.clearDebugLog) {
+    el.clearDebugLog.addEventListener('click', () => {
+      el.debugLog.textContent = '';
+    });
+  }
+  if (el.copyDebugLog) {
+    el.copyDebugLog.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(el.debugLog.textContent || '');
+        setStatus('Debug log copied.');
+      } catch (_err) {
+        setStatus('Could not copy debug log.', true);
+      }
+    });
+  }
 
   wireBrowseButton(el.pickC3x, el.c3xPath);
   wireBrowseButton(el.pickCiv3, el.civ3Path);

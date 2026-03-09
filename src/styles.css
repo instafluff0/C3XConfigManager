@@ -233,10 +233,40 @@ textarea {
   color: var(--ink);
 }
 
+.bool-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #324067;
+}
+
+.bool-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #1aa79c;
+}
+
 .actions {
   display: flex;
   gap: 10px;
   margin-top: 8px;
+  align-items: center;
+}
+
+.btn-icon {
+  margin-right: 6px;
+}
+
+.dirty-indicator {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: #8a4a1a;
+  background: #fff3e5;
+  border: 1px solid rgba(227, 129, 52, 0.32);
+  border-radius: 999px;
+  padding: 5px 10px;
 }
 
 .primary {
@@ -251,10 +281,73 @@ textarea {
   border-color: transparent;
 }
 
+.ghost {
+  background: #ffffff;
+  color: var(--ink);
+  border-color: rgba(36, 25, 64, 0.2);
+}
+
+.secondary.dirty {
+  border-color: #4f84e7;
+  box-shadow: 0 0 0 2px rgba(79, 132, 231, 0.28), 0 8px 18px rgba(24, 20, 50, 0.12);
+}
+
 .status {
   min-height: 20px;
   color: var(--ink-dim);
   margin-top: 10px;
+}
+
+.debug-actions {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 6px;
+}
+
+.debug-fab {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  padding: 0;
+  font-size: 0.9rem;
+  z-index: 20;
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.debug-drawer {
+  position: fixed;
+  right: 14px;
+  bottom: 60px;
+  width: min(520px, calc(100vw - 28px));
+  max-height: min(52vh, 420px);
+  z-index: 20;
+  border: 1px solid rgba(36, 25, 64, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 20px 40px rgba(16, 20, 40, 0.2);
+  padding: 10px;
+  overflow: hidden;
+}
+
+.debug-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#debug-log {
+  max-height: calc(min(52vh, 420px) - 90px);
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(18, 20, 38, 0.92);
+  color: #cfe4ff;
+  font-size: 0.72rem;
+  line-height: 1.35;
 }
 
 .hidden {
