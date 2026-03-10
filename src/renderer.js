@@ -108,6 +108,13 @@ const techTreeModal = {
   body: null,
   title: null
 };
+const pediaLinkPreview = {
+  node: null,
+  img: null,
+  title: null,
+  body: null,
+  activeKey: ''
+};
 
 const el = {
   modeGlobal: document.getElementById('mode-global'),
@@ -3056,7 +3063,7 @@ const REFERENCE_RULE_SCHEMAS = {
       civilizationgender: { group: 'Identity', control: 'select' },
       culturegroup: { group: 'Identity', control: 'select' },
       defaultcolor: { group: 'Identity', control: 'select' },
-      diplomacytextindex: { group: 'Identity', control: 'number', min: 0 },
+      diplomacytextindex: { group: 'Identity', control: 'reference' },
       favoritegovernment: { group: 'Governments', control: 'reference' },
       shunnedgovernment: { group: 'Governments', control: 'reference' },
       freetech1index: { group: 'Free Techs', control: 'reference' },
@@ -3132,6 +3139,14 @@ function makeIndexOptionsForTab(tabKey) {
 
 function getReferenceOptionsForField(tabKey, field) {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  if (tabKey === 'civilizations' && base === 'diplomacytextindex') {
+    const civTab = state.bundle && state.bundle.tabs && state.bundle.tabs.civilizations;
+    const options = civTab && Array.isArray(civTab.diplomacyOptions) ? civTab.diplomacyOptions : [];
+    return options.map((opt) => ({
+      value: String(opt && opt.value != null ? opt.value : ''),
+      label: String(opt && opt.label != null ? opt.label : '')
+    })).filter((opt) => opt.value !== '' && opt.label);
+  }
   const map = BIQ_FIELD_REFS[tabKey] || {};
   const target = map[base];
   if (!target) return [];
@@ -3246,13 +3261,16 @@ function createReferencePicker(config) {
   const buttonThumb = document.createElement('span');
   buttonThumb.className = 'entry-thumb';
   const buttonText = document.createElement('span');
+  buttonText.className = 'tech-picker-btn-label';
   const renderButton = (value) => {
     const normalizedValue = (() => {
       const parsed = parseIntFromDisplayValue(value);
       return parsed == null ? String(value ?? '') : String(parsed);
     })();
     const selected = findOptionByValue(normalizedOptions, normalizedValue) || normalizedOptions[0];
-    buttonText.textContent = selected ? String(selected.label || noneLabel) : noneLabel;
+    const selectedLabel = selected ? String(selected.label || noneLabel) : noneLabel;
+    buttonText.textContent = selectedLabel;
+    buttonText.title = selectedLabel;
     buttonThumb.innerHTML = '';
     if (selected && selected.entry && targetTabKey) {
       loadReferenceListThumbnail(targetTabKey, selected.entry, buttonThumb);
@@ -4222,6 +4240,156 @@ function navigateToCivilopediaKey(civilopediaKey) {
   return true;
 }
 
+function getCivilopediaEntryForKey(civilopediaKey) {
+  const key = String(civilopediaKey || '').trim().toUpperCase();
+  if (!key || !state.bundle || !state.bundle.tabs) return null;
+  const tabKey = mapCivilopediaKeyToTabKey(key);
+  if (!tabKey) return null;
+  if (tabKey === 'terrain') {
+    const terrainTab = state.bundle.tabs.terrain;
+    const pedia = terrainTab && terrainTab.civilopedia;
+    if (!pedia) return null;
+    if (key.startsWith('TFRM_')) {
+      const entries = (pedia.workerActions && pedia.workerActions.entries) || [];
+      const entry = entries.find((item) => String(item && item.civilopediaKey || '').toUpperCase() === key) || null;
+      return entry ? { tabKey: 'workerActions', entry } : null;
+    }
+    const entries = (pedia.terrain && pedia.terrain.entries) || [];
+    const entry = entries.find((item) => String(item && item.civilopediaKey || '').toUpperCase() === key) || null;
+    return entry ? { tabKey: 'terrainPedia', entry } : null;
+  }
+  const tab = state.bundle.tabs[tabKey];
+  if (!tab || !Array.isArray(tab.entries)) return null;
+  const entry = tab.entries.find((item) => String(item && item.civilopediaKey || '').toUpperCase() === key) || null;
+  return entry ? { tabKey, entry } : null;
+}
+
+function plainCivilopediaText(raw) {
+  return String(raw || '')
+    .replace(/\$LINK<([^=<>]+)=([^<>]+)>/g, '$1')
+    .replace(/\[([^\]]+)\]/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getCivilopediaPreviewSnippet(entry) {
+  if (!entry) return '';
+  const overview = plainCivilopediaText(String(entry.overview || ''));
+  if (overview) {
+    return overview.length > 220 ? `${overview.slice(0, 217)}...` : overview;
+  }
+  const desc = plainCivilopediaText(String(entry.description || ''));
+  if (!desc) return 'No Civilopedia preview text available.';
+  return desc.length > 220 ? `${desc.slice(0, 217)}...` : desc;
+}
+
+function positionPediaLinkPreview(anchor) {
+  if (!anchor || !pediaLinkPreview.node) return;
+  const panel = pediaLinkPreview.node;
+  const rect = anchor.getBoundingClientRect();
+  panel.style.left = '0px';
+  panel.style.top = '0px';
+  const panelRect = panel.getBoundingClientRect();
+  const margin = 10;
+  let left = rect.left;
+  let top = rect.bottom + 8;
+  if (left + panelRect.width > window.innerWidth - margin) {
+    left = Math.max(margin, window.innerWidth - panelRect.width - margin);
+  }
+  if (top + panelRect.height > window.innerHeight - margin) {
+    top = rect.top - panelRect.height - 8;
+  }
+  if (top < margin) top = margin;
+  panel.style.left = `${Math.round(left)}px`;
+  panel.style.top = `${Math.round(top)}px`;
+}
+
+function ensurePediaLinkPreviewNode() {
+  if (pediaLinkPreview.node && pediaLinkPreview.node.isConnected) return pediaLinkPreview.node;
+  const node = document.createElement('div');
+  node.className = 'pedia-link-preview hidden';
+  node.innerHTML = `
+    <div class="pedia-link-preview-media">
+      <canvas class="pedia-link-preview-canvas" width="128" height="96"></canvas>
+    </div>
+    <div class="pedia-link-preview-content">
+      <strong class="pedia-link-preview-title"></strong>
+      <p class="pedia-link-preview-text"></p>
+    </div>
+  `;
+  document.body.appendChild(node);
+  pediaLinkPreview.node = node;
+  pediaLinkPreview.img = node.querySelector('.pedia-link-preview-canvas');
+  pediaLinkPreview.title = node.querySelector('.pedia-link-preview-title');
+  pediaLinkPreview.body = node.querySelector('.pedia-link-preview-text');
+  return node;
+}
+
+function hidePediaLinkPreviewSoon(delay = 0) {
+  if (!pediaLinkPreview.node) return;
+  if (delay <= 0) {
+    pediaLinkPreview.node.classList.remove('is-visible');
+    pediaLinkPreview.activeKey = '';
+    return;
+  }
+  window.setTimeout(() => {
+    if (!pediaLinkPreview.node) return;
+    pediaLinkPreview.node.classList.remove('is-visible');
+    pediaLinkPreview.activeKey = '';
+  }, delay);
+}
+
+function drawPediaLinkPreviewPlaceholder() {
+  if (!pediaLinkPreview.img) return;
+  const canvas = pediaLinkPreview.img;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = 'rgba(241, 245, 255, 0.95)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = 'rgba(69, 84, 124, 0.24)';
+  ctx.strokeRect(0.5, 0.5, canvas.width - 1, canvas.height - 1);
+}
+
+function showPediaLinkPreview(anchor, civilopediaKey, fallbackLabel = '') {
+  const node = ensurePediaLinkPreviewNode();
+  const found = getCivilopediaEntryForKey(civilopediaKey);
+  const key = String(civilopediaKey || '').trim().toUpperCase();
+  const title = found && found.entry
+    ? String(found.entry.name || found.entry.civilopediaKey || fallbackLabel || key)
+    : String(fallbackLabel || key || '(Unknown link)');
+  const snippet = found && found.entry
+    ? getCivilopediaPreviewSnippet(found.entry)
+    : 'No local entry preview available.';
+  if (pediaLinkPreview.title) pediaLinkPreview.title.textContent = title;
+  if (pediaLinkPreview.body) pediaLinkPreview.body.textContent = snippet;
+  const slots = found && found.entry ? buildReferenceArtSlots(found.tabKey, found.entry) : [];
+  const primary = slots && slots.length > 0 ? slots[0] : null;
+  const hasPreviewImage = !!(primary && primary.path);
+  node.classList.toggle('no-image', !hasPreviewImage);
+  if (hasPreviewImage) {
+    drawPediaLinkPreviewPlaceholder();
+  }
+  node.classList.add('is-visible');
+  pediaLinkPreview.activeKey = key;
+  positionPediaLinkPreview(anchor);
+
+  if (hasPreviewImage && state.settings && state.settings.civ3Path) {
+    if (found && found.entry) {
+      const request = getPreviewRequestForArtSlot(primary);
+      if (request) {
+        window.c3xManager.getPreview(request)
+          .then((res) => {
+            if (!res || !res.ok || pediaLinkPreview.activeKey !== key || !pediaLinkPreview.img) return;
+            drawPreviewFrameToCanvas(res, pediaLinkPreview.img);
+            positionPediaLinkPreview(anchor);
+          })
+          .catch(() => {});
+      }
+    }
+  }
+}
+
 function renderCivilopediaRichText(container, text) {
   const lines = String(text || '').split(/\n+/).map((line) => line.trim()).filter(Boolean);
   if (lines.length === 0) {
@@ -4245,6 +4413,18 @@ function renderCivilopediaRichText(container, text) {
       a.href = '#';
       a.className = 'pedia-link';
       a.textContent = label;
+      a.addEventListener('mouseenter', () => {
+        showPediaLinkPreview(a, key, label);
+      });
+      a.addEventListener('mouseleave', () => {
+        hidePediaLinkPreviewSoon();
+      });
+      a.addEventListener('focus', () => {
+        showPediaLinkPreview(a, key, label);
+      });
+      a.addEventListener('blur', () => {
+        hidePediaLinkPreviewSoon();
+      });
       a.addEventListener('click', (ev) => {
         ev.preventDefault();
         if (!navigateToCivilopediaKey(key)) {
@@ -5073,13 +5253,18 @@ function inferReferenceNameFromKey(civilopediaKey, tabKey) {
     .trim() || 'New Entry';
 }
 
-function makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredName) {
+function makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredName, excludeKey = '') {
   const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
   const entries = (tab && Array.isArray(tab.entries)) ? tab.entries : [];
-  const existing = new Set(entries.map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase()));
+  const exclude = String(excludeKey || '').toUpperCase();
+  const existing = new Set(
+    entries
+      .map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase())
+      .filter((key) => key && key !== exclude)
+  );
   let token = normalizeReferenceKeyToken(desiredName);
   if (!token) token = `NEW_${Date.now()}`;
-  let key = `${prefix}${token}`;
+  let key = token.startsWith(prefix) ? token : `${prefix}${token}`;
   let i = 2;
   while (existing.has(key)) {
     key = `${prefix}${token}_${i}`;
@@ -5098,9 +5283,10 @@ function makeDefaultReferenceFieldValue(field, name) {
   return '';
 }
 
-function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKey, mode }) {
+function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKey, mode, displayName = '' }) {
   const src = sourceEntry ? JSON.parse(JSON.stringify(sourceEntry)) : {};
-  const name = inferReferenceNameFromKey(civilopediaKey, tabKey);
+  const inferred = inferReferenceNameFromKey(civilopediaKey, tabKey);
+  const name = String(displayName || '').trim() || inferred;
   const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
   const shortId = prefix && civilopediaKey.startsWith(prefix) ? civilopediaKey.slice(prefix.length) : civilopediaKey;
   const entry = {
@@ -5145,6 +5331,28 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
   return entry;
 }
 
+function renamePendingReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw) {
+  if (!tab || !entry || !entry.isNew) return false;
+  const oldKey = String(entry.civilopediaKey || '').toUpperCase();
+  const nextKey = makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredKeyRaw, oldKey);
+  if (!nextKey || nextKey === oldKey) return false;
+  entry.civilopediaKey = nextKey;
+  const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
+  entry.id = prefix && nextKey.startsWith(prefix) ? nextKey.slice(prefix.length) : nextKey;
+  const ops = ensureReferenceRecordOps(tab);
+  ops.forEach((op) => {
+    if (!op) return;
+    if (String(op.newRecordRef || '').toUpperCase() === oldKey) op.newRecordRef = nextKey;
+    if (String(op.recordRef || '').toUpperCase() === oldKey) op.recordRef = nextKey;
+  });
+  const set = state.dirtyReferenceKeysByTab && state.dirtyReferenceKeysByTab[tabKey];
+  if (set && set.has(oldKey)) {
+    set.delete(oldKey);
+    set.add(nextKey);
+  }
+  return true;
+}
+
 function hideEntityModal() {
   state.entityModal.open = false;
   if (el.entityModalOverlay) {
@@ -5187,8 +5395,18 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   if (!el.entityModalOverlay || !el.entityModalContent) return null;
   const entityName = String((tab && tab.title) || 'Entries').replace(/s$/, '') || 'entry';
   const defaultName = (initialMode === 'copy' && selectedEntry) ? `${selectedEntry.name || ''} Copy`.trim() : '';
-  if (el.entityModalTitle) el.entityModalTitle.textContent = `${entityName}: Add / Copy / Import`;
-  if (el.entityModalBody) el.entityModalBody.textContent = 'Choose how to create the new entry. Import lets you copy from another scenario file.';
+  let keyEditedManually = false;
+  let nameEditedManually = false;
+  if (el.entityModalTitle) {
+    el.entityModalTitle.textContent = (lockMode && initialMode === 'import')
+      ? `${entityName}: Import From Scenario`
+      : `${entityName}: Add / Copy / Import`;
+  }
+  if (el.entityModalBody) {
+    el.entityModalBody.textContent = (lockMode && initialMode === 'import')
+      ? 'Select a source scenario, pick an item, then confirm the Name and Key for the new item in this scenario.'
+      : 'Choose how to create the new entry. Import copies an item from another scenario into this one.';
+  }
   if (el.entityModalConfirm) {
     el.entityModalConfirm.textContent = 'Create';
     el.entityModalConfirm.disabled = false;
@@ -5213,6 +5431,17 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   nameField.appendChild(nameInput);
   grid.appendChild(nameField);
 
+  const keyField = document.createElement('div');
+  keyField.className = 'entity-field';
+  const keyLabel = document.createElement('label');
+  keyLabel.textContent = 'Key';
+  const keyInput = document.createElement('input');
+  keyInput.type = 'text';
+  keyInput.placeholder = `${REFERENCE_PREFIX_BY_TAB[tabKey] || ''}...`;
+  keyField.appendChild(keyLabel);
+  keyField.appendChild(keyInput);
+  grid.appendChild(keyField);
+
   const modeField = document.createElement('div');
   modeField.className = 'entity-field';
   const modeLabel = document.createElement('label');
@@ -5236,6 +5465,7 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
     modeSelect.value = initialMode;
   }
   modeSelect.disabled = !!lockMode;
+  if (lockMode) modeField.classList.add('hidden');
   grid.appendChild(modeField);
 
   const importWrap = document.createElement('div');
@@ -5280,15 +5510,9 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   importToolbar.appendChild(importPath);
   importWrap.appendChild(importToolbar);
 
-  const importSearch = document.createElement('input');
-  importSearch.type = 'search';
-  importSearch.classList.add('app-search-input');
-  importSearch.placeholder = `Search ${tab.title} in import file...`;
-  importWrap.appendChild(importSearch);
-
-  const importList = document.createElement('div');
-  importList.className = 'entity-import-list';
-  importWrap.appendChild(importList);
+  const importPickerHost = document.createElement('div');
+  importPickerHost.className = 'entity-import-picker';
+  importWrap.appendChild(importPickerHost);
   form.appendChild(importWrap);
   el.entityModalContent.appendChild(form);
 
@@ -5300,13 +5524,13 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
     importPath.textContent = 'Loading source entries...';
     importEntries = [];
     selectedImportKey = '';
-    renderImportList();
+    renderImportPicker();
     try {
       const loadedEntries = await loadImportEntriesForTab(tabKey, filePath);
       importFilePath = filePath;
       importEntries = loadedEntries;
       importPath.textContent = filePath;
-      renderImportList();
+      renderImportPicker();
       if (importEntries.length === 0) {
         setStatus('Selected scenario has no entries for this tab.', true);
       }
@@ -5315,42 +5539,53 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
       setStatus(err && err.message ? err.message : 'Could not load import source scenario.', true);
     }
   };
-  const renderImportList = () => {
-    importList.innerHTML = '';
-    const needle = String(importSearch.value || '').trim().toLowerCase();
-    const list = importEntries.filter((entry) => {
-      if (!needle) return true;
-      return `${entry.name || ''} ${entry.civilopediaKey || ''}`.toLowerCase().includes(needle);
-    });
-    if (list.length === 0) {
+  const renderImportPicker = () => {
+    importPickerHost.innerHTML = '';
+    if (importEntries.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'hint';
-      empty.textContent = importEntries.length === 0
-        ? 'Select a source scenario to load entries.'
-        : 'No matches for current search.';
-      importList.appendChild(empty);
+      empty.textContent = 'Select a source scenario to load entries.';
+      importPickerHost.appendChild(empty);
       return;
     }
-    list.slice(0, 250).forEach((entry) => {
-      const key = String(entry.civilopediaKey || '').toUpperCase();
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = 'entity-import-item';
-      row.classList.toggle('active', key === selectedImportKey);
-      row.innerHTML = `<strong>${entry.name || key}</strong><span>${entry.civilopediaKey || ''}</span>`;
-      row.addEventListener('click', () => {
-        selectedImportKey = key;
-        renderImportList();
-      });
-      importList.appendChild(row);
+    const picker = createReferencePicker({
+      options: importEntries.slice(0, 400).map((entry) => ({
+        value: String(entry && entry.civilopediaKey || '').toUpperCase(),
+        label: `${String(entry && entry.name || entry && entry.civilopediaKey || '').trim()} (${String(entry && entry.civilopediaKey || '').trim()})`,
+        entry
+      })),
+      targetTabKey: tabKey,
+      currentValue: selectedImportKey || '-1',
+      searchPlaceholder: `Search ${tab.title} in selected scenario...`,
+      noneLabel: 'Choose item to import...',
+      onSelect: (value) => {
+        selectedImportKey = String(value || '').toUpperCase();
+        const picked = importEntries.find((entry) => String(entry && entry.civilopediaKey || '').toUpperCase() === selectedImportKey);
+        if (picked && !nameEditedManually) {
+          nameInput.value = String(picked.name || inferReferenceNameFromKey(picked.civilopediaKey, tabKey));
+          syncKeyFromName();
+        }
+      }
     });
+    importPickerHost.appendChild(picker);
   };
   const updateModeVisibility = () => {
     importWrap.classList.toggle('hidden', modeSelect.value !== 'import');
   };
+  const syncKeyFromName = () => {
+    if (keyEditedManually) return;
+    const name = String(nameInput.value || '').trim();
+    keyInput.value = makeUniqueReferenceCivilopediaKey(tab, tabKey, name || `NEW_${Date.now()}`);
+  };
 
-  importSearch.addEventListener('input', renderImportList);
   modeSelect.addEventListener('change', updateModeVisibility);
+  nameInput.addEventListener('input', () => {
+    nameEditedManually = true;
+    syncKeyFromName();
+  });
+  keyInput.addEventListener('input', () => {
+    keyEditedManually = true;
+  });
   importScenarioSelect.addEventListener('change', async () => {
     const value = String(importScenarioSelect.value || '');
     if (!value) return;
@@ -5374,7 +5609,8 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
     await loadImportSource(filePath);
   });
   updateModeVisibility();
-  renderImportList();
+  syncKeyFromName();
+  renderImportPicker();
 
   state.entityModal.open = true;
   el.entityModalOverlay.classList.remove('hidden');
@@ -5386,6 +5622,7 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
     const onConfirm = () => {
       const name = String(nameInput.value || '').trim();
       const mode = String(modeSelect.value || 'blank');
+      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, keyInput.value || name || `NEW_${Date.now()}`);
       if (!name) {
         setStatus('Name is required.', true);
         return;
@@ -5400,10 +5637,10 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
           setStatus('Select one import entry from the list.', true);
           return;
         }
-        resolveEntityModal({ mode, name, importedEntry: picked, importFilePath });
+        resolveEntityModal({ mode, name, key, importedEntry: picked, importFilePath });
         return;
       }
-      resolveEntityModal({ mode, name });
+      resolveEntityModal({ mode, name, key });
     };
     const onCancel = () => resolveEntityModal(null);
     if (el.entityModalConfirm) el.entityModalConfirm.onclick = onConfirm;
@@ -5468,6 +5705,9 @@ function renderReferenceTab(tab, tabKey) {
   search.placeholder = `Search ${tab.title}...`;
   search.value = state.referenceFilter[tabKey] || '';
   controls.appendChild(search);
+  const controlsRight = document.createElement('div');
+  controlsRight.className = 'reference-filter-right';
+  controls.appendChild(controlsRight);
 
   let kindFilter = null;
   let techTreeBtn = null;
@@ -5486,7 +5726,7 @@ function renderReferenceTab(tab, tabKey) {
       kindFilter.appendChild(o);
     });
     kindFilter.value = state.referenceImprovementKind[tabKey] || 'all';
-    controls.appendChild(kindFilter);
+    controlsRight.appendChild(kindFilter);
   }
   if (tabKey === 'technologies') {
     techTreeBtn = document.createElement('button');
@@ -5499,73 +5739,64 @@ function renderReferenceTab(tab, tabKey) {
     const label = document.createElement('span');
     label.textContent = 'Tech Tree';
     techTreeBtn.appendChild(label);
-    controls.appendChild(techTreeBtn);
+    controlsRight.appendChild(techTreeBtn);
   }
   if (referenceEditable && REFERENCE_MUTABLE_ENTITY_TABS.has(tabKey)) {
     const actionRow = document.createElement('div');
     actionRow.className = 'reference-entity-actions';
     const addBtn = document.createElement('button');
     addBtn.type = 'button';
-    addBtn.className = 'ghost';
+    addBtn.className = 'ghost action-add';
     addBtn.textContent = '＋ Add';
     const copyBtn = document.createElement('button');
     copyBtn.type = 'button';
-    copyBtn.className = 'ghost';
+    copyBtn.className = 'ghost action-copy';
     copyBtn.textContent = '⧉ Copy';
     const importBtn = document.createElement('button');
     importBtn.type = 'button';
-    importBtn.className = 'ghost';
+    importBtn.className = 'ghost action-import';
     importBtn.textContent = '⇪ Import';
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
-    deleteBtn.className = 'ghost';
+    deleteBtn.className = 'ghost action-delete';
     deleteBtn.textContent = '🗑 Delete';
     const selectedEntry = allEntries[Math.max(0, Number(state.referenceSelection[tabKey] || 0))] || null;
     copyBtn.disabled = !selectedEntry;
     deleteBtn.disabled = !selectedEntry;
 
-    addBtn.addEventListener('click', async () => {
-      const result = await promptReferenceCreateAction({ tab, tabKey, selectedEntry, initialMode: 'copy', lockMode: true });
-      if (!result) return;
-      const template = (result.mode === 'copy' ? selectedEntry : null) || allEntries[0] || null;
-      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, result.name);
-      const sourceEntry = result.mode === 'import' ? result.importedEntry : template;
+    addBtn.addEventListener('click', () => {
+      const singular = String(tab.title || 'Entry').replace(/s$/, '') || 'Entry';
+      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, `NEW_${tab.title.slice(0, 3)}_${Date.now()}`);
       const newEntry = buildNewReferenceEntryFromTemplate({
         tabKey,
-        sourceEntry,
+        sourceEntry: selectedEntry || allEntries[0] || null,
         civilopediaKey: key,
-        mode: result.mode === 'import' ? 'import' : (result.mode === 'copy' ? 'copy' : 'blank')
+        mode: 'blank',
+        displayName: `New ${singular}`
       });
       const ops = ensureReferenceRecordOps(tab);
-      if (result.mode === 'copy' && selectedEntry) {
-        ops.push({
-          op: 'copy',
-          sourceRef: String(selectedEntry.civilopediaKey || '').toUpperCase(),
-          newRecordRef: key
-        });
-      } else {
-        ops.push({
-          op: 'add',
-          newRecordRef: key
-        });
-      }
+      ops.push({
+        op: 'add',
+        newRecordRef: key
+      });
       rememberUndoSnapshot();
       tab.entries.unshift(newEntry);
       state.referenceSelection[tabKey] = 0;
       setDirty(true);
+      setStatus(`Added new ${tab.title.slice(0, -1)}. Edit Name and Key, then save.`);
       renderActiveTab({ preserveTabScroll: true });
     });
 
-    copyBtn.addEventListener('click', async () => {
+    copyBtn.addEventListener('click', () => {
       if (!selectedEntry) return;
-      const result = await promptReferenceCreateAction({ tab, tabKey, selectedEntry, initialMode: 'import', lockMode: true });
-      if (!result || result.mode !== 'copy') return;
-      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, result.name);
+      const copyName = `${selectedEntry.name || inferReferenceNameFromKey(selectedEntry.civilopediaKey, tabKey)} Copy`;
+      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, copyName);
       const newEntry = buildNewReferenceEntryFromTemplate({
         tabKey,
         sourceEntry: selectedEntry,
         civilopediaKey: key,
-        mode: 'copy'
+        mode: 'copy',
+        displayName: copyName
       });
       const ops = ensureReferenceRecordOps(tab);
       ops.push({
@@ -5577,18 +5808,20 @@ function renderReferenceTab(tab, tabKey) {
       tab.entries.unshift(newEntry);
       state.referenceSelection[tabKey] = 0;
       setDirty(true);
+      setStatus(`Copied "${selectedEntry.name || selectedEntry.civilopediaKey}" to a new entry. Update Name/Key as needed.`);
       renderActiveTab({ preserveTabScroll: true });
     });
 
     importBtn.addEventListener('click', async () => {
-      const result = await promptReferenceCreateAction({ tab, tabKey, selectedEntry });
+      const result = await promptReferenceCreateAction({ tab, tabKey, selectedEntry, initialMode: 'import', lockMode: true });
       if (!result || result.mode !== 'import' || !result.importedEntry) return;
-      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, result.name);
+      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, result.key || result.name);
       const newEntry = buildNewReferenceEntryFromTemplate({
         tabKey,
         sourceEntry: result.importedEntry,
         civilopediaKey: key,
-        mode: 'import'
+        mode: 'import',
+        displayName: result.name
       });
       const ops = ensureReferenceRecordOps(tab);
       ops.push({
@@ -5599,6 +5832,7 @@ function renderReferenceTab(tab, tabKey) {
       tab.entries.unshift(newEntry);
       state.referenceSelection[tabKey] = 0;
       setDirty(true);
+      setStatus(`Imported "${result.importedEntry.name || result.importedEntry.civilopediaKey}" into this scenario as a new entry.`);
       renderActiveTab({ preserveTabScroll: true });
     });
 
@@ -5632,7 +5866,7 @@ function renderReferenceTab(tab, tabKey) {
     actionRow.appendChild(copyBtn);
     actionRow.appendChild(importBtn);
     actionRow.appendChild(deleteBtn);
-    controls.appendChild(actionRow);
+    controlsRight.appendChild(actionRow);
   }
   wrap.appendChild(controls);
 
@@ -5801,11 +6035,33 @@ function renderReferenceTab(tab, tabKey) {
     identityMeta.appendChild(identityTitle);
     const identityGrid = document.createElement('div');
     identityGrid.className = 'kv-grid';
-    const keyLine = document.createElement('div');
-    keyLine.className = 'field-meta';
-    keyLine.innerHTML = `<strong>Key:</strong> ${entry.civilopediaKey}`;
-    attachRichTooltip(keyLine, formatSourceInfo({ source: 'Derived', readPath: '', writePath: '' }, 'Derived'));
-    identityGrid.appendChild(keyLine);
+    const keyRow = document.createElement('div');
+    keyRow.className = 'rule-row';
+    const keyLabel = document.createElement('label');
+    keyLabel.className = 'field-meta';
+    keyLabel.textContent = 'Key';
+    const keyControl = document.createElement('div');
+    keyControl.className = 'rule-control';
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.value = String(entry.civilopediaKey || '');
+    keyInput.disabled = !(referenceEditable && !!entry.isNew);
+    keyInput.title = keyInput.disabled ? 'Existing record keys are currently locked. New entries can be renamed before save.' : '';
+    keyInput.addEventListener('change', () => {
+      rememberUndoSnapshot();
+      const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, keyInput.value);
+      if (!changed) {
+        keyInput.value = String(entry.civilopediaKey || '');
+        return;
+      }
+      setDirty(true);
+      renderActiveTab({ preserveTabScroll: true });
+    });
+    keyControl.appendChild(keyInput);
+    keyRow.appendChild(keyLabel);
+    keyRow.appendChild(keyControl);
+    attachRichTooltip(keyRow, formatSourceInfo({ source: 'Derived', readPath: '', writePath: '' }, 'Derived'));
+    identityGrid.appendChild(keyRow);
     const depsLine = document.createElement('div');
     depsLine.className = 'field-meta';
     const techCtx = buildIdentityTechContext(tabKey, entry);

@@ -1,0 +1,14 @@
+#RACE_TEST
+Test Race
+^
+The Test people value exploration and trade.
+They also use $LINK<Maps=GCON_Maps> extensively.
+
+#DESC_RACE_TEST
+^The Test people founded Cité Alpha and spread quickly.
+^Their chronicles mention diplomacy and innovation.
+
+#GCON_TEST_TOPIC
+Test Topic
+^
+This topic exists for parser validation.

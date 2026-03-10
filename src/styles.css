@@ -698,6 +698,20 @@ button:disabled {
   word-break: break-all;
 }
 
+.entity-import-picker {
+  min-width: 0;
+}
+
+.entity-import-picker .tech-picker {
+  width: 100%;
+  min-width: 0;
+}
+
+.entity-import-picker .tech-picker-menu {
+  min-width: 100%;
+  width: max(100%, 320px);
+}
+
 .entity-import-list {
   border: 1px solid rgba(36, 25, 64, 0.12);
   border-radius: 10px;
@@ -2001,6 +2015,14 @@ button.danger:hover {
   padding: 6px 8px;
 }
 
+.tech-picker-btn-label {
+  display: block;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .tech-picker-menu {
   position: absolute;
   top: calc(100% + 4px);
@@ -2044,6 +2066,13 @@ button.danger:hover {
   background: transparent;
   text-align: left;
   padding: 4px 6px;
+}
+
+.tech-picker-row > span:last-child {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tech-picker-row:hover {
@@ -2269,15 +2298,54 @@ button.danger:hover {
 .reference-filter-row {
   display: grid;
   grid-template-columns: minmax(200px, 1fr) auto;
+  align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.reference-filter-right {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .reference-entity-actions {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+}
+
+.reference-entity-actions .action-add {
+  background: rgba(230, 247, 240, 0.96);
+  border-color: rgba(33, 138, 91, 0.34);
+  color: #1f6f4d;
+}
+
+.reference-entity-actions .action-copy {
+  background: rgba(235, 243, 255, 0.96);
+  border-color: rgba(61, 108, 188, 0.34);
+  color: #2f5f9c;
+}
+
+.reference-entity-actions .action-import {
+  background: rgba(244, 239, 255, 0.96);
+  border-color: rgba(108, 80, 176, 0.34);
+  color: #5c4693;
+}
+
+.reference-entity-actions .action-delete {
+  background: rgba(255, 240, 238, 0.96);
+  border-color: rgba(176, 65, 52, 0.34);
+  color: #9d3d33;
+}
+
+.reference-entity-actions button:hover:not(:disabled) {
+  filter: brightness(0.985);
+  box-shadow: 0 7px 16px rgba(24, 20, 50, 0.12);
 }
 
 .sticky-search-row {
@@ -2439,6 +2507,77 @@ button.danger:hover {
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
+}
+
+.pedia-link-preview {
+  position: fixed;
+  z-index: 95;
+  width: min(360px, calc(100vw - 20px));
+  border: 1px solid rgba(36, 25, 64, 0.2);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.985);
+  box-shadow: 0 20px 44px rgba(8, 14, 30, 0.28);
+  display: grid;
+  grid-template-columns: 126px 1fr;
+  gap: 9px;
+  padding: 9px;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 140ms ease, transform 140ms ease, visibility 0ms linear 140ms;
+}
+
+.pedia-link-preview.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  transition: opacity 140ms ease, transform 140ms ease, visibility 0ms linear 0ms;
+}
+
+.pedia-link-preview.no-image {
+  grid-template-columns: 1fr;
+}
+
+.pedia-link-preview-media {
+  border-radius: 10px;
+  border: 1px solid rgba(36, 25, 64, 0.14);
+  background: rgba(246, 250, 255, 0.9);
+  min-height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.pedia-link-preview.no-image .pedia-link-preview-media {
+  display: none;
+}
+
+.pedia-link-preview-canvas {
+  width: 100%;
+  height: auto;
+  max-height: 140px;
+  image-rendering: pixelated;
+}
+
+.pedia-link-preview-content {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 5px;
+}
+
+.pedia-link-preview-title {
+  font-size: 0.88rem;
+  line-height: 1.2;
+}
+
+.pedia-link-preview-text {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #4f5a80;
+  line-height: 1.35;
 }
 
 .multi-value-group {
@@ -2606,6 +2745,15 @@ button.danger:hover {
 
   .reference-filter-row {
     grid-template-columns: 1fr;
+  }
+
+  .reference-filter-right {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .reference-entity-actions {
+    flex-wrap: wrap;
   }
 
   .art-path-row {

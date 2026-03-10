@@ -1,0 +1,25 @@
+; diplomacy fixture
+#AIFIRSTCONTACT
+#civ 1
+#power 0
+#mood 0
+#random 1
+"I, $AI0, greet you in peace."
+"Welcome to the lands of $CIVNAME1."
+"$AI0 of the $CIVADJ3 acknowledges you."
+
+#AIFIRSTDEAL
+#civ 1
+#power 0
+#mood 0
+#random 1
+"Will you trade with us today?"
+"We propose exchange for mutual prosperity."
+"Consider this opening bargain from $AI4."
+
+#AIDEMANDTRIBUTE
+#civ 1
+#power 0
+#mood 0
+#random 3
+"Give us tribute."

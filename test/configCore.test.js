@@ -131,3 +131,155 @@ test('loadBundle + saveBundle writes to scope targets', () => {
   const savedText = fs.readFileSync(customPath, 'utf8');
   assert.match(savedText, /flag = false/);
 });
+
+test('loadBundle does not write target files before save', () => {
+  const root = mkTmpDir();
+  const scenario = mkTmpDir();
+  fs.writeFileSync(path.join(root, 'default.c3x_config.ini'), 'flag = true\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_config.txt'), '#District\nname = Base\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_wonders_config.txt'), '#Wonder\nname = W\nimg_row = 0\nimg_column = 0\nimg_construct_row = 0\nimg_construct_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_natural_wonders_config.txt'), '#Wonder\nname = N\nterrain_type = grassland\nimg_row = 0\nimg_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.tile_animations.txt'), '#Animation\nname = A\nini_path = X\\Y.ini\ntype = terrain\nterrain_types = grassland\n', 'utf8');
+
+  const customBase = path.join(root, 'custom.c3x_config.ini');
+  const userDistricts = path.join(root, 'user.districts_config.txt');
+  assert.equal(fs.existsSync(customBase), false);
+  assert.equal(fs.existsSync(userDistricts), false);
+
+  const bundle = loadBundle({ mode: 'global', c3xPath: root, scenarioPath: scenario });
+  assert.ok(bundle && bundle.tabs && bundle.tabs.base);
+  assert.equal(fs.existsSync(customBase), false);
+  assert.equal(fs.existsSync(userDistricts), false);
+});
+
+test('scenario Civilopedia save preserves windows-1252 text while applying edits', () => {
+  const root = mkTmpDir();
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  fs.writeFileSync(path.join(root, 'default.c3x_config.ini'), 'flag = true\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_config.txt'), '#District\nname = Base\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_wonders_config.txt'), '#Wonder\nname = W\nimg_row = 0\nimg_column = 0\nimg_construct_row = 0\nimg_construct_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_natural_wonders_config.txt'), '#Wonder\nname = N\nterrain_type = grassland\nimg_row = 0\nimg_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.tile_animations.txt'), '#Animation\nname = A\nini_path = X\\Y.ini\ntype = terrain\nterrain_types = grassland\n', 'utf8');
+
+  const civPath = path.join(textDir, 'Civilopedia.txt');
+  const initial = [
+    '#RACE_AZTECS',
+    'Legacy Aztecs overview',
+    '',
+    '#DESC_RACE_AZTECS',
+    'Legacy entry',
+    '',
+    '#RACE_MAYANS',
+    'founded Tenochtitl\u00e1n',
+    ''
+  ].join('\n');
+  fs.writeFileSync(civPath, Buffer.from(initial, 'latin1'));
+
+  const tabs = {
+    civilizations: {
+      title: 'Civs',
+      type: 'reference',
+      entries: [
+        {
+          civilopediaKey: 'RACE_AZTECS',
+          overview: 'Updated overview text',
+          originalOverview: 'Legacy Aztecs overview',
+          description: 'Legacy entry',
+          originalDescription: 'Legacy entry',
+          iconPaths: [],
+          originalIconPaths: [],
+          racePaths: [],
+          originalRacePaths: [],
+          animationName: '',
+          originalAnimationName: '',
+          biqFields: []
+        }
+      ],
+      sourceDetails: {
+        civilopediaScenario: civPath
+      }
+    }
+  };
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: '',
+    scenarioPath: scenario,
+    tabs
+  });
+  assert.equal(saveResult.ok, true);
+
+  const saved = fs.readFileSync(civPath);
+  assert.ok(saved.includes(Buffer.from([0xe1])), 'expected windows-1252 encoded accented character byte');
+  const asLatin1 = saved.toString('latin1');
+  assert.match(asLatin1, /Updated overview text/);
+  assert.match(asLatin1, /Tenochtitl\u00e1n/);
+});
+
+test('saveBundle rolls back earlier file writes if a later target fails', () => {
+  const root = mkTmpDir();
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+
+  fs.writeFileSync(path.join(root, 'default.c3x_config.ini'), 'flag = true\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_config.txt'), '#District\nname = Base\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_wonders_config.txt'), '#Wonder\nname = W\nimg_row = 0\nimg_column = 0\nimg_construct_row = 0\nimg_construct_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_natural_wonders_config.txt'), '#Wonder\nname = N\nterrain_type = grassland\nimg_row = 0\nimg_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.tile_animations.txt'), '#Animation\nname = A\nini_path = X\\Y.ini\ntype = terrain\nterrain_types = grassland\n', 'utf8');
+
+  const scenarioBasePath = path.join(scenario, 'scenario.c3x_config.ini');
+  const originalBaseText = 'flag = true\nkeep = original\n';
+  fs.writeFileSync(scenarioBasePath, originalBaseText, 'utf8');
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: root, scenarioPath: scenario });
+  const flagRow = bundle.tabs.base.rows.find((row) => row.key === 'flag');
+  assert.ok(flagRow, 'expected base flag row');
+  flagRow.value = 'false';
+
+  const blocker = path.join(scenario, 'not-a-dir');
+  fs.writeFileSync(blocker, 'x', 'utf8');
+  const invalidCivilopediaPath = path.join(blocker, 'Civilopedia.txt');
+  const tabs = {
+    ...bundle.tabs,
+    civilizations: {
+      title: 'Civs',
+      type: 'reference',
+      entries: [
+        {
+          civilopediaKey: 'RACE_AZTECS',
+          overview: 'Changed overview text',
+          originalOverview: 'Original overview text',
+          description: '',
+          originalDescription: '',
+          iconPaths: [],
+          originalIconPaths: [],
+          racePaths: [],
+          originalRacePaths: [],
+          animationName: '',
+          originalAnimationName: '',
+          biqFields: []
+        }
+      ],
+      sourceDetails: {
+        civilopediaScenario: invalidCivilopediaPath
+      }
+    }
+  };
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: '',
+    scenarioPath: scenario,
+    tabs
+  });
+
+  assert.equal(saveResult.ok, false);
+  assert.match(String(saveResult.error || ''), /rolled back/i);
+  assert.equal(fs.readFileSync(scenarioBasePath, 'utf8'), originalBaseText);
+});

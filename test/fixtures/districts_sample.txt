@@ -1,0 +1,8 @@
+; districts fixture
+#District
+name = Encampment
+tooltip = Build Encampment
+
+#District
+name = Campus
+tooltip = Build Campus

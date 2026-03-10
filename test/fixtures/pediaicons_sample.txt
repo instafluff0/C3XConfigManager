@@ -1,0 +1,12 @@
+; sample pedia icons fixture
+#ICON_RACE_TEST
+art\leaderheads\test_neutral.pcx
+art\leaderheads\test_advisor.pcx
+
+#ANIMNAME_PRTO_TEST_UNIT
+Test Unit
+
+#TECH_TEST_TECH
+Art\tech chooser\Icons\test-small.pcx
+#TECH_TEST_TECH_LARGE
+Art\tech chooser\Icons\test-large.pcx
