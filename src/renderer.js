@@ -292,6 +292,33 @@ const BASE_ENUM_OPTIONS = {
   day_night_cycle_mode: ['off', 'timer', 'user-time', 'every-turn', 'specified'],
   seasonal_cycle_mode: ['off', 'timer', 'user-season', 'every-turn', 'on-day-night-hour', 'specified']
 };
+const BASE_SEGMENTED_OPTIONS = {
+  draw_lines_using_gdi_plus: ['never', 'wine', 'always'],
+  double_minimap_size: ['never', 'always', 'high-def'],
+  unit_cycle_search_criteria: ['standard', 'similar-near-start', 'similar-near-destination'],
+  day_night_cycle_mode: ['off', 'timer', 'user-time', 'every-turn', 'specified'],
+  seasonal_cycle_mode: ['off', 'timer', 'user-season', 'every-turn', 'on-day-night-hour', 'specified'],
+  distribution_hub_yield_division_mode: ['flat', 'scale-by-city-count'],
+  ai_distribution_hub_build_strategy: ['auto', 'by-city-count'],
+  ai_auto_build_great_wall_strategy: ['all-borders', 'other-civ-bordered-only'],
+  work_area_limit: ['none', 'cultural', 'cultural-min-2', 'cultural-or-adjacent'],
+  land_retreat_rules: ['standard', 'none', 'all-units', 'if-faster'],
+  sea_retreat_rules: ['standard', 'none', 'all-units', 'if-faster'],
+  aircraft_victory_animation: ['none', 'blank', 'default', 'run', 'attack1', 'attack2', 'attack3', 'death', 'fortify', 'fidget', 'victory', 'capture', 'fortress', 'build', 'road', 'mine', 'irrigate', 'jungle', 'forest', 'plant']
+};
+const BASE_REFERENCE_LIST_TAB_BY_KEY = {
+  exclude_types_from_units_per_tile_limit: 'units',
+  limit_defensive_retreat_on_water_to_types: 'units',
+  ptw_like_artillery_targeting: 'units',
+  ai_multi_start_extra_palaces: 'improvements'
+};
+const BASE_MULTI_CHOICE_LIST_OPTIONS = {
+  special_defensive_bombard_rules: ['lethal', 'aerial', 'not-invisible', 'blitz', 'docked-vs-land', 'all'],
+  special_zone_of_control_rules: ['amphibious', 'lethal', 'aerial', 'not-from-inside', 'all'],
+  land_transport_rules: ['load-onto-boat', 'join-army', 'no-defense-from-inside', 'no-escape'],
+  special_helicopter_rules: ['allow-on-carriers', 'passenger-airdrop', 'no-defense-from-inside', 'no-escape'],
+  enabled_seasons: ['summer', 'fall', 'winter', 'spring']
+};
 
 const BASE_STRUCTURED_LIST_FIELDS = new Set([
   'limit_units_per_tile',
@@ -312,6 +339,108 @@ const BASE_FIELD_DETAILS = {
   minimum_natural_wonder_separation: 'Minimum tile distance between natural wonders.',
   draw_lines_using_gdi_plus: 'Line rendering strategy.'
 };
+const C3X_RELEASE_BY_KEY = Object.freeze({
+  city_limit: 'R25',
+  allow_multipage_civilopedia_descriptions: 'R25',
+  years_to_double_building_culture: 'R25',
+  prevent_old_units_from_upgrading_past_ability_block: 'R25',
+  tourism_time_scale_percent: 'R25',
+  introduce_all_human_players_at_start_of_hotseat_game: 'R25',
+  double_minimap_size: 'R25',
+  convert_some_popups_into_online_mp_messages: 'R25',
+  enable_debug_mode_switch: 'R25',
+  show_territory_colors_on_water_tiles_in_minimap: 'R25',
+  accentuate_cities_on_minimap: 'R25',
+  share_wonders_in_hotseat: 'R24',
+  enable_caravan_unit_ai: 'R24',
+  delete_off_map_ai_units: 'R24',
+  patch_premature_truncation_of_found_paths: 'R24',
+  patch_zero_production_crash: 'R24',
+  fix_overlapping_specialist_yield_icons: 'R24',
+  ai_settler_perfume_on_founding: 'R23',
+  ai_settler_perfume_on_founding_duration: 'R23',
+  limit_unit_loading_to_one_transport_per_turn: 'R23',
+  rebase_range_multiplier: 'R23',
+  city_work_radius: 'R22',
+  work_area_limit: 'R22',
+  do_not_unassign_workers_from_polluted_tiles: 'R22',
+  limit_units_per_tile: 'R21',
+  chance_for_nukes_to_destroy_max_one_hp_units: 'R21',
+  limited_railroads_work_like_fast_roads: 'R21',
+  allow_sale_of_aqueducts_and_hospitals: 'R21',
+  no_cross_shore_detection: 'R21',
+  remove_city_improvement_limit: 'R20',
+  production_perfume: 'R20',
+  technology_perfume: 'R20',
+  government_perfume: 'R20',
+  patch_disease_stopping_tech_flag_bug: 'R20',
+  show_hp_of_stealth_attack_options: 'R20',
+  warn_when_chosen_building_would_replace_another: 'R20',
+  exclude_invisible_units_from_stealth_attack: 'R20',
+  compact_strategic_resource_display_on_city_screen: 'R20',
+  convert_to_landmark_after_planting_forest: 'R20',
+  ai_multi_city_start: 'R18',
+  ai_multi_start_extra_palaces: 'R18',
+  allow_upgrades_in_any_city: 'R18',
+  do_not_generate_volcanos: 'R18',
+  enable_trade_net_x: 'R17',
+  civ_aliases_by_era: 'R17',
+  leader_aliases_by_era: 'R17',
+  allow_defensive_retreat_on_water: 'R17',
+  extra_unit_maintenance_per_shields: 'R17',
+  ai_worker_requirement_percent: 'R17',
+  dont_escort_unflagged_units: 'R17',
+  allow_airdrop_without_airport: 'R17',
+  allow_bombard_of_other_improvs_on_occupied_airfield: 'R17',
+  optimize_improvement_loops: 'R16',
+  show_untradable_techs_on_trade_screen: 'R16',
+  no_elvis_easter_egg: 'R16',
+  replay_ai_moves_in_hotseat_games: 'R15',
+  enable_stealth_attack_via_bombardment: 'R15',
+  ptw_like_artillery_targeting: 'R15',
+  intercept_recon_missions: 'R15',
+  charge_one_move_for_recon_and_interception: 'R15',
+  immunize_aircraft_against_bombardment: 'R15',
+  aggressively_penalize_bankruptcy: 'R14',
+  strengthen_forbidden_palace_ocn_effect: 'R13',
+  allow_military_leaders_to_hurry_wonders: 'R13',
+  ai_research_multiplier: 'R13',
+  building_prereqs_for_units: 'R11',
+  buildings_generating_resources: 'R11',
+  dont_end_units_turn_after_airdrop: 'R10',
+  disable_worker_automation: 'R9',
+  compact_luxury_display_on_city_screen: 'R17',
+  minimum_city_separation: 'R7',
+  ai_build_artillery_ratio: 'R6',
+  enable_stack_unit_commands: 'R5',
+  skip_repeated_tile_improv_replacement_asks: 'R5',
+  enable_stack_bombard: 'R1',
+  prevent_autorazing: 'R1',
+  prevent_razing_by_players: 'R1',
+  enable_districts: 'R26',
+  allow_sale_of_small_wonders: 'R26',
+  allow_unload_from_army: 'R26',
+  no_land_anti_air_from_inside_naval_transport: 'R26',
+  prevent_enslaving_by_bombardment: 'R26',
+  land_transport_rules: 'R26',
+  allow_adjacent_resources_of_different_types: 'R26',
+  luxury_randomized_appearance_rate_percent: 'R26',
+  tiles_per_non_luxury_resource: 'R26',
+  neighborhood_needed_message_frequency: 'R26',
+  show_message_when_building_received_by_mutual_district: 'R26',
+  special_helicopter_rules: 'R27',
+  aircraft_victory_animation: 'R27',
+  unit_cycle_search_criteria: 'R27',
+  show_armies_performing_defensive_bombard: 'R27',
+  exclude_types_from_units_per_tile_limit: 'R27',
+  limit_defensive_retreat_on_water_to_types: 'R27',
+  enable_custom_animations: 'R27'
+});
+const C3X_RELEASE_PREFIX_RULES = [
+  { re: /^(day_night_cycle_mode|elapsed_minutes_per_day_night_hour_transition|fixed_hours_per_turn_for_day_night_cycle|pinned_hour_for_day_night_cycle|seasonal_cycle_mode|enabled_seasons|pinned_season_for_seasonal_cycle|elapsed_minutes_per_season_transition|fixed_turns_per_season|transition_season_on_day_night_hour)$/, release: 'R25', confidence: 'inferred' },
+  { re: /^(enable_natural_wonders|add_natural_wonders_to_scenarios_if_none|show_natural_wonder_name_on_map|minimum_natural_wonder_separation)$/, release: 'R26', confidence: 'inferred' },
+  { re: /^(enable_(neighborhood_districts|wonder_districts|distribution_hub_districts|aerodrome_districts|port_districts|bridge_districts|canal_districts|central_rail_hub_districts|energy_grid_districts|great_wall_districts)|cities_with_mutual_district_receive_buildings|cities_with_mutual_district_receive_wonders|show_message_when_building_lost_to_destroyed_district|air_units_use_aerodrome_districts_not_cities|naval_units_use_port_districts_not_cities|maximum_pop_before_neighborhood_needed|per_neighborhood_pop_growth_enabled|destroying_neighborhood_reduces_pop|completed_wonder_districts_can_be_destroyed|destroyed_wonders_can_be_built_again|distribution_hub_yield_division_mode|ai_distribution_hub_build_strategy|distribution_hub_food_yield_divisor|distribution_hub_shield_yield_divisor|ai_ideal_distribution_hub_count_per_100_cities|max_distribution_hub_count_per_100_cities|central_rail_hub_distribution_food_bonus_percent|central_rail_hub_distribution_shield_bonus_percent|expand_water_tile_checks_to_city_work_area|workers_can_enter_coast|max_contiguous_bridge_districts|max_contiguous_canal_districts|ai_canal_eval_min_bisected_land_tiles|ai_bridge_canal_eval_block_size|ai_bridge_eval_lake_tile_threshold|ai_can_replace_existing_districts_with_canals|ai_builds_bridges|ai_builds_canals|ai_defends_districts|ai_city_district_max_build_wait_turns|disable_great_wall_city_defense_bonus|great_wall_districts_impassible_by_others|auto_build_great_wall_around_territory|great_wall_auto_build_wonder_name|ai_auto_build_great_wall_strategy|enable_city_work_radii_highlights)$/, release: 'R26', confidence: 'inferred' }
+];
 const EDITABLE_TAB_KEYS = [
   'base',
   'districts',
@@ -1614,6 +1743,31 @@ function toFriendlyKey(key) {
   return key.split('_').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
 }
 
+function getC3xReleaseInfo(rawKey) {
+  const key = String(rawKey || '').trim().toLowerCase();
+  if (!key) {
+    return { label: 'R1', confidence: 'assumed', note: 'Release unknown.' };
+  }
+  const exact = C3X_RELEASE_BY_KEY[key];
+  if (exact) {
+    return { label: exact, confidence: 'exact', note: `Introduced in ${exact} (changelog/direct mapping).` };
+  }
+  for (const rule of C3X_RELEASE_PREFIX_RULES) {
+    if (rule.re.test(key)) {
+      return {
+        label: rule.release,
+        confidence: (rule.release === 'R25' || rule.release === 'R26') ? 'exact' : (rule.confidence || 'inferred'),
+        note: `Likely introduced in ${rule.release} (inferred from related feature group in changelog).`
+      };
+    }
+  }
+  return {
+    label: 'R1',
+    confidence: 'assumed',
+    note: 'Not explicitly mapped in changelog; assumed to be an older core setting.'
+  };
+}
+
 function createBaseMeta(row, fieldDocs) {
   const meta = document.createElement('div');
   meta.className = 'field-meta-block';
@@ -1749,6 +1903,250 @@ function serializeBuildingResourceItems(items) {
   return serializeStructuredEntries(entries);
 }
 
+function quoteIfNeeded(value) {
+  const v = String(value || '').trim();
+  if (!v) return '';
+  if (/[\s,:\[\]]/.test(v)) return `"${v}"`;
+  return v;
+}
+
+function tokenizeSpaceAware(text) {
+  const s = String(text || '').trim();
+  const out = [];
+  let cur = '';
+  let inQuotes = false;
+  let parenDepth = 0;
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      cur += ch;
+      continue;
+    }
+    if (!inQuotes) {
+      if (ch === '(') parenDepth += 1;
+      if (ch === ')' && parenDepth > 0) parenDepth -= 1;
+      if ((ch === ' ' || ch === '\t') && parenDepth === 0) {
+        const token = cur.trim();
+        if (token) out.push(token);
+        cur = '';
+        continue;
+      }
+    }
+    cur += ch;
+  }
+  const tail = cur.trim();
+  if (tail) out.push(tail);
+  return out;
+}
+
+function parseCivAliasesByEra(value) {
+  return parseStructuredEntries(value).map((entry) => {
+    const i = entry.indexOf(':');
+    if (i < 0) return { source: entry.trim().replace(/^"(.*)"$/, '$1'), replacements: [] };
+    const source = entry.slice(0, i).trim().replace(/^"(.*)"$/, '$1');
+    const rhs = entry.slice(i + 1).trim();
+    const replacements = tokenizeSpaceAware(rhs).map((t) => t.replace(/^"(.*)"$/, '$1')).filter(Boolean);
+    return { source, replacements };
+  });
+}
+
+function serializeCivAliasesByEra(items) {
+  const entries = (Array.isArray(items) ? items : [])
+    .map((item) => {
+      const source = String(item && item.source || '').trim();
+      const repls = (Array.isArray(item && item.replacements) ? item.replacements : [])
+        .map((r) => String(r || '').trim())
+        .filter(Boolean);
+      if (!source || repls.length === 0) return '';
+      return `${quoteIfNeeded(source)}: ${repls.map((r) => quoteIfNeeded(r)).join(' ')}`;
+    })
+    .filter(Boolean);
+  return serializeStructuredEntries(entries);
+}
+
+function parseLeaderAliasToken(token) {
+  const t = String(token || '').trim();
+  if (!t) return { name: '', gender: '', title: '' };
+  const match = t.match(/^(.*?)(?:\s*\(([^)]*)\))?$/);
+  const rawName = String((match && match[1]) || t).trim().replace(/^"(.*)"$/, '$1');
+  const meta = String((match && match[2]) || '').trim();
+  let gender = '';
+  let title = '';
+  if (meta) {
+    const parts = meta.split(',').map((p) => String(p || '').trim()).filter(Boolean);
+    if (parts.length > 0) {
+      const g = String(parts[0] || '').toUpperCase();
+      if (g === 'M' || g === 'F') gender = g;
+      else title = parts.join(', ');
+      if (parts.length > 1) title = parts.slice(1).join(', ').trim();
+    }
+  }
+  return { name: rawName, gender, title };
+}
+
+function parseLeaderAliasesByEra(value) {
+  return parseStructuredEntries(value).map((entry) => {
+    const i = entry.indexOf(':');
+    if (i < 0) return { source: entry.trim().replace(/^"(.*)"$/, '$1'), replacements: [] };
+    const source = entry.slice(0, i).trim().replace(/^"(.*)"$/, '$1');
+    const rhs = entry.slice(i + 1).trim();
+    const tokens = rhs.match(/"[^"]+"(?:\s*\([^)]*\))?|[^\s"]+(?:\s*\([^)]*\))?/g) || [];
+    const replacements = tokens.map((tok) => parseLeaderAliasToken(tok)).filter((r) => r.name);
+    return { source, replacements };
+  });
+}
+
+function serializeLeaderAliasesByEra(items) {
+  const entries = (Array.isArray(items) ? items : [])
+    .map((item) => {
+      const source = String(item && item.source || '').trim();
+      const repls = Array.isArray(item && item.replacements) ? item.replacements : [];
+      const chunks = repls
+        .map((rep) => {
+          const name = String(rep && rep.name || '').trim();
+          if (!name) return '';
+          const gender = String(rep && rep.gender || '').trim().toUpperCase();
+          const title = String(rep && rep.title || '').trim();
+          const namePart = quoteIfNeeded(name);
+          if (!gender && !title) return namePart;
+          if (gender && title) return `${namePart} (${gender}, ${title})`;
+          if (gender) return `${namePart} (${gender})`;
+          return `${namePart} (${title})`;
+        })
+        .filter(Boolean);
+      if (!source || chunks.length === 0) return '';
+      return `${quoteIfNeeded(source)}: ${chunks.join(' ')}`;
+    })
+    .filter(Boolean);
+  return serializeStructuredEntries(entries);
+}
+
+function getNamedReferenceOptionsForTab(tabKey) {
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+  if (!tab || !Array.isArray(tab.entries)) return [];
+  return tab.entries
+    .map((entry) => ({
+      value: String(entry && entry.name || '').trim(),
+      label: String(entry && entry.name || '').trim(),
+      entry
+    }))
+    .filter((opt) => !!opt.value)
+    .sort((a, b) => String(a.label).localeCompare(String(b.label), 'en', { sensitivity: 'base' }));
+}
+
+function getCivilizationNameSuggestions() {
+  return getNamedReferenceOptionsForTab('civilizations').map((opt) => String(opt.value || '')).filter(Boolean);
+}
+
+function getLeaderNameSuggestions() {
+  const out = new Set();
+  const civTab = state.bundle && state.bundle.tabs && state.bundle.tabs.civilizations;
+  const entries = civTab && Array.isArray(civTab.entries) ? civTab.entries : [];
+  entries.forEach((entry) => {
+    const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+    const leader = fields.find((f) => String(f && (f.baseKey || f.key) || '').toLowerCase() === 'leadername');
+    const leaderName = String(leader && leader.value || '').trim();
+    if (leaderName) out.add(leaderName);
+  });
+  return Array.from(out).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+}
+
+function attachSuggestions(input, suggestions) {
+  if (!input || !Array.isArray(suggestions) || suggestions.length === 0) return null;
+  const safe = suggestions.map((s) => String(s || '').trim()).filter(Boolean);
+  if (safe.length === 0) return null;
+  const listId = `suggest-${Math.random().toString(36).slice(2)}`;
+  const dl = document.createElement('datalist');
+  dl.id = listId;
+  safe.forEach((value) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    dl.appendChild(opt);
+  });
+  input.setAttribute('list', listId);
+  return dl;
+}
+
+function makeSegmentedChoiceControl(options, value, onChange) {
+  const wrap = document.createElement('div');
+  wrap.className = 'segmented-control';
+  const opts = (Array.isArray(options) ? options : []).map((opt) => String(opt || '').trim()).filter(Boolean);
+  const selected = String(value || '').trim();
+  opts.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'segmented-control-btn';
+    btn.textContent = opt;
+    btn.classList.toggle('active', opt === selected);
+    btn.addEventListener('click', () => {
+      Array.from(wrap.querySelectorAll('.segmented-control-btn')).forEach((node) => node.classList.remove('active'));
+      btn.classList.add('active');
+      if (typeof onChange === 'function') onChange(opt);
+    });
+    wrap.appendChild(btn);
+  });
+  return wrap;
+}
+
+function makeNamedListPickerEditor(config) {
+  const cfg = config || {};
+  const tabKey = String(cfg.tabKey || '').trim();
+  const onValuesChange = typeof cfg.onValuesChange === 'function' ? cfg.onValuesChange : null;
+  const options = getNamedReferenceOptionsForTab(tabKey);
+  const wrap = document.createElement('div');
+  wrap.className = 'structured-list';
+  let values = Array.isArray(cfg.values) ? cfg.values.map((v) => String(v || '').trim()).filter(Boolean) : [];
+  if (values.length === 0) values = [''];
+  const rerender = () => {
+    wrap.innerHTML = '';
+    values.forEach((value, idx) => {
+      const line = document.createElement('div');
+      line.className = 'kv-row compact';
+      const opts = options.slice();
+      if (value && !opts.some((opt) => opt.value === value)) {
+        opts.unshift({ value, label: value, entry: null });
+      }
+      const picker = createReferencePicker({
+        options: opts,
+        targetTabKey: tabKey,
+        currentValue: value || '-1',
+        searchPlaceholder: `Search ${toFriendlyKey(tabKey).replace(/s$/, '')}...`,
+        noneLabel: '(none)',
+        onSelect: (next) => {
+          const normalized = String(next || '').trim();
+          values[idx] = normalized === '-1' ? '' : normalized;
+          if (onValuesChange) onValuesChange(values.filter(Boolean));
+          rerender();
+        }
+      });
+      line.appendChild(picker);
+      const del = document.createElement('button');
+      del.type = 'button';
+      withRemoveIcon(del, ' Remove');
+      del.addEventListener('click', () => {
+        values.splice(idx, 1);
+        if (values.length === 0) values.push('');
+        if (onValuesChange) onValuesChange(values.filter(Boolean));
+        rerender();
+      });
+      line.appendChild(del);
+      wrap.appendChild(line);
+    });
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.textContent = 'Add Item';
+    add.addEventListener('click', () => {
+      values.push('');
+      if (onValuesChange) onValuesChange(values.filter(Boolean));
+      rerender();
+    });
+    wrap.appendChild(add);
+  };
+  rerender();
+  return wrap;
+}
+
 function makeInputForBaseRow(row, onChange) {
   if (row.key === 'limit_units_per_tile') {
     const wrap = document.createElement('div');
@@ -1863,7 +2261,391 @@ function makeInputForBaseRow(row, onChange) {
     return wrap;
   };
 
+  if (BASE_REFERENCE_LIST_TAB_BY_KEY[row.key]) {
+    const refTabKey = BASE_REFERENCE_LIST_TAB_BY_KEY[row.key];
+    const initial = parseStructuredEntries(row.value);
+    const editor = makeNamedListPickerEditor({
+      tabKey: refTabKey,
+      values: initial,
+      onValuesChange: (values) => onChange(serializeStructuredEntries(values))
+    });
+    return editor;
+  }
+
+  if (row.key === 'unit_limits') {
+    const wrap = document.createElement('div');
+    wrap.className = 'structured-list';
+    let items = parseNameAmountItems(row.value);
+    if (items.length === 0) items = [{ name: '', amount: '' }];
+    const rerender = () => {
+      wrap.innerHTML = '';
+      items.forEach((item, idx) => {
+        const block = document.createElement('div');
+        block.className = 'structured-card';
+        const unitOpts = getNamedReferenceOptionsForTab('units');
+        if (item.name && !unitOpts.some((opt) => opt.value === item.name)) {
+          unitOpts.unshift({ value: item.name, label: item.name, entry: null });
+        }
+        const unitPicker = createReferencePicker({
+          options: unitOpts,
+          targetTabKey: 'units',
+          currentValue: item.name || '-1',
+          searchPlaceholder: 'Search Unit...',
+          noneLabel: '(none)',
+          onSelect: (next) => {
+            const normalized = String(next || '').trim();
+            items[idx].name = normalized === '-1' ? '' : normalized;
+            onChange(serializeNameAmountItems(items));
+            rerender();
+          }
+        });
+        block.appendChild(unitPicker);
+        const formula = document.createElement('input');
+        formula.placeholder = 'Limit formula (e.g. 3, 1 per-city, 5 + 2 per-city)';
+        formula.value = item.amount;
+        formula.addEventListener('input', () => {
+          items[idx].amount = formula.value;
+          onChange(serializeNameAmountItems(items));
+        });
+        block.appendChild(formula);
+        const del = document.createElement('button');
+        del.type = 'button';
+        withRemoveIcon(del, ' Remove');
+        del.addEventListener('click', () => {
+          items.splice(idx, 1);
+          if (items.length === 0) items.push({ name: '', amount: '' });
+          onChange(serializeNameAmountItems(items));
+          rerender();
+        });
+        block.appendChild(del);
+        wrap.appendChild(block);
+      });
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.textContent = 'Add Item';
+      add.addEventListener('click', () => {
+        items.push({ name: '', amount: '' });
+        rerender();
+      });
+      wrap.appendChild(add);
+    };
+    rerender();
+    return wrap;
+  }
+
+  if (row.key === 'civ_aliases_by_era') {
+    const wrap = document.createElement('div');
+    wrap.className = 'structured-list';
+    let items = parseCivAliasesByEra(row.value);
+    if (items.length === 0) items = [{ source: '', replacements: ['', '', '', ''] }];
+    const rerender = () => {
+      wrap.innerHTML = '';
+      items.forEach((item, idx) => {
+        const block = document.createElement('div');
+        block.className = 'structured-card';
+        const civSuggestions = getCivilizationNameSuggestions();
+        const source = document.createElement('input');
+        source.placeholder = 'Original civ name/adjective';
+        source.value = item.source || '';
+        source.addEventListener('input', () => {
+          items[idx].source = source.value;
+          onChange(serializeCivAliasesByEra(items));
+        });
+        block.appendChild(source);
+        const sourceDl = attachSuggestions(source, civSuggestions);
+        if (sourceDl) block.appendChild(sourceDl);
+        const grid = document.createElement('div');
+        grid.className = 'kv-grid';
+        const repls = Array.isArray(item.replacements) ? item.replacements.slice(0, 4) : [];
+        while (repls.length < 4) repls.push('');
+        repls.forEach((rep, eraIdx) => {
+          const era = document.createElement('input');
+          era.placeholder = `Era ${eraIdx + 1} replacement`;
+          era.value = rep;
+          era.addEventListener('input', () => {
+            if (!Array.isArray(items[idx].replacements)) items[idx].replacements = ['', '', '', ''];
+            items[idx].replacements[eraIdx] = era.value;
+            onChange(serializeCivAliasesByEra(items));
+          });
+          grid.appendChild(era);
+          const eraDl = attachSuggestions(era, civSuggestions);
+          if (eraDl) grid.appendChild(eraDl);
+        });
+        block.appendChild(grid);
+        const del = document.createElement('button');
+        del.type = 'button';
+        withRemoveIcon(del, ' Remove');
+        del.addEventListener('click', () => {
+          items.splice(idx, 1);
+          if (items.length === 0) items.push({ source: '', replacements: ['', '', '', ''] });
+          onChange(serializeCivAliasesByEra(items));
+          rerender();
+        });
+        block.appendChild(del);
+        wrap.appendChild(block);
+      });
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.textContent = 'Add Item';
+      add.addEventListener('click', () => {
+        items.push({ source: '', replacements: ['', '', '', ''] });
+        rerender();
+      });
+      wrap.appendChild(add);
+    };
+    rerender();
+    return wrap;
+  }
+
+  if (row.key === 'leader_aliases_by_era') {
+    const wrap = document.createElement('div');
+    wrap.className = 'structured-list';
+    let items = parseLeaderAliasesByEra(row.value);
+    if (items.length === 0) items = [{ source: '', replacements: [{ name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }] }];
+    const rerender = () => {
+      wrap.innerHTML = '';
+      items.forEach((item, idx) => {
+        const block = document.createElement('div');
+        block.className = 'structured-card';
+        const leaderSuggestions = getLeaderNameSuggestions();
+        const source = document.createElement('input');
+        source.placeholder = 'Original leader name';
+        source.value = item.source || '';
+        source.addEventListener('input', () => {
+          items[idx].source = source.value;
+          onChange(serializeLeaderAliasesByEra(items));
+        });
+        block.appendChild(source);
+        const sourceDl = attachSuggestions(source, leaderSuggestions);
+        if (sourceDl) block.appendChild(sourceDl);
+        const repWrap = document.createElement('div');
+        repWrap.className = 'structured-list';
+        let reps = Array.isArray(item.replacements) ? item.replacements.slice(0, 4) : [];
+        while (reps.length < 4) reps.push({ name: '', gender: '', title: '' });
+        reps.forEach((rep, eraIdx) => {
+          const rowWrap = document.createElement('div');
+          rowWrap.className = 'kv-row';
+          const name = document.createElement('input');
+          name.placeholder = `Era ${eraIdx + 1} leader`;
+          name.value = String(rep && rep.name || '');
+          name.addEventListener('input', () => {
+            if (!Array.isArray(items[idx].replacements)) items[idx].replacements = [];
+            if (!items[idx].replacements[eraIdx]) items[idx].replacements[eraIdx] = { name: '', gender: '', title: '' };
+            items[idx].replacements[eraIdx].name = name.value;
+            onChange(serializeLeaderAliasesByEra(items));
+          });
+          rowWrap.appendChild(name);
+          const nameDl = attachSuggestions(name, leaderSuggestions);
+          if (nameDl) rowWrap.appendChild(nameDl);
+          const gender = document.createElement('select');
+          ['', 'M', 'F'].forEach((opt) => {
+            const o = document.createElement('option');
+            o.value = opt;
+            o.textContent = opt ? opt : 'Gender';
+            gender.appendChild(o);
+          });
+          gender.value = String(rep && rep.gender || '').toUpperCase();
+          gender.addEventListener('change', () => {
+            if (!Array.isArray(items[idx].replacements)) items[idx].replacements = [];
+            if (!items[idx].replacements[eraIdx]) items[idx].replacements[eraIdx] = { name: '', gender: '', title: '' };
+            items[idx].replacements[eraIdx].gender = gender.value;
+            onChange(serializeLeaderAliasesByEra(items));
+          });
+          rowWrap.appendChild(gender);
+          const title = document.createElement('input');
+          title.placeholder = 'Title (optional)';
+          title.value = String(rep && rep.title || '');
+          title.addEventListener('input', () => {
+            if (!Array.isArray(items[idx].replacements)) items[idx].replacements = [];
+            if (!items[idx].replacements[eraIdx]) items[idx].replacements[eraIdx] = { name: '', gender: '', title: '' };
+            items[idx].replacements[eraIdx].title = title.value;
+            onChange(serializeLeaderAliasesByEra(items));
+          });
+          rowWrap.appendChild(title);
+          repWrap.appendChild(rowWrap);
+        });
+        block.appendChild(repWrap);
+        const del = document.createElement('button');
+        del.type = 'button';
+        withRemoveIcon(del, ' Remove');
+        del.addEventListener('click', () => {
+          items.splice(idx, 1);
+          if (items.length === 0) items.push({ source: '', replacements: [{ name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }] });
+          onChange(serializeLeaderAliasesByEra(items));
+          rerender();
+        });
+        block.appendChild(del);
+        wrap.appendChild(block);
+      });
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.textContent = 'Add Item';
+      add.addEventListener('click', () => {
+        items.push({ source: '', replacements: [{ name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }, { name: '', gender: '', title: '' }] });
+        rerender();
+      });
+      wrap.appendChild(add);
+    };
+    rerender();
+    return wrap;
+  }
+
+  if (BASE_MULTI_CHOICE_LIST_OPTIONS[row.key]) {
+    const wrap = document.createElement('div');
+    wrap.className = 'segmented-multi-list';
+    const options = BASE_MULTI_CHOICE_LIST_OPTIONS[row.key];
+    const selected = new Set(parseStructuredEntries(row.value).map((v) => String(v || '').trim().toLowerCase()).filter(Boolean));
+    options.forEach((opt) => {
+      const token = String(opt || '').trim();
+      const key = token.toLowerCase();
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'segmented-multi-btn';
+      btn.textContent = token;
+      btn.classList.toggle('active', selected.has(key));
+      btn.addEventListener('click', () => {
+        if (selected.has(key)) selected.delete(key);
+        else selected.add(key);
+        btn.classList.toggle('active', selected.has(key));
+        const ordered = options.filter((x) => selected.has(String(x || '').trim().toLowerCase()));
+        onChange(serializeStructuredEntries(ordered));
+      });
+      wrap.appendChild(btn);
+    });
+    return wrap;
+  }
+
   if (row.key === 'production_perfume' || row.key === 'perfume_specs' || row.key === 'technology_perfume' || row.key === 'government_perfume') {
+    const wrap = document.createElement('div');
+    wrap.className = 'structured-list';
+    const improvementOptions = getNamedReferenceOptionsForTab('improvements');
+    const unitOptions = getNamedReferenceOptionsForTab('units');
+    const techOptions = getNamedReferenceOptionsForTab('technologies');
+    const govOptions = getNamedReferenceOptionsForTab('governments');
+    const inferProductionKind = (name) => {
+      const n = String(name || '').trim();
+      if (!n) return 'improvements';
+      if (improvementOptions.some((o) => o.value === n)) return 'improvements';
+      if (unitOptions.some((o) => o.value === n)) return 'units';
+      return 'custom';
+    };
+    let items = parseNameAmountItems(row.value).map((item) => {
+      const kind = row.key === 'technology_perfume'
+        ? 'technologies'
+        : row.key === 'government_perfume'
+          ? 'governments'
+          : inferProductionKind(item.name);
+      return { name: String(item.name || ''), amount: String(item.amount || ''), kind };
+    });
+    if (items.length === 0) items = [{ name: '', amount: '' }];
+    const rerender = () => {
+      wrap.innerHTML = '';
+      items.forEach((item, idx) => {
+        const line = document.createElement('div');
+        line.className = 'structured-card';
+        const rowTop = document.createElement('div');
+        rowTop.className = 'kv-row';
+        if (row.key === 'production_perfume' || row.key === 'perfume_specs') {
+          const kindSelect = document.createElement('select');
+          [
+            { value: 'improvements', label: 'Improvement' },
+            { value: 'units', label: 'Unit' },
+            { value: 'custom', label: 'Custom' }
+          ].forEach((opt) => {
+            const o = document.createElement('option');
+            o.value = opt.value;
+            o.textContent = opt.label;
+            kindSelect.appendChild(o);
+          });
+          kindSelect.value = item.kind || inferProductionKind(item.name);
+          kindSelect.addEventListener('change', () => {
+            items[idx].kind = kindSelect.value;
+            if (items[idx].kind !== 'custom' && items[idx].name === '-1') items[idx].name = '';
+            onChange(serializeNameAmountItems(items));
+            rerender();
+          });
+          rowTop.appendChild(kindSelect);
+        }
+        const targetKind = row.key === 'technology_perfume'
+          ? 'technologies'
+          : row.key === 'government_perfume'
+            ? 'governments'
+            : (item.kind || inferProductionKind(item.name));
+        if (targetKind === 'custom') {
+          const name = document.createElement('input');
+          name.placeholder = 'Name';
+          name.value = item.name;
+          name.addEventListener('input', () => {
+            items[idx].name = name.value;
+            onChange(serializeNameAmountItems(items));
+          });
+          rowTop.appendChild(name);
+        } else {
+          const pickerOptions = targetKind === 'units'
+            ? unitOptions
+            : targetKind === 'technologies'
+              ? techOptions
+              : targetKind === 'governments'
+                ? govOptions
+                : improvementOptions;
+          const pickerTab = targetKind;
+          const opts = pickerOptions.slice();
+          if (item.name && !opts.some((opt) => opt.value === item.name)) {
+            opts.unshift({ value: item.name, label: item.name, entry: null });
+          }
+          const picker = createReferencePicker({
+            options: opts,
+            targetTabKey: pickerTab,
+            currentValue: item.name || '-1',
+            searchPlaceholder: `Search ${toFriendlyKey(pickerTab).replace(/s$/, '')}...`,
+            noneLabel: '(none)',
+            onSelect: (next) => {
+              const normalized = String(next || '').trim();
+              items[idx].name = normalized === '-1' ? '' : normalized;
+              onChange(serializeNameAmountItems(items));
+              rerender();
+            }
+          });
+          rowTop.appendChild(picker);
+        }
+        const amount = document.createElement('input');
+        amount.placeholder = 'amount (e.g. 20 or -50%)';
+        amount.value = item.amount;
+        amount.addEventListener('input', () => {
+          items[idx].amount = amount.value;
+          onChange(serializeNameAmountItems(items));
+        });
+        rowTop.appendChild(amount);
+        const del = document.createElement('button');
+        withRemoveIcon(del, ' Remove');
+        del.addEventListener('click', () => {
+          items.splice(idx, 1);
+          if (items.length === 0) items.push({ name: '', amount: '', kind: 'improvements' });
+          onChange(serializeNameAmountItems(items));
+          rerender();
+        });
+        rowTop.appendChild(del);
+        line.appendChild(rowTop);
+        wrap.appendChild(line);
+      });
+      const add = document.createElement('button');
+      add.textContent = 'Add Item';
+      add.addEventListener('click', () => {
+        const nextKind = row.key === 'technology_perfume'
+          ? 'technologies'
+          : row.key === 'government_perfume'
+            ? 'governments'
+            : 'improvements';
+        items.push({ name: '', amount: '', kind: nextKind });
+        rerender();
+      });
+      wrap.appendChild(add);
+    };
+    rerender();
+    return wrap;
+  }
+
+  if (row.key === 'work_area_improvements') {
     const wrap = document.createElement('div');
     wrap.className = 'structured-list';
     let items = parseNameAmountItems(row.value);
@@ -1872,22 +2654,35 @@ function makeInputForBaseRow(row, onChange) {
       wrap.innerHTML = '';
       items.forEach((item, idx) => {
         const line = document.createElement('div');
-        line.className = 'kv-row';
-        const name = document.createElement('input');
-        name.placeholder = 'name';
-        name.value = item.name;
-        name.addEventListener('input', () => {
-          items[idx].name = name.value;
-          onChange(serializeNameAmountItems(items));
+        line.className = 'structured-card';
+        const buildingOpts = getNamedReferenceOptionsForTab('improvements');
+        if (item.name && !buildingOpts.some((opt) => opt.value === item.name)) {
+          buildingOpts.unshift({ value: item.name, label: item.name, entry: null });
+        }
+        const buildingPicker = createReferencePicker({
+          options: buildingOpts,
+          targetTabKey: 'improvements',
+          currentValue: item.name || '-1',
+          searchPlaceholder: 'Search Improvement...',
+          noneLabel: '(none)',
+          onSelect: (next) => {
+            const normalized = String(next || '').trim();
+            items[idx].name = normalized === '-1' ? '' : normalized;
+            onChange(serializeNameAmountItems(items));
+            rerender();
+          }
         });
+        line.appendChild(buildingPicker);
         const amount = document.createElement('input');
-        amount.placeholder = 'amount (e.g. 20 or -50%)';
+        amount.placeholder = 'radius / bonus (e.g. 3 or 2 extra)';
         amount.value = item.amount;
         amount.addEventListener('input', () => {
           items[idx].amount = amount.value;
           onChange(serializeNameAmountItems(items));
         });
+        line.appendChild(amount);
         const del = document.createElement('button');
+        del.type = 'button';
         withRemoveIcon(del, ' Remove');
         del.addEventListener('click', () => {
           items.splice(idx, 1);
@@ -1895,12 +2690,11 @@ function makeInputForBaseRow(row, onChange) {
           onChange(serializeNameAmountItems(items));
           rerender();
         });
-        line.appendChild(name);
-        line.appendChild(amount);
         line.appendChild(del);
         wrap.appendChild(line);
       });
       const add = document.createElement('button');
+      add.type = 'button';
       add.textContent = 'Add Item';
       add.addEventListener('click', () => {
         items.push({ name: '', amount: '' });
@@ -1908,7 +2702,6 @@ function makeInputForBaseRow(row, onChange) {
       });
       wrap.appendChild(add);
     };
-    onChange(serializeNameAmountItems(items));
     rerender();
     return wrap;
   }
@@ -1923,20 +2716,33 @@ function makeInputForBaseRow(row, onChange) {
       items.forEach((item, idx) => {
         const block = document.createElement('div');
         block.className = 'structured-card';
-        const b = document.createElement('input');
-        b.placeholder = 'building';
-        b.value = item.building;
-        b.addEventListener('input', () => {
-          items[idx].building = b.value;
-          onChange(serializeBuildingPrereqItems(items));
+        const buildingOpts = getNamedReferenceOptionsForTab('improvements');
+        if (item.building && !buildingOpts.some((opt) => opt.value === item.building)) {
+          buildingOpts.unshift({ value: item.building, label: item.building, entry: null });
+        }
+        const buildingPicker = createReferencePicker({
+          options: buildingOpts,
+          targetTabKey: 'improvements',
+          currentValue: item.building || '-1',
+          searchPlaceholder: 'Search Building...',
+          noneLabel: '(none)',
+          onSelect: (next) => {
+            const normalized = String(next || '').trim();
+            items[idx].building = normalized === '-1' ? '' : normalized;
+            onChange(serializeBuildingPrereqItems(items));
+            rerender();
+          }
         });
-        const u = document.createElement('input');
-        u.placeholder = 'units (comma list)';
-        u.value = item.units.join(', ');
-        u.addEventListener('input', () => {
-          items[idx].units = tokenizeListPreservingQuotes(u.value);
-          onChange(serializeBuildingPrereqItems(items));
+        block.appendChild(buildingPicker);
+        const unitsEditor = makeNamedListPickerEditor({
+          tabKey: 'units',
+          values: Array.isArray(item.units) ? item.units : [],
+          onValuesChange: (nextValues) => {
+            items[idx].units = nextValues;
+            onChange(serializeBuildingPrereqItems(items));
+          }
         });
+        block.appendChild(unitsEditor);
         const del = document.createElement('button');
         withRemoveIcon(del, ' Remove');
         del.addEventListener('click', () => {
@@ -1945,8 +2751,6 @@ function makeInputForBaseRow(row, onChange) {
           onChange(serializeBuildingPrereqItems(items));
           rerender();
         });
-        block.appendChild(b);
-        block.appendChild(u);
         block.appendChild(del);
         wrap.appendChild(block);
       });
@@ -1975,23 +2779,43 @@ function makeInputForBaseRow(row, onChange) {
         const block = document.createElement('div');
         block.className = 'structured-card';
 
-        const b = document.createElement('input');
-        b.placeholder = 'building';
-        b.value = item.building;
-        b.addEventListener('input', () => {
-          items[idx].building = b.value;
-          onChange(serializeBuildingResourceItems(items));
+        const buildingOpts = getNamedReferenceOptionsForTab('improvements');
+        if (item.building && !buildingOpts.some((opt) => opt.value === item.building)) {
+          buildingOpts.unshift({ value: item.building, label: item.building, entry: null });
+        }
+        const buildingPicker = createReferencePicker({
+          options: buildingOpts,
+          targetTabKey: 'improvements',
+          currentValue: item.building || '-1',
+          searchPlaceholder: 'Search Building...',
+          noneLabel: '(none)',
+          onSelect: (next) => {
+            const normalized = String(next || '').trim();
+            items[idx].building = normalized === '-1' ? '' : normalized;
+            onChange(serializeBuildingResourceItems(items));
+            rerender();
+          }
         });
-        block.appendChild(b);
+        block.appendChild(buildingPicker);
 
-        const r = document.createElement('input');
-        r.placeholder = 'resource';
-        r.value = item.resource;
-        r.addEventListener('input', () => {
-          items[idx].resource = r.value;
-          onChange(serializeBuildingResourceItems(items));
+        const resourceOpts = getNamedReferenceOptionsForTab('resources');
+        if (item.resource && !resourceOpts.some((opt) => opt.value === item.resource)) {
+          resourceOpts.unshift({ value: item.resource, label: item.resource, entry: null });
+        }
+        const resourcePicker = createReferencePicker({
+          options: resourceOpts,
+          targetTabKey: 'resources',
+          currentValue: item.resource || '-1',
+          searchPlaceholder: 'Search Resource...',
+          noneLabel: '(none)',
+          onSelect: (next) => {
+            const normalized = String(next || '').trim();
+            items[idx].resource = normalized === '-1' ? '' : normalized;
+            onChange(serializeBuildingResourceItems(items));
+            rerender();
+          }
         });
-        block.appendChild(r);
+        block.appendChild(resourcePicker);
 
         const flagRow = document.createElement('div');
         flagRow.className = 'flag-row';
@@ -2039,6 +2863,10 @@ function makeInputForBaseRow(row, onChange) {
 
   if (isStructuredBaseField(row)) {
     return renderSimpleList(parseStructuredEntries(row.value));
+  }
+
+  if (BASE_SEGMENTED_OPTIONS[row.key]) {
+    return makeSegmentedChoiceControl(BASE_SEGMENTED_OPTIONS[row.key], row.value, (next) => onChange(next));
   }
 
   if (row.type === 'boolean') {
@@ -2131,7 +2959,18 @@ function renderBaseTab(tab) {
 
     const keyTitle = document.createElement('div');
     keyTitle.className = 'base-key';
-    keyTitle.textContent = toFriendlyKey(row.key);
+    const keyHead = document.createElement('div');
+    keyHead.className = 'base-key-head';
+    const keyName = document.createElement('span');
+    keyName.textContent = toFriendlyKey(row.key);
+    keyHead.appendChild(keyName);
+    const releaseInfo = getC3xReleaseInfo(row.key);
+    const releaseBadge = document.createElement('span');
+    releaseBadge.className = `c3x-release-badge ${releaseInfo.confidence}`;
+    releaseBadge.textContent = releaseInfo.label;
+    releaseBadge.title = `${releaseInfo.note}\nField: ${row.key}`;
+    keyHead.appendChild(releaseBadge);
+    keyTitle.appendChild(keyHead);
     keyWrap.appendChild(keyTitle);
     keyWrap.appendChild(createBaseMeta(row, tab.fieldDocs));
 
@@ -4309,8 +5148,7 @@ function createTechTreePanel({
   const allEntries = (tab && Array.isArray(tab.entries)) ? tab.entries : [];
   const eraOptions = getEraOptionsForTechTree();
   const selectedEraFromTech = getTechFieldInt(selectedEntry, 'era', 0);
-  const existingEra = Number.parseInt(String(state.techTreeEraSelectionByTab[tabKey] || ''), 10);
-  const initialEra = Number.isFinite(existingEra) ? existingEra : selectedEraFromTech;
+  const initialEra = selectedEraFromTech;
 
   const controls = document.createElement('div');
   controls.className = 'tech-tree-controls';
@@ -9269,7 +10107,17 @@ function undoOneStep() {
     return;
   }
   try {
-    state.bundle.tabs = JSON.parse(state.undoSnapshot);
+    const restoredEditableTabs = JSON.parse(state.undoSnapshot);
+    const currentTabs = state.bundle && state.bundle.tabs ? state.bundle.tabs : {};
+    const mergedTabs = Object.assign({}, currentTabs);
+    EDITABLE_TAB_KEYS.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(restoredEditableTabs, key)) {
+        mergedTabs[key] = restoredEditableTabs[key];
+      } else {
+        delete mergedTabs[key];
+      }
+    });
+    state.bundle.tabs = mergedTabs;
     state.undoSnapshot = null;
     // Undo restores the captured pre-edit snapshot (current single-step model),
     // so we can mark clean directly and avoid expensive whole-bundle diffs.
