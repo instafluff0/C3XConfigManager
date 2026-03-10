@@ -258,7 +258,8 @@ const TAB_GROUPS = [
   { label: 'CIV 3', keys: ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts', 'map', 'scenarioSettings', 'players', 'terrain', 'world', 'rules', 'terrainPedia', 'workerActions'] },
   { label: 'C3X', keys: ['base', 'districts', 'wonders', 'naturalWonders', 'animations'] }
 ];
-const REFERENCE_MUTABLE_ENTITY_TABS = new Set(['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units']);
+const REFERENCE_MUTABLE_ENTITY_TABS = new Set(['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts']);
+const REFERENCE_TOP_NAME_EDIT_TABS = new Set(['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts']);
 const REFERENCE_PREFIX_BY_TAB = {
   civilizations: 'RACE_',
   technologies: 'TECH_',
@@ -951,6 +952,53 @@ function hasChangedFromClean(currentValue, cleanValue) {
     !== JSON.stringify(cleanValue == null ? null : cleanValue);
 }
 
+function normalizeUnitIniActionsForDirty(actions) {
+  return (Array.isArray(actions) ? actions : []).map((action) => ({
+    key: String(action && action.key || '').trim().toUpperCase(),
+    relativePath: String(action && action.relativePath || '').trim(),
+    timingSeconds: Number.isFinite(Number(action && action.timingSeconds)) ? Number(action.timingSeconds) : null
+  }));
+}
+
+function extractUnitIniDirtyPayload(editor) {
+  if (!editor || typeof editor !== 'object') return null;
+  const curTypeRows = cloneUnitTypeRows(Array.isArray(editor.typeRows) ? editor.typeRows : []);
+  const curSections = cloneUnitIniSections(Array.isArray(editor.sections) ? editor.sections : []);
+  const curActions = normalizeUnitIniActionsForDirty(editor.actions);
+  const hasOriginals = Array.isArray(editor.originalTypeRows)
+    || Array.isArray(editor.originalSections)
+    || Array.isArray(editor.originalActions);
+  if (!hasOriginals) return null;
+  const origTypeRows = cloneUnitTypeRows(Array.isArray(editor.originalTypeRows) ? editor.originalTypeRows : []);
+  const origSections = cloneUnitIniSections(Array.isArray(editor.originalSections) ? editor.originalSections : []);
+  const origActions = normalizeUnitIniActionsForDirty(editor.originalActions);
+  const typeChanged = JSON.stringify(curTypeRows) !== JSON.stringify(origTypeRows);
+  const sectionsChanged = JSON.stringify(curSections) !== JSON.stringify(origSections);
+  const actionsChanged = JSON.stringify(curActions) !== JSON.stringify(origActions);
+  if (!typeChanged && !sectionsChanged && !actionsChanged) return null;
+  return {
+    typeRows: curTypeRows,
+    sections: curSections,
+    actions: curActions
+  };
+}
+
+function normalizeReferenceEntryForDirty(entry) {
+  if (!entry) return null;
+  const normalized = JSON.parse(JSON.stringify(entry));
+  const unitIniPayload = extractUnitIniDirtyPayload(entry.unitIniEditor);
+  if (unitIniPayload) normalized.unitIniEditor = unitIniPayload;
+  else delete normalized.unitIniEditor;
+  return normalized;
+}
+
+function hasReferenceEntryChangedFromClean(currentEntry, cleanEntry) {
+  return hasChangedFromClean(
+    normalizeReferenceEntryForDirty(currentEntry),
+    normalizeReferenceEntryForDirty(cleanEntry)
+  );
+}
+
 function isTabDirty(tabKey) {
   if (!state.isDirty || !state.bundle || !state.bundle.tabs) return false;
   if (!EDITABLE_TAB_KEYS.includes(tabKey)) return false;
@@ -974,7 +1022,7 @@ function computeTabDirtyCount(tabKey) {
     cur.forEach((entry) => {
       const key = String((entry && entry.civilopediaKey) || '').toUpperCase();
       if (!key) return;
-      if (hasChangedFromClean(entry, prevByKey.get(key) || null)) changed += 1;
+      if (hasReferenceEntryChangedFromClean(entry, prevByKey.get(key) || null)) changed += 1;
       prevByKey.delete(key);
     });
     changed += prevByKey.size;
@@ -1076,7 +1124,7 @@ function updateActiveDirtyCaches() {
     const key = String(entry.civilopediaKey || '').toUpperCase();
     const set = ensureReferenceDirtySet(tabKey);
     const cleanEntry = getCleanReferenceEntry(tabKey, key);
-    if (hasChangedFromClean(entry, cleanEntry)) set.add(key);
+    if (hasReferenceEntryChangedFromClean(entry, cleanEntry)) set.add(key);
     else set.delete(key);
     setTabDirtyCount(tabKey, set.size);
     return;
@@ -1111,7 +1159,7 @@ function rebuildDirtyTabCounts() {
         const key = String((entry && entry.civilopediaKey) || '').toUpperCase();
         if (!key) return;
         const cleanEntry = getCleanReferenceEntry(tabKey, key);
-        if (hasChangedFromClean(entry, cleanEntry)) set.add(key);
+        if (hasReferenceEntryChangedFromClean(entry, cleanEntry)) set.add(key);
       });
       setTabDirtyCount(tabKey, set.size);
       return;
@@ -1133,7 +1181,7 @@ function isReferenceEntryDirty(tabKey, entry) {
   if (!state.isDirty || !entry) return false;
   const key = String(entry.civilopediaKey || '').toUpperCase();
   const cleanEntry = getCleanReferenceEntry(tabKey, key);
-  return hasChangedFromClean(entry, cleanEntry);
+  return hasReferenceEntryChangedFromClean(entry, cleanEntry);
 }
 
 function isSectionItemDirty(tabKey, sectionIndex, sectionObj) {
@@ -1724,6 +1772,27 @@ function navigateToReferenceEntry(tabKey, entryOrKey, options = {}) {
   return true;
 }
 
+function getReferenceEntrySearchTerms(tabKey, entry) {
+  const terms = [];
+  const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+  fields.forEach((field) => {
+    const label = String(field && field.label || '').trim();
+    const baseKey = String(field && (field.baseKey || field.key) || '').trim();
+    if (label) terms.push(label);
+    if (baseKey) terms.push(baseKey);
+  });
+  if (tabKey === 'units') {
+    terms.push('Unit Abilities');
+    terms.push('Available To');
+    terms.push('Stealth Attack Targets');
+    terms.push('Ignore Movement Cost');
+    terms.push('Legal Unit Telepads');
+    terms.push('Legal Building Telepads');
+    terms.push('Lists');
+  }
+  return terms.join(' ');
+}
+
 function collectGlobalSearchItems() {
   const items = [];
   if (!state.bundle || !state.bundle.tabs) return items;
@@ -1752,11 +1821,12 @@ function collectGlobalSearchItems() {
       tab.entries.forEach((entry, idx) => {
         const key = String(entry.civilopediaKey || '');
         const name = String(entry.name || key || `Entry ${idx + 1}`);
+        const fieldSearch = getReferenceEntrySearchTerms(tabKey, entry);
         items.push({
           kind: 'Entry',
           title: `${tabTitle}: ${name}`,
           subtitle: key || tabTitle,
-          search: `${tabTitle} ${name} ${key}`,
+          search: `${tabTitle} ${name} ${key} ${fieldSearch}`,
           action: () => {
             navigateWithHistory(() => {
               state.activeTab = tabKey;
@@ -2426,6 +2496,82 @@ function makeNamedListPickerEditor(config) {
     wrap.appendChild(add);
   };
   rerender();
+  return wrap;
+}
+
+function makeNamedListTokenEditor(config) {
+  const cfg = config || {};
+  const tabKey = String(cfg.tabKey || '').trim();
+  const onValuesChange = typeof cfg.onValuesChange === 'function' ? cfg.onValuesChange : null;
+  const options = Array.isArray(cfg.options) ? cfg.options : getNamedReferenceOptionsForTab(tabKey);
+  const wrap = document.createElement('div');
+  wrap.className = 'structured-list';
+
+  const optionByValue = new Map();
+  const normalizedOptions = options.map((opt) => {
+    const value = normalizeConfigToken(opt && opt.value);
+    const label = String((opt && opt.label) || value);
+    const entry = opt && opt.entry ? opt.entry : null;
+    const normalized = { value, label, entry };
+    optionByValue.set(value, normalized);
+    return normalized;
+  }).filter((opt) => !!opt.value);
+
+  let values = Array.from(new Set((Array.isArray(cfg.values) ? cfg.values : []).map((v) => normalizeConfigToken(v)).filter(Boolean)));
+
+  const chips = document.createElement('div');
+  chips.className = 'segmented-multi-list';
+
+  const emit = () => {
+    if (onValuesChange) onValuesChange(values.slice());
+  };
+
+  const rerenderChips = () => {
+    chips.innerHTML = '';
+    if (values.length === 0) {
+      const hint = document.createElement('div');
+      hint.className = 'field-meta';
+      hint.textContent = '(none)';
+      chips.appendChild(hint);
+      return;
+    }
+    values.forEach((value) => {
+      const opt = optionByValue.get(value);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'segmented-multi-btn active';
+      const text = document.createElement('span');
+      text.textContent = opt ? opt.label : value;
+      btn.appendChild(text);
+      btn.title = 'Remove';
+      btn.addEventListener('click', () => {
+        values = values.filter((v) => v !== value);
+        rerenderChips();
+        emit();
+      });
+      chips.appendChild(btn);
+    });
+  };
+
+  const picker = createReferencePicker({
+    options: normalizedOptions,
+    targetTabKey: tabKey,
+    currentValue: '-1',
+    searchPlaceholder: `Add ${toFriendlyKey(tabKey).replace(/s$/, '')}...`,
+    noneLabel: 'Add item...',
+    onSelect: (next) => {
+      const normalized = normalizeConfigToken(next);
+      if (!normalized || normalized === '-1') return;
+      if (!values.includes(normalized)) {
+        values.push(normalized);
+        rerenderChips();
+        emit();
+      }
+    }
+  });
+  wrap.appendChild(picker);
+  wrap.appendChild(chips);
+  rerenderChips();
   return wrap;
 }
 
@@ -3392,6 +3538,10 @@ function renderRgbaPreview(container, preview, title, delayMsProvider, displayWi
   container.appendChild(card);
 
   if (preview.animated && Array.isArray(preview.framesBase64) && preview.framesBase64.length > 0) {
+    const onLoopStart = options && typeof options.onLoopStart === 'function' ? options.onLoopStart : null;
+    const isPaused = options && typeof options.isPausedProvider === 'function'
+      ? options.isPausedProvider
+      : () => false;
     const maxFramesForRender = Number.isFinite(options && options.sampleMaxFrames)
       ? Math.max(0, Number(options.sampleMaxFrames))
       : getDefaultFrameSampleLimit();
@@ -3408,14 +3558,16 @@ function renderRgbaPreview(container, preview, title, delayMsProvider, displayWi
       if (!canvas.isConnected) return;
       const delay = Math.max(16, Number(delayMsProvider ? delayMsProvider() : 100) || 100);
       const now = performance.now();
-      if (now - lastTick >= delay) {
+      if (!isPaused() && now - lastTick >= delay) {
         ctx.putImageData(frames[frameIdx], 0, 0);
+        if (frameIdx === 0 && onLoopStart) onLoopStart();
         frameIdx = (frameIdx + 1) % frames.length;
         lastTick = now;
       }
       window.requestAnimationFrame(step);
     };
     ctx.putImageData(frames[0], 0, 0);
+    if (onLoopStart) onLoopStart();
     window.requestAnimationFrame(step);
   } else if (preview.rgbaBase64) {
     const rgba = fromBase64ToUint8(preview.rgbaBase64);
@@ -3601,9 +3753,288 @@ function sliceUnitPreviewByDirection(preview, directionIndex) {
 
 function getUnitAnimationUiState(entry) {
   const key = String(entry && entry.civilopediaKey || '');
-  if (!key) return { actionKey: '', direction: 0 };
-  if (!state.unitAnimationUiByKey[key]) state.unitAnimationUiByKey[key] = { actionKey: '', direction: 0 };
+  if (!key) return { actionKey: '', direction: 0, previewSoundOn: false, previewPaused: false, unitTypesOpen: false };
+  if (!state.unitAnimationUiByKey[key]) state.unitAnimationUiByKey[key] = { actionKey: '', direction: 0, previewSoundOn: false, previewPaused: false, unitTypesOpen: false };
   return state.unitAnimationUiByKey[key];
+}
+
+const UNIT_INI_TEMPLATE_SECTIONS = [
+  {
+    name: 'Speed',
+    fields: [
+      { key: 'Normal Speed', value: '225' },
+      { key: 'Fast Speed', value: '225' }
+    ]
+  },
+  { name: 'Animations', fields: [] },
+  { name: 'Timing', fields: [] },
+  { name: 'Sound Effects', fields: [] }
+];
+const UNIT_ALLOWED_ANIMATION_KEYS = [
+  'BLANK', 'DEFAULT', 'WALK', 'RUN', 'ATTACK1', 'ATTACK2', 'ATTACK3', 'DEFEND', 'DEATH', 'DEAD',
+  'FORTIFY', 'FORTIFYHOLD', 'FIDGET', 'VICTORY', 'TURNLEFT', 'TURNRIGHT', 'BUILD', 'ROAD', 'MINE',
+  'IRRIGATE', 'FORTRESS', 'CAPTURE', 'STOP_AT_LAST_FRAME', 'PAUSEROAD', 'PAUSEMINE', 'PAUSEIRRIGATE',
+  'JUNGLE', 'PAUSEJUNGLE', 'FOREST', 'PAUSEFOREST', 'PLANT'
+];
+
+function cloneUnitTypeRows(rows) {
+  return (Array.isArray(rows) ? rows : []).map((row) => ({
+    key: String(row && row.key || '').trim().toUpperCase(),
+    relativePath: String(row && row.relativePath || '').trim(),
+    timingSeconds: Number.isFinite(Number(row && row.timingSeconds)) && Number(row.timingSeconds) > 0
+      ? Number(row.timingSeconds)
+      : null,
+    soundPath: String(row && row.soundPath || '').trim()
+  })).filter((row) => !!row.key);
+}
+
+function cloneUnitIniSections(sections) {
+  return (Array.isArray(sections) ? sections : [])
+    .map((section) => ({
+      name: String(section && section.name || '').trim(),
+      fields: (Array.isArray(section && section.fields) ? section.fields : [])
+        .map((field) => ({
+          key: String(field && field.key || '').trim(),
+          value: String(field && field.value || '')
+        }))
+        .filter((field) => !!field.key)
+    }))
+    .filter((section) => !!section.name);
+}
+
+function buildDefaultUnitIniSections() {
+  return cloneUnitIniSections(UNIT_INI_TEMPLATE_SECTIONS);
+}
+
+function findUnitIniSection(sections, sectionName) {
+  const target = String(sectionName || '').trim().toUpperCase();
+  return (Array.isArray(sections) ? sections : []).find((section) => String(section && section.name || '').trim().toUpperCase() === target) || null;
+}
+
+function buildUnitIniDerivedData(sections, iniPath = '') {
+  const out = {
+    actions: [],
+    defaultActionKey: '',
+    normalSpeedMs: null,
+    fastSpeedMs: null
+  };
+  const timingMap = new Map();
+  const timingSection = findUnitIniSection(sections, 'Timing');
+  (timingSection && Array.isArray(timingSection.fields) ? timingSection.fields : []).forEach((field) => {
+    const key = String(field && field.key || '').trim().toUpperCase();
+    const value = Number.parseFloat(String(field && field.value || '').trim());
+    if (!key || !Number.isFinite(value) || value <= 0) return;
+    timingMap.set(key, value);
+  });
+  const speedSection = findUnitIniSection(sections, 'Speed');
+  (speedSection && Array.isArray(speedSection.fields) ? speedSection.fields : []).forEach((field) => {
+    const key = String(field && field.key || '').trim().toUpperCase();
+    const value = Number.parseFloat(String(field && field.value || '').trim());
+    if (!Number.isFinite(value) || value <= 0) return;
+    if (key === 'NORMAL SPEED') out.normalSpeedMs = value;
+    if (key === 'FAST SPEED') out.fastSpeedMs = value;
+  });
+  const animationSection = findUnitIniSection(sections, 'Animations');
+  const seen = new Set();
+  (animationSection && Array.isArray(animationSection.fields) ? animationSection.fields : []).forEach((field) => {
+    const key = String(field && field.key || '').trim().toUpperCase();
+    const relativePath = String(field && field.value || '').trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    if (!/\.flc$/i.test(relativePath)) return;
+    const unitIniPath = String(iniPath || '').trim();
+    const sourcePath = relativePath && unitIniPath
+      ? `${getParentPath(unitIniPath)}/${normalizeRelativePath(relativePath)}`
+      : '';
+    out.actions.push({
+      key,
+      relativePath,
+      timingSeconds: timingMap.has(key) ? timingMap.get(key) : null,
+      exists: false,
+      sourcePath
+    });
+  });
+  if (out.actions.length > 0) {
+    out.defaultActionKey = (out.actions.find((a) => a.key === 'DEFAULT') || out.actions[0]).key;
+  }
+  return out;
+}
+
+function buildUnitTypeRowsFromSections(sections) {
+  const out = [];
+  const timingMap = new Map();
+  const soundMap = new Map();
+  const timingSection = findUnitIniSection(sections, 'Timing');
+  (timingSection && Array.isArray(timingSection.fields) ? timingSection.fields : []).forEach((field) => {
+    const key = String(field && field.key || '').trim().toUpperCase();
+    const value = Number.parseFloat(String(field && field.value || '').trim());
+    if (!key || !Number.isFinite(value) || value <= 0) return;
+    timingMap.set(key, value);
+  });
+  const soundSection = findUnitIniSection(sections, 'Sound Effects');
+  (soundSection && Array.isArray(soundSection.fields) ? soundSection.fields : []).forEach((field) => {
+    const key = String(field && field.key || '').trim().toUpperCase();
+    if (!key) return;
+    soundMap.set(key, String(field && field.value || '').trim());
+  });
+  const animationSection = findUnitIniSection(sections, 'Animations');
+  const seen = new Set();
+  (animationSection && Array.isArray(animationSection.fields) ? animationSection.fields : []).forEach((field) => {
+    const key = String(field && field.key || '').trim().toUpperCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push({
+      key,
+      relativePath: String(field && field.value || '').trim(),
+      timingSeconds: timingMap.has(key) ? timingMap.get(key) : null,
+      soundPath: soundMap.get(key) || ''
+    });
+  });
+  return out;
+}
+
+function buildUnitSectionsFromTypeRows(rows, speedModel = {}) {
+  const cleanRows = [];
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const key = String(row && row.key || '').trim().toUpperCase();
+    if (!key) return;
+    cleanRows.push({
+      key,
+      relativePath: String(row && row.relativePath || '').trim(),
+      timingSeconds: Number.isFinite(Number(row && row.timingSeconds)) && Number(row.timingSeconds) > 0
+        ? Number(row.timingSeconds)
+        : null,
+      soundPath: String(row && row.soundPath || '').trim()
+    });
+  });
+  return [
+    {
+      name: 'Speed',
+      fields: [
+        { key: 'Normal Speed', value: String(Number.isFinite(Number(speedModel.normalSpeedMs)) ? Math.round(Number(speedModel.normalSpeedMs)) : 225) },
+        { key: 'Fast Speed', value: String(Number.isFinite(Number(speedModel.fastSpeedMs)) ? Math.round(Number(speedModel.fastSpeedMs)) : 225) }
+      ]
+    },
+    {
+      name: 'Animations',
+      fields: cleanRows.map((row) => ({ key: row.key, value: row.relativePath }))
+    },
+    {
+      name: 'Timing',
+      fields: cleanRows
+        .filter((row) => Number.isFinite(row.timingSeconds) && row.timingSeconds > 0)
+        .map((row) => ({ key: row.key, value: Number(row.timingSeconds).toFixed(6) }))
+    },
+    {
+      name: 'Sound Effects',
+      fields: cleanRows
+        .filter((row) => !!row.soundPath)
+        .map((row) => ({ key: row.key, value: row.soundPath }))
+    }
+  ];
+}
+
+function isAbsoluteSlashPath(value) {
+  const s = toSlashPath(value).trim();
+  return /^([a-zA-Z]:\/|\/)/.test(s);
+}
+
+function getUnitIniTargetPath(animationName) {
+  const name = String(animationName || '').trim();
+  if (!name) return '';
+  const scenarioDir = inferScenarioDirFromInput(state.settings && state.settings.scenarioPath || '');
+  if (scenarioDir) return `${scenarioDir.replace(/\/+$/, '')}/Art/Units/${name}/${name}.ini`;
+  const civ3 = toSlashPath(state.settings && state.settings.civ3Path || '').replace(/\/+$/, '');
+  if (civ3) return `${civ3}/Conquests/Art/Units/${name}/${name}.ini`;
+  return '';
+}
+
+function resolveUnitIniValuePath(iniPath, value, fallbackIniPath = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (isAbsoluteSlashPath(raw)) return toSlashPath(raw);
+  const baseIniPath = toSlashPath(iniPath || fallbackIniPath || '').trim();
+  const baseDir = getParentPath(baseIniPath);
+  if (!baseDir) return toSlashPath(raw);
+  return `${baseDir}/${normalizeRelativePath(raw)}`;
+}
+
+function toUnitIniRelativePath(filePath, iniPath, fallbackIniPath = '') {
+  const full = toSlashPath(filePath).trim();
+  if (!full) return '';
+  const baseIniPath = toSlashPath(iniPath || fallbackIniPath || '').trim();
+  const baseDir = getParentPath(baseIniPath);
+  if (baseDir && full.startsWith(`${baseDir}/`)) return full.slice(baseDir.length + 1);
+  return full;
+}
+
+function toFileUrlFromPath(filePath) {
+  const p = toSlashPath(filePath).trim();
+  if (!p) return '';
+  if (/^file:\/\//i.test(p)) return p;
+  if (/^[a-zA-Z]:\//.test(p)) return encodeURI(`file:///${p}`);
+  return encodeURI(`file://${p.startsWith('/') ? '' : '/'}${p}`);
+}
+
+async function resolvePlayableUnitSoundPath(soundPath) {
+  const raw = toSlashPath(soundPath).trim();
+  if (!raw) return '';
+  if (/\.wav$/i.test(raw) || /\.mp3$/i.test(raw) || /\.ogg$/i.test(raw)) return raw;
+  if (!/\.amb$/i.test(raw)) return '';
+  try {
+    const absAmb = raw;
+    const parent = getParentPath(absAmb);
+    const bytes = await fetch(toFileUrlFromPath(absAmb)).then((res) => (res.ok ? res.arrayBuffer() : null));
+    if (!bytes) return '';
+    const text = new TextDecoder('latin1').decode(bytes);
+    const match = text.match(/([A-Za-z0-9 _-]+\.wav)/i);
+    if (!match || !match[1]) return '';
+    return `${parent}/${match[1]}`;
+  } catch (_err) {
+    return '';
+  }
+}
+
+function parseEraVariantMeta(civilopediaKey) {
+  const key = String(civilopediaKey || '').trim().toUpperCase();
+  if (!key.startsWith('PRTO_')) return null;
+  const eraIdx = key.indexOf('_ERAS_');
+  if (eraIdx >= 0) {
+    const familyKey = key.slice(0, eraIdx);
+    const eraRaw = key.slice(eraIdx + 6);
+    const eraLabel = eraRaw.replace(/_/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase());
+    return { familyKey, eraLabel };
+  }
+  return { familyKey: key, eraLabel: 'Base' };
+}
+
+function getEraVariantEntries(tab, entry) {
+  const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
+  const meta = parseEraVariantMeta(entry && entry.civilopediaKey);
+  if (!meta) return [];
+  const family = meta.familyKey;
+  const variants = entries
+    .map((candidate, idx) => ({ candidate, idx }))
+    .filter(({ candidate }) => {
+      const key = String(candidate && candidate.civilopediaKey || '').trim().toUpperCase();
+      return key === family || key.startsWith(`${family}_ERAS_`);
+    })
+    .map(({ candidate, idx }) => {
+      const parsed = parseEraVariantMeta(candidate && candidate.civilopediaKey);
+      return {
+        entry: candidate,
+        baseIndex: idx,
+        eraLabel: parsed ? parsed.eraLabel : 'Base'
+      };
+    });
+  if (variants.length < 2) return [];
+  variants.sort((a, b) => String(a.eraLabel || '').localeCompare(String(b.eraLabel || ''), 'en', { sensitivity: 'base' }));
+  const baseIdx = variants.findIndex((v) => v.eraLabel === 'Base');
+  if (baseIdx > 0) {
+    const [base] = variants.splice(baseIdx, 1);
+    variants.unshift(base);
+  }
+  return variants;
 }
 
 function makeUnitDirectionPad(selectedIndex, onPick) {
@@ -3736,6 +4167,7 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
 }
 
 function renderUnitAnimationPanel(tabKey, entry, host, editable) {
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
   const panel = document.createElement('div');
   panel.className = 'unit-animation-panel';
   const title = document.createElement('div');
@@ -3745,7 +4177,7 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
   panel.appendChild(title);
 
   const keyRow = document.createElement('div');
-  keyRow.className = 'rule-row';
+  keyRow.className = 'rule-row unit-animation-key-row';
   const keyLabel = document.createElement('label');
   keyLabel.className = 'field-meta';
   keyLabel.textContent = 'Animation Folder Key';
@@ -3769,63 +4201,166 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
   controls.className = 'unit-animation-controls';
   const actionWrap = document.createElement('label');
   actionWrap.className = 'unit-animation-action';
-  actionWrap.textContent = 'Action';
+  actionWrap.textContent = 'Preview Type';
   const actionSelect = document.createElement('select');
   actionWrap.appendChild(actionSelect);
   controls.appendChild(actionWrap);
+  const soundToggle = document.createElement('button');
+  soundToggle.type = 'button';
+  soundToggle.className = 'ghost unit-preview-sound-toggle';
+  controls.appendChild(soundToggle);
+  const playPauseToggle = document.createElement('button');
+  playPauseToggle.type = 'button';
+  playPauseToggle.className = 'ghost unit-preview-play-toggle';
+  controls.appendChild(playPauseToggle);
   const previewWrap = document.createElement('div');
   previewWrap.className = 'unit-animation-preview';
-  const actionList = document.createElement('div');
-  actionList.className = 'unit-animation-list';
+  const typesWrap = document.createElement('div');
+  typesWrap.className = 'unit-ini-sections';
 
   const mainRow = document.createElement('div');
   mainRow.className = 'unit-animation-main';
   const leftCol = document.createElement('div');
   leftCol.className = 'unit-animation-left';
   leftCol.appendChild(controls);
-  leftCol.appendChild(previewWrap);
-  leftCol.appendChild(actionList);
-  mainRow.appendChild(leftCol);
   const dirWrap = document.createElement('div');
   dirWrap.className = 'unit-direction-wrap';
-  mainRow.appendChild(dirWrap);
+  const previewRow = document.createElement('div');
+  previewRow.className = 'unit-animation-preview-row';
+  previewRow.appendChild(previewWrap);
+  previewRow.appendChild(dirWrap);
+  leftCol.appendChild(previewRow);
+  leftCol.appendChild(typesWrap);
+  mainRow.appendChild(leftCol);
   panel.appendChild(mainRow);
-
   host.appendChild(panel);
 
   const ui = getUnitAnimationUiState(entry);
   let manifest = null;
+  let model = null;
   let activePreview = null;
   let activeAction = '';
   let activeTimingSeconds = null;
-  const cloneActions = (rows) => (Array.isArray(rows) ? rows.map((r) => ({
-    key: String(r && r.key || '').trim().toUpperCase(),
-    relativePath: String(r && r.relativePath || '').trim(),
-    timingSeconds: Number.isFinite(Number(r && r.timingSeconds)) ? Number(r.timingSeconds) : null,
-    exists: !!(r && r.exists),
-    sourcePath: String(r && r.sourcePath || '')
-  })).filter((r) => r.key) : []);
-  const normalizeEditorRows = (rows) => cloneActions(rows)
-    .sort((a, b) => String(a.key).localeCompare(String(b.key), 'en', { sensitivity: 'base' }));
+  let activeSoundPath = '';
+  let activePlayableSoundPath = '';
+  let previewSoundAudio = null;
+  let previewSoundUrl = '';
+
+  const cloneTypeRows = (rows) => cloneUnitTypeRows(rows);
+
+  const syncModelSections = () => {
+    if (!model) return;
+    model.sections = buildUnitSectionsFromTypeRows(model.typeRows, model);
+    const derived = buildUnitIniDerivedData(model.sections, model.iniPath || getUnitIniTargetPath(model.animationName));
+    model.actions = (Array.isArray(derived.actions) ? derived.actions : []).map((action) => ({
+      ...action,
+      soundPath: String((model.typeRows.find((row) => row.key === action.key) || {}).soundPath || '')
+    }));
+    model.defaultActionKey = String(derived.defaultActionKey || '');
+  };
+
   const ensureEditorModel = () => {
-    if (!manifest || !Array.isArray(manifest.actions)) return null;
     const animName = String(entry.animationName || '').trim();
-    if (!entry.unitIniEditor || String(entry.unitIniEditor.animationName || '') !== animName) {
-      const baseRows = cloneActions(manifest.actions);
+    if (!entry.unitIniEditor || String(entry.unitIniEditor.animationName || '') !== animName || !Array.isArray(entry.unitIniEditor.typeRows)) {
+      const sourceSections = cloneUnitIniSections(manifest && manifest.sections);
+      const derived = buildUnitIniDerivedData(sourceSections, String((manifest && manifest.iniPath) || ''));
+      const typeRows = cloneTypeRows(buildUnitTypeRowsFromSections(sourceSections));
       entry.unitIniEditor = {
         animationName: animName,
-        iniPath: String(manifest.iniPath || ''),
-        actions: cloneActions(baseRows),
-        originalActions: cloneActions(baseRows)
+        iniPath: String((manifest && manifest.iniPath) || getUnitIniTargetPath(animName)),
+        typeRows,
+        originalTypeRows: cloneTypeRows(typeRows),
+        normalSpeedMs: Number.isFinite(Number((manifest && manifest.normalSpeedMs) || derived.normalSpeedMs))
+          ? Math.round(Number((manifest && manifest.normalSpeedMs) || derived.normalSpeedMs))
+          : 225,
+        fastSpeedMs: Number.isFinite(Number((manifest && manifest.fastSpeedMs) || derived.fastSpeedMs))
+          ? Math.round(Number((manifest && manifest.fastSpeedMs) || derived.fastSpeedMs))
+          : 225,
+        sections: [],
+        originalSections: [],
+        actions: [],
+        originalActions: []
       };
-    } else if (!entry.unitIniEditor.iniPath && manifest.iniPath) {
-      entry.unitIniEditor.iniPath = String(manifest.iniPath);
+      model = entry.unitIniEditor;
+      syncModelSections();
+      model.originalSections = cloneUnitIniSections(model.sections);
+      model.originalActions = (model.actions || []).map((action) => ({
+        key: String(action.key || '').trim().toUpperCase(),
+        relativePath: String(action.relativePath || '').trim(),
+        timingSeconds: Number.isFinite(Number(action.timingSeconds)) ? Number(action.timingSeconds) : null
+      }));
+    } else {
+      model = entry.unitIniEditor;
+      syncModelSections();
     }
-    return entry.unitIniEditor;
+    return model;
   };
-  const getEditorRows = () => {
-    const model = ensureEditorModel();
-    return model ? model.actions : cloneActions(manifest && manifest.actions);
+
+  const withUndo = (fn) => {
+    rememberUndoSnapshot();
+    fn();
+    syncModelSections();
+    setDirty(true);
+  };
+
+  const refreshSoundToggle = () => {
+    const on = !!ui.previewSoundOn;
+    soundToggle.textContent = on ? '🔊' : '🔇';
+    soundToggle.title = on ? 'Preview sound on' : 'Preview sound off';
+    soundToggle.setAttribute('aria-label', soundToggle.title);
+    soundToggle.classList.toggle('active', on);
+  };
+
+  const refreshPlayPauseToggle = () => {
+    const paused = !!ui.previewPaused;
+    playPauseToggle.textContent = paused ? '▶' : '⏸';
+    playPauseToggle.title = paused ? 'Play preview' : 'Pause preview';
+    playPauseToggle.setAttribute('aria-label', playPauseToggle.title);
+    playPauseToggle.classList.toggle('active', paused);
+  };
+
+  const playPreviewSound = () => {
+    if (!ui.previewSoundOn || !activePlayableSoundPath) return;
+    const url = toFileUrlFromPath(activePlayableSoundPath);
+    if (!url) return;
+    try {
+      if (!previewSoundAudio || previewSoundUrl !== url) {
+        previewSoundAudio = new Audio(url);
+        previewSoundAudio.preload = 'auto';
+        previewSoundUrl = url;
+      }
+      previewSoundAudio.currentTime = 0;
+      const promise = previewSoundAudio.play();
+      if (promise && typeof promise.catch === 'function') {
+        promise.catch(() => {});
+      }
+    } catch (_err) {}
+  };
+
+  const pickTypePath = async (row, isSound) => {
+    const targetIniPath = String((model && model.iniPath) || getUnitIniTargetPath(entry.animationName) || '').trim();
+    const currentValue = isSound ? row.soundPath : row.relativePath;
+    const currentResolved = resolveUnitIniValuePath(targetIniPath, currentValue, getUnitIniTargetPath(entry.animationName));
+    const fallbackDir = getParentPath(targetIniPath) || getParentPath(getUnitIniTargetPath(entry.animationName));
+    const filePath = await window.c3xManager.pickFile({
+      filters: isSound
+        ? [{ name: 'Sound Files', extensions: ['wav', 'amb', 'mp3'] }, { name: 'All Files', extensions: ['*'] }]
+        : [{ name: 'FLC Files', extensions: ['flc'] }, { name: 'All Files', extensions: ['*'] }],
+      defaultPath: currentResolved || fallbackDir || undefined
+    });
+    if (!filePath) return;
+    const nextRel = toUnitIniRelativePath(filePath, targetIniPath, getUnitIniTargetPath(entry.animationName));
+    withUndo(() => {
+      if (isSound) row.soundPath = nextRel;
+      else row.relativePath = nextRel;
+    });
+    renderTypes();
+    renderPreviewPicker();
+    if (!isSound) {
+      ui.actionKey = row.key;
+      actionSelect.value = row.key;
+      void loadActionPreview(row.key);
+    }
   };
 
   const renderPreview = () => {
@@ -3834,22 +4369,19 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
     const dir = Number.isFinite(ui.direction) ? ui.direction : 0;
     const subset = sliceUnitPreviewByDirection(activePreview, dir);
     const dirLabel = (UNIT_FACING_OPTIONS.find((d) => d.index === dir) || UNIT_FACING_OPTIONS[0]).label;
-    const nativeWidth = Math.max(1, Number(subset.width) || 1);
-    const frameCount = Array.isArray(subset.framesBase64) ? subset.framesBase64.length : 0;
-    let delayMs = 80;
-    if (Number.isFinite(activeTimingSeconds) && activeTimingSeconds > 0 && frameCount > 0) {
-      delayMs = Math.max(16, Math.round((activeTimingSeconds * 1000) / frameCount));
-    } else if (Number.isFinite(activePreview.speedField) && activePreview.speedField > 0) {
+    let delayMs = 100;
+    if (Number.isFinite(activePreview.speedField) && activePreview.speedField > 0) {
       delayMs = Math.max(16, Math.round(activePreview.speedField));
+    } else if (Number.isFinite(activeTimingSeconds) && activeTimingSeconds > 0) {
+      // Fallback for malformed FLC headers.
+      const frameCount = Math.max(1, Array.isArray(subset.framesBase64) ? subset.framesBase64.length : 1);
+      delayMs = Math.max(16, Math.round((activeTimingSeconds * 1000) / frameCount));
     }
-    renderRgbaPreview(
-      previewWrap,
-      subset,
-      `${activeAction || 'Animation'} - ${dirLabel}`,
-      () => delayMs,
-      Math.min(nativeWidth, 320),
-      { sampleMaxFrames: 0 }
-    );
+    renderRgbaPreview(previewWrap, subset, `${activeAction || 'Animation'} - ${dirLabel}`, () => delayMs, Math.min(Number(subset.width) || 220, 320), {
+      sampleMaxFrames: 0,
+      onLoopStart: playPreviewSound,
+      isPausedProvider: () => !!ui.previewPaused
+    });
   };
 
   const renderDirectionPad = () => {
@@ -3865,23 +4397,24 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
   const loadActionPreview = async (actionKey) => {
     if (!actionKey || !entry.animationName) return;
     activeAction = actionKey;
-    const currentRows = getEditorRows();
-    const actionMeta = currentRows.find((a) => String(a.key || '') === actionKey) || null;
-    activeTimingSeconds = actionMeta && Number.isFinite(actionMeta.timingSeconds) ? actionMeta.timingSeconds : null;
-    const unitIniPath = String((entry.unitIniEditor && entry.unitIniEditor.iniPath) || (manifest && manifest.iniPath) || '').trim();
-    const relativeFlc = String(actionMeta && actionMeta.relativePath || '').trim();
-    const cacheKey = JSON.stringify({
-      kind: 'unitAnimationPath',
-      unitIniPath,
-      flcPath: relativeFlc
-    });
+    const activeRow = (model && Array.isArray(model.typeRows)) ? model.typeRows.find((row) => row.key === actionKey) : null;
+    const relativeFlc = String(activeRow && activeRow.relativePath || '').trim();
+    activeTimingSeconds = activeRow && Number.isFinite(activeRow.timingSeconds) ? Number(activeRow.timingSeconds) : null;
+    const soundRel = String(activeRow && activeRow.soundPath || '').trim();
+    if (!relativeFlc) {
+      previewWrap.innerHTML = `<div class="hint">${actionKey} has no FLC path configured.</div>`;
+      activePreview = null;
+      activeSoundPath = '';
+      activePlayableSoundPath = '';
+      return;
+    }
+    const unitIniPath = String((model && model.iniPath) || (manifest && manifest.iniPath) || '').trim();
+    activeSoundPath = resolveUnitIniValuePath(unitIniPath, soundRel, getUnitIniTargetPath(entry.animationName));
+    activePlayableSoundPath = await resolvePlayableUnitSoundPath(activeSoundPath);
+    const cacheKey = JSON.stringify({ kind: 'unitAnimationPath', unitIniPath, flcPath: relativeFlc });
     let res = state.previewCache.get(cacheKey);
     if (!res) {
-      res = await window.c3xManager.getPreview({
-        kind: 'unitAnimationPath',
-        unitIniPath,
-        flcPath: relativeFlc
-      });
+      res = await window.c3xManager.getPreview({ kind: 'unitAnimationPath', unitIniPath, flcPath: relativeFlc });
       if (res && res.ok) setPreviewCache(cacheKey, res);
     }
     if (!res || !res.ok) {
@@ -3893,161 +4426,174 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
     renderPreview();
   };
 
-  const markActionRow = (actionKey) => {
-    Array.from(actionList.querySelectorAll('.unit-animation-list-row')).forEach((row) => {
-      row.classList.toggle('active', String(row.dataset.action || '') === actionKey);
-    });
-  };
-
-  const renderActions = () => {
+  const renderPreviewPicker = () => {
     actionSelect.innerHTML = '';
-    actionList.innerHTML = '';
-    const actions = getEditorRows();
-    if (!actions.length) {
-      actionList.innerHTML = '<div class="hint">No FLC animation entries found in this unit INI.</div>';
-      previewWrap.innerHTML = '';
+    const rows = (model && Array.isArray(model.typeRows)) ? model.typeRows.filter((row) => !!String(row.relativePath || '').trim()) : [];
+    if (rows.length === 0) {
+      const empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = '(no configured types)';
+      actionSelect.appendChild(empty);
+      previewWrap.innerHTML = '<div class="hint">Add at least one animation type with an FLC to preview.</div>';
       return;
     }
-    actions.forEach((action) => {
+    rows.forEach((row) => {
       const option = document.createElement('option');
-      option.value = action.key;
-      option.textContent = action.key;
+      option.value = row.key;
+      option.textContent = row.key;
       actionSelect.appendChild(option);
-      const row = document.createElement('div');
-      row.className = 'unit-animation-list-row';
-      row.classList.toggle('missing', !action.relativePath);
-      row.dataset.action = action.key;
-      if (!editable) {
-        const pickBtn = document.createElement('button');
-        pickBtn.type = 'button';
-        pickBtn.className = 'unit-animation-pick-btn';
-        pickBtn.innerHTML = `<strong>${action.key}</strong><span>${action.relativePath || '(not set)'}</span>`;
-        pickBtn.addEventListener('click', (ev) => {
-          ev.preventDefault();
-          ui.actionKey = action.key;
-          actionSelect.value = action.key;
-          markActionRow(action.key);
-          loadActionPreview(action.key);
+    });
+    const selected = rows.find((row) => row.key === String(ui.actionKey || '').toUpperCase()) || rows[0];
+    ui.actionKey = selected.key;
+    actionSelect.value = selected.key;
+    void loadActionPreview(selected.key);
+  };
+
+  const renderTypes = () => {
+    typesWrap.innerHTML = '';
+    const activeModel = ensureEditorModel();
+    const typesCard = document.createElement('div');
+    typesCard.className = 'unit-ini-section-card';
+    const list = document.createElement('div');
+    list.className = 'unit-type-list';
+    const rows = Array.isArray(activeModel.typeRows) ? activeModel.typeRows : [];
+    rows.forEach((row) => {
+      const entryRow = document.createElement('div');
+      entryRow.className = 'unit-type-row';
+
+      const typeSelect = document.createElement('select');
+      const used = new Set(rows.filter((candidate) => candidate !== row).map((candidate) => candidate.key));
+      const optionValues = Array.from(new Set([...UNIT_ALLOWED_ANIMATION_KEYS, row.key].filter(Boolean)));
+      optionValues.forEach((value) => {
+        if (used.has(value) && value !== row.key) return;
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = value;
+        typeSelect.appendChild(opt);
+      });
+      typeSelect.value = row.key;
+      typeSelect.disabled = !editable;
+      typeSelect.addEventListener('change', () => {
+        const next = String(typeSelect.value || '').trim().toUpperCase();
+        if (!next) return;
+        withUndo(() => {
+          row.key = next;
         });
-        row.appendChild(pickBtn);
-      } else {
-        const model = ensureEditorModel();
-        row.classList.add('editable');
-        const keyInput = document.createElement('input');
-        keyInput.className = 'unit-ini-key';
-        keyInput.value = String(action.key || '');
-        keyInput.placeholder = 'ACTION';
-        keyInput.addEventListener('change', () => {
-          const nextKey = String(keyInput.value || '').trim().toUpperCase().replace(/\s+/g, '_');
-          if (!nextKey) return;
-          rememberUndoSnapshot();
-          action.key = nextKey;
-          model.actions = normalizeEditorRows(model.actions);
-          setDirty(true);
-          renderActions();
-        });
-        const pathInput = document.createElement('input');
-        pathInput.className = 'unit-ini-path';
-        pathInput.value = String(action.relativePath || '');
-        pathInput.placeholder = 'ExampleAttack.flc';
-        pathInput.addEventListener('change', () => {
-          rememberUndoSnapshot();
-          action.relativePath = String(pathInput.value || '').trim();
-          setDirty(true);
-          renderActions();
-        });
-        const timingInput = document.createElement('input');
-        timingInput.type = 'number';
-        timingInput.step = '0.01';
-        timingInput.min = '0';
-        timingInput.className = 'unit-ini-timing';
-        timingInput.value = Number.isFinite(action.timingSeconds) ? String(action.timingSeconds) : '';
-        timingInput.placeholder = 'sec';
-        timingInput.addEventListener('change', () => {
-          rememberUndoSnapshot();
-          const n = Number.parseFloat(timingInput.value);
-          action.timingSeconds = Number.isFinite(n) && n > 0 ? n : null;
-          setDirty(true);
-          renderActions();
-        });
-        const previewBtn = document.createElement('button');
-        previewBtn.type = 'button';
-        previewBtn.className = 'ghost unit-ini-preview-btn';
-        previewBtn.textContent = 'Preview';
-        previewBtn.addEventListener('click', (ev) => {
-          ev.preventDefault();
-          ui.actionKey = action.key;
-          actionSelect.value = action.key;
-          markActionRow(action.key);
-          loadActionPreview(action.key);
-        });
+        ui.actionKey = next;
+        renderTypes();
+        renderPreviewPicker();
+      });
+      entryRow.appendChild(typeSelect);
+
+      const pathStack = document.createElement('div');
+      pathStack.className = 'unit-type-path-stack';
+
+      const soundRow = document.createElement('div');
+      soundRow.className = 'unit-type-path-row';
+      const soundChip = document.createElement('span');
+      soundChip.className = 'key-display-chip unit-type-path-text';
+      soundChip.textContent = row.soundPath || '(no sound)';
+      soundRow.appendChild(soundChip);
+      const soundBrowse = document.createElement('button');
+      soundBrowse.type = 'button';
+      soundBrowse.className = 'ghost unit-ini-browse-btn';
+      soundBrowse.innerHTML = '<span class="btn-icon">🔊</span>Sound';
+      soundBrowse.disabled = !editable;
+      soundBrowse.addEventListener('click', () => { void pickTypePath(row, true); });
+      soundRow.appendChild(soundBrowse);
+      pathStack.appendChild(soundRow);
+
+      const flcRow = document.createElement('div');
+      flcRow.className = 'unit-type-path-row';
+      const flcChip = document.createElement('span');
+      flcChip.className = 'key-display-chip unit-type-path-text';
+      flcChip.textContent = row.relativePath || '(no FLC)';
+      flcRow.appendChild(flcChip);
+      const flcBrowse = document.createElement('button');
+      flcBrowse.type = 'button';
+      flcBrowse.className = 'ghost unit-ini-browse-btn';
+      flcBrowse.innerHTML = '<span class="btn-icon">🎞</span>FLC';
+      flcBrowse.disabled = !editable;
+      flcBrowse.addEventListener('click', () => { void pickTypePath(row, false); });
+      flcRow.appendChild(flcBrowse);
+      pathStack.appendChild(flcRow);
+
+      entryRow.appendChild(pathStack);
+
+      if (editable) {
         const delBtn = document.createElement('button');
         delBtn.type = 'button';
         delBtn.className = 'ghost unit-ini-delete-btn';
-        delBtn.textContent = 'Delete';
-        delBtn.addEventListener('click', (ev) => {
-          ev.preventDefault();
-          rememberUndoSnapshot();
-          model.actions = model.actions.filter((r) => r !== action);
-          if (ui.actionKey === action.key) ui.actionKey = '';
-          setDirty(true);
-          renderActions();
+        delBtn.innerHTML = '<span class="btn-icon">🗑</span>Delete';
+        delBtn.addEventListener('click', () => {
+          withUndo(() => {
+            activeModel.typeRows = activeModel.typeRows.filter((candidate) => candidate !== row);
+          });
+          if (ui.actionKey === row.key) ui.actionKey = '';
+          renderTypes();
+          renderPreviewPicker();
         });
-        row.appendChild(keyInput);
-        row.appendChild(pathInput);
-        row.appendChild(timingInput);
-        row.appendChild(previewBtn);
-        row.appendChild(delBtn);
+        entryRow.appendChild(delBtn);
       }
-      actionList.appendChild(row);
+      list.appendChild(entryRow);
     });
+    typesCard.appendChild(list);
     if (editable) {
       const addWrap = document.createElement('div');
       addWrap.className = 'unit-ini-add-row';
-      const add = document.createElement('button');
-      add.type = 'button';
-      add.className = 'ghost';
-      add.textContent = 'Add Action';
-      add.addEventListener('click', (ev) => {
-        ev.preventDefault();
-        const model = ensureEditorModel();
-        rememberUndoSnapshot();
-        const existingKeys = new Set((model.actions || []).map((r) => String(r.key || '').toUpperCase()));
-        let idx = 1;
-        let nextKey = `ACTION_${idx}`;
-        while (existingKeys.has(nextKey)) {
-          idx += 1;
-          nextKey = `ACTION_${idx}`;
-        }
-        model.actions.unshift({ key: nextKey, relativePath: '', timingSeconds: null, exists: false, sourcePath: '' });
-        setDirty(true);
-        renderActions();
+      const addBtn = document.createElement('button');
+      addBtn.type = 'button';
+      addBtn.className = 'ghost';
+      addBtn.textContent = 'Add Type';
+      addBtn.disabled = UNIT_ALLOWED_ANIMATION_KEYS.every((key) => rows.some((row) => row.key === key));
+      addBtn.addEventListener('click', () => {
+        const used = new Set(rows.map((row) => row.key));
+        const firstAvailable = UNIT_ALLOWED_ANIMATION_KEYS.find((key) => !used.has(key));
+        if (!firstAvailable) return;
+        withUndo(() => {
+          activeModel.typeRows.unshift({ key: firstAvailable, relativePath: '', timingSeconds: null, soundPath: '' });
+        });
+        ui.actionKey = firstAvailable;
+        renderTypes();
+        renderPreviewPicker();
       });
-      addWrap.appendChild(add);
-      actionList.appendChild(addWrap);
+      addWrap.appendChild(addBtn);
+      typesCard.appendChild(addWrap);
     }
-    const desired = String(ui.actionKey || manifest.defaultActionKey || actions[0].key || '');
-    const selected = actions.find((a) => a.key === desired) || actions[0];
-    ui.actionKey = selected.key;
-    actionSelect.value = selected.key;
-    markActionRow(selected.key);
-    loadActionPreview(selected.key);
+    const details = document.createElement('details');
+    details.className = 'unit-types-collapse';
+    details.open = !!ui.unitTypesOpen;
+    const summary = document.createElement('summary');
+    summary.textContent = 'Animation Types';
+    details.appendChild(summary);
+    details.appendChild(typesCard);
+    details.addEventListener('toggle', () => {
+      ui.unitTypesOpen = !!details.open;
+    });
+    typesWrap.appendChild(details);
   };
 
   actionSelect.addEventListener('change', () => {
-    const next = String(actionSelect.value || '').trim();
+    const next = String(actionSelect.value || '').trim().toUpperCase();
     if (!next) return;
     ui.actionKey = next;
-    markActionRow(next);
-    loadActionPreview(next);
+    void loadActionPreview(next);
+  });
+  soundToggle.addEventListener('click', () => {
+    ui.previewSoundOn = !ui.previewSoundOn;
+    refreshSoundToggle();
+  });
+  playPauseToggle.addEventListener('click', () => {
+    ui.previewPaused = !ui.previewPaused;
+    refreshPlayPauseToggle();
   });
 
   const loadManifest = async () => {
     const animationName = String(entry.animationName || '').trim();
     if (!animationName) {
-      actionSelect.innerHTML = '';
-      actionList.innerHTML = '<div class="hint">No animation folder key set for this unit.</div>';
+      actionSelect.innerHTML = '<option>(no animation folder)</option>';
       previewWrap.innerHTML = '';
+      typesWrap.innerHTML = '<div class="hint">Set an animation folder key to edit unit INI data.</div>';
       return;
     }
     const res = await window.c3xManager.getPreview({
@@ -4058,29 +4604,102 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
       animationName
     });
     if (!res || !res.ok) {
-      actionSelect.innerHTML = '';
-      actionList.innerHTML = `<div class="hint">Unable to load unit INI: ${res && res.error ? res.error : 'unknown error'}</div>`;
-      previewWrap.innerHTML = '';
-      return;
+      manifest = {
+        iniPath: getUnitIniTargetPath(animationName),
+        normalSpeedMs: 225,
+        fastSpeedMs: 225,
+        sections: buildDefaultUnitIniSections(),
+        actions: [],
+        defaultActionKey: ''
+      };
+      if (!editable) {
+        typesWrap.innerHTML = `<div class="hint">Unable to load unit INI: ${res && res.error ? res.error : 'unknown error'}</div>`;
+        actionSelect.innerHTML = '<option>(no data)</option>';
+        previewWrap.innerHTML = '';
+        return;
+      }
+    } else {
+      manifest = res;
     }
-    manifest = res;
     ensureEditorModel();
-    renderActions();
+    renderTypes();
+    renderPreviewPicker();
     renderDirectionPad();
   };
 
   if (editable) {
     keyInput.addEventListener('change', () => {
-      rememberUndoSnapshot();
-      entry.animationName = keyInput.value.trim();
-      entry.unitIniEditor = null;
+      withUndo(() => {
+        entry.animationName = String(keyInput.value || '').trim();
+        entry.unitIniEditor = null;
+      });
+      model = null;
       ui.actionKey = '';
-      setDirty(true);
-      loadManifest();
+      void loadManifest();
     });
   }
+
+  const variants = getEraVariantEntries(tab, entry);
+  if (variants.length > 1) {
+    const eraCard = document.createElement('div');
+    eraCard.className = 'unit-era-variant-card';
+    const eraTitle = document.createElement('div');
+    eraTitle.className = 'field-meta';
+    eraTitle.textContent = 'Era/Age Variant Animation Folders';
+    eraCard.appendChild(eraTitle);
+    panel.insertBefore(eraCard, mainRow);
+    variants.forEach((variant) => {
+      const row = document.createElement('div');
+      row.className = 'unit-era-variant-row';
+      const label = document.createElement('strong');
+      label.textContent = variant.eraLabel;
+      row.appendChild(label);
+      const valueInput = document.createElement(editable ? 'input' : 'span');
+      if (editable) {
+        valueInput.type = 'text';
+        valueInput.value = String(variant.entry && variant.entry.animationName || '');
+        valueInput.placeholder = 'Animation folder';
+        valueInput.addEventListener('change', () => {
+          withUndo(() => {
+            variant.entry.animationName = String(valueInput.value || '').trim();
+            variant.entry.unitIniEditor = null;
+          });
+          if (variant.entry === entry) {
+            model = null;
+            ui.actionKey = '';
+            void loadManifest();
+          }
+        });
+      } else {
+        valueInput.className = 'key-display-chip';
+        valueInput.textContent = String(variant.entry && variant.entry.animationName || '(none)');
+      }
+      row.appendChild(valueInput);
+      if (variant.entry !== entry) {
+        const jumpBtn = document.createElement('button');
+        jumpBtn.type = 'button';
+        jumpBtn.className = 'ghost';
+        jumpBtn.textContent = 'Open';
+        jumpBtn.addEventListener('click', () => {
+          navigateWithHistory(() => {
+            state.referenceSelection[tabKey] = variant.baseIndex;
+          }, { preserveTabScroll: true });
+        });
+        row.appendChild(jumpBtn);
+      } else {
+        const here = document.createElement('span');
+        here.className = 'hint';
+        here.textContent = '(current)';
+        row.appendChild(here);
+      }
+      eraCard.appendChild(row);
+    });
+  }
+
   renderDirectionPad();
-  loadManifest();
+  refreshSoundToggle();
+  refreshPlayPauseToggle();
+  void loadManifest();
 }
 
 function getSectionTitle(section, schema, index) {
@@ -4525,10 +5144,14 @@ const BIQ_FIELD_REFS = {
   improvements: {
     reqimprovement: 'improvements',
     reqgovernment: 'governments',
+    reqadvance: 'technologies',
     obsoleteby: 'technologies',
     reqresource1: 'resources',
     reqresource2: 'resources',
-    unitproduced: 'units'
+    unitproduced: 'units',
+    gainineverycity: 'improvements',
+    gainoncontinent: 'improvements',
+    doubleshappiness: 'improvements'
   },
   units: {
     requiredtech: 'technologies',
@@ -4622,6 +5245,10 @@ const BIQ_FIELD_ENUMS = {
       { value: '0', label: 'Male' },
       { value: '1', label: 'Female' }
     ],
+    plurality: [
+      { value: '0', label: 'Singular' },
+      { value: '1', label: 'Plural' }
+    ],
     defaultcolor: Array.from({ length: 32 }, (_v, idx) => ({ value: String(idx), label: `Color ${idx}` })),
     uniquecolor: Array.from({ length: 32 }, (_v, idx) => ({ value: String(idx), label: `Color ${idx}` }))
   },
@@ -4671,29 +5298,171 @@ const BIQ_FIELD_ENUMS = {
 
 const BIQ_FIELD_HIDDEN = {
   all: new Set(['byte_length', 'datalength', 'data_length', 'note']),
-  resources: new Set(['icon', 'question_mark', 'prerequisite']),
-  improvements: new Set(['question_mark', 'reqadvance', 'obsoleteby']),
-  units: new Set(['iconindex', 'question_mark', 'requiredtech']),
-  technologies: new Set(['advanceicon', 'question_mark', 'prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4']),
-  governments: new Set(['question_mark', 'prerequisitetechnology']),
+  resources: new Set(['icon', 'question_mark', 'prerequisite', 'name']),
+  improvements: new Set(['question_mark', 'name']),
+  units: new Set(['iconindex', 'question_mark', 'requiredtech', 'name']),
+  technologies: new Set(['advanceicon', 'question_mark', 'name', 'prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4']),
+  governments: new Set(['question_mark', 'name']),
   civilizations: new Set([
+    'name',
     'question_mark',
-    'freetech1index',
-    'freetech2index',
-    'freetech3index',
-    'freetech4index',
     'bonuses',
+    'c3cbonuses',
     'civilizationtraits',
+    'build_often',
     'buildoften',
+    'never_build',
     'buildnever',
     'governorsettings',
     'flavors',
-    'plurality',
-    'uniquecivilizationcounter',
-    'uniquecolor'
+    'uniquecivilizationcounter'
   ]),
   eras: new Set(['question_mark'])
 };
+
+const QUINT_UNIT_RULE_VISIBLE_KEYS = new Set([
+  'name',
+  'requiredresource1', 'requiredresource2', 'requiredresource3',
+  'upgradeto',
+  'unitclass',
+  'attack', 'defence', 'movement', 'bombardstrength', 'bombardrange', 'rateoffire', 'airdefence',
+  'hitpointbonus', 'operationalrange', 'capacity', 'populationcost', 'shieldcost', 'workerstrengthfloat',
+  'requiressupport', 'zoneofcontrol', 'bombardeffects', 'createscraters',
+  'offence', 'defencestrategy', 'explorestrategy', 'terraform', 'settle', 'king', 'artillery',
+  'cruisemissileunit', 'icbm', 'tacticalnuke', 'leaderunit', 'armyunit', 'flagunit',
+  'navalpower', 'navaltransport', 'navalcarrier', 'navalmissiletransport',
+  'airbombard', 'airdefencestrategy', 'airtransport',
+  'buildcity', 'buildcolony', 'buildroad', 'buildrailroad', 'buildmine', 'irrigate', 'buildfort',
+  'clearforest', 'clearjungle', 'plantforest', 'clearpollution', 'automate', 'joincity',
+  'ptwbuildairfield', 'ptwbuildradartower', 'ptwbuildoutpost',
+  'load', 'unload', 'airlift', 'airdrop', 'pillage', 'bombard', 'buildarmy', 'finishimprovement', 'upgrade', 'enslaveresultsin',
+  'skipturn', 'wait', 'goto', 'fortify', 'disband',
+  'bomb', 'rebase', 'precisionbombing', 'recon', 'intercept',
+  'allterrainasroads', 'amphibiousunit', 'army', 'blitz', 'cruisemissile', 'detectinvisible',
+  'draftable', 'footsoldier', 'hiddennationality', 'immobile', 'infinitebombardrange', 'invisible',
+  'leader', 'lethallandbombardment', 'lethalseabombardment', 'nuclearweapon', 'radar',
+  'rangedattackanimations', 'requiresescort', 'rotatebeforeattack', 'sinksinocean', 'sinksinsea',
+  'startsgoldenage', 'stealth', 'tacticalmissile', 'transportsonlyairunits', 'transportsonlyfootunits',
+  'transportsonlytacticalmissiles', 'wheeled',
+  'availableto', 'stealth_target'
+]);
+
+const QUINT_IMPROVEMENT_RULE_VISIBLE_KEYS = new Set([
+  'civilopediaentry',
+  'cost', 'maintenancecost', 'culture', 'production', 'pollution', 'wonder', 'smallwonder', 'improvement',
+  'bombarddefence', 'navalbombarddefence', 'airpower', 'navalpower', 'defencebonus', 'navaldefencebonus',
+  'veteranairunits', 'veteranunits', 'veteranseaunits',
+  'stealthattackbarrier', 'allowsnuclearweapons', 'decreasessuccessofmissiles',
+  'doublecombatvsbarbarians', 'buildarmieswithoutleader', 'buildlargerarmies',
+  'increaseschanceofleaderappearance', 'safeseatravel', 'increasedshipmovement', 'plustwoshipmovement',
+  'cheaperupgrades', 'allowshealinginenemyterritory', 'increasedarmyvalue', 'doublecitydefences',
+  'increasesfoodinwater', 'doublescitygrowthrate', 'doublecitygrowth', 'allowcitylevel2', 'allowcitylevel3',
+  'increasedresearch', 'doublesresearchoutput', 'twofreeadvances', 'gainanytechsknownbytwocivs',
+  'gainineverycity', 'gainoncontinent', 'unitproduced', 'unitfrequency', 'obsoleteby',
+  'reqimprovement', 'numreqbuildings', 'reqgovernment', 'reqadvance', 'mustbenearriver',
+  'coastalinstallation', 'requiresvictoriousarmy', 'mustbenearwater', 'requireseliteship', 'armiesrequired',
+  'reqresource1', 'reqresource2', 'goodsmustbeincityradius',
+  'allowairtrade', 'allowwatertrade', 'capitalization', 'increasedtaxes', 'increasestradeinwater',
+  'increasedtrade', 'reducescorruption', 'forbiddenpalace', 'paystrademaintenance', 'treasuryearnsinterest',
+  'happy', 'happyall', 'unhappy', 'unhappyall', 'increasesluxurytrade', 'increasedluxuries',
+  'doubleshappiness', 'reduceswarweariness', 'reducewarweariness', 'empirereduceswarweariness',
+  'centerofempire', 'replacesotherwiththistag', 'removepoppollution', 'reducebldgpollution',
+  'mayexplodeormeltdown', 'doublessacrifice', 'increasesshieldsinwater', 'resistanttobribery',
+  'spaceshippart', 'buildspaceshipparts', 'touristattraction', 'allowspymissions', 'allowdiplomaticvictory',
+  'militaristic', 'religious', 'commercial', 'industrious', 'expansionist', 'scientific', 'agricultural', 'seafaring',
+  'charmbarrier', 'actsasgeneraltelepad',
+  'flavor_1', 'flavor_2', 'flavor_3', 'flavor_4', 'flavor_5', 'flavor_6', 'flavor_7'
+]);
+
+const QUINT_GOVERNMENT_RULE_VISIBLE_KEYS = new Set([
+  'civilopediaentry', 'prerequisitetechnology',
+  'corruption',
+  'sciencecap', 'workerrate', 'assimilationchance', 'draftlimit', 'militarypolicelimit',
+  'defaulttype', 'transitiontype', 'requiresmaintenance', 'tilepenalty', 'commercebonus', 'xenophobic', 'forceresettlement',
+  'diplomatlevel', 'spylevel', 'immuneto',
+  'freeunits', 'costperunit', 'freeunitspertown', 'freeunitspercity', 'freeunitspermetropolis',
+  'hurrying',
+  'warweariness',
+  'performance_of_this_government_versus_government_0',
+  'performance_of_this_government_versus_government_1',
+  'performance_of_this_government_versus_government_2',
+  'performance_of_this_government_versus_government_3',
+  'performance_of_this_government_versus_government_4',
+  'performance_of_this_government_versus_government_5',
+  'performance_of_this_government_versus_government_6',
+  'performance_of_this_government_versus_government_7',
+  'briberymodifier', 'resistancemodifier',
+  'questionmarkone', 'questionmarktwo', 'questionmarkthree', 'questionmarkfour',
+  'rulertitlepairsused',
+  'malerulertitle1', 'malerulertitle2', 'malerulertitle3', 'malerulertitle4',
+  'femalerulertitle1', 'femalerulertitle2', 'femalerulertitle3', 'femalerulertitle4'
+]);
+
+const QUINT_CIV_RULE_VISIBLE_KEYS = new Set([
+  'civilopediaentry', 'noun', 'adjective', 'civilizationgender', 'plurality', 'culturegroup',
+  'militaristic', 'religious', 'expansionist', 'agricultural', 'commercial', 'industrious', 'scientific', 'seafaring',
+  'manyoffensivelandunits', 'nooffensivelandunits',
+  'manydefensivelandunits', 'nodefensivelandunits',
+  'manyartillery', 'noartillery',
+  'manysettlers', 'nosettlers',
+  'manyworkers', 'noworkers',
+  'manyships', 'noships',
+  'manyairunits', 'noairunits',
+  'manygrowth', 'nogrowth',
+  'manyproduction', 'noproduction',
+  'manyhappiness', 'nohappiness',
+  'manyscience', 'noscience',
+  'manywealth', 'nowealth',
+  'manytrade', 'notrade',
+  'manyexploration', 'noexploration',
+  'manyculture', 'noculture',
+  'leadertitle', 'leadername', 'leadergender', 'kingunit',
+  'favoritegovernment', 'shunnedgovernment', 'aggressionlevel',
+  'numcitynames', 'numgreatleaders', 'numscientificleaders',
+  'forwardfilename_for_era_0', 'forwardfilename_for_era_1', 'forwardfilename_for_era_2', 'forwardfilename_for_era_3',
+  'reversefilename_for_era_0', 'reversefilename_for_era_1', 'reversefilename_for_era_2', 'reversefilename_for_era_3',
+  'freetech1index', 'freetech2index', 'freetech3index', 'freetech4index',
+  'managecitizens', 'manageproduction', 'nowonders', 'nosmallwonders', 'emphasizefood', 'emphasizeshields', 'emphasizetrade',
+  'flavor_1', 'flavor_2', 'flavor_3', 'flavor_4', 'flavor_5', 'flavor_6', 'flavor_7',
+  'uniquecolor', 'defaultcolor',
+  'diplomacytextindex', 'questionmark'
+]);
+
+const QUINT_TECH_RULE_VISIBLE_KEYS = new Set([
+  'civilopediaentry',
+  'era', 'cost', 'advanceicon',
+  'x', 'y',
+  'prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4',
+  'notrequiredforadvancement', 'enablesrecycling', 'bonustech', 'permitssacrifice', 'revealmap',
+  'enablesdiplomats', 'enablesalliances', 'enablesrop', 'enablesmpp', 'enablestradeembargoes', 'enablesmaptrading', 'enablescommunicationtrading',
+  'cannotbetraded', 'doubleswealth', 'enablesseatrade', 'enablesoceantrade',
+  'enablesirrigationwithoutfreshwater', 'disablesfloodplaindisease', 'doublesworkrate',
+  'enablesbridges', 'enablesconscription', 'enablesmobilizationlevels', 'enablesprecisionbombing',
+  'flavor_1', 'flavor_2', 'flavor_3', 'flavor_4', 'flavor_5', 'flavor_6', 'flavor_7'
+]);
+
+const CIV_NOTE_LIST_COUNT_KEYS = new Set(['numcitynames', 'numgreatleaders', 'numscientificleaders']);
+
+const UNIT_MULTI_VALUE_FIELD_KEYS = new Set(['stealthtarget']);
+
+const UNIT_ABILITY_OPTION_KEYS = [
+  'allterrainasroads', 'amphibiousunit', 'army', 'blitz', 'cruisemissile', 'detectinvisible',
+  'draftable', 'flagunit', 'footsoldier', 'hiddennationality', 'immobile', 'infinitebombardrange',
+  'invisible', 'king', 'leader', 'lethallandbombardment', 'lethalseabombardment', 'nuclearweapon',
+  'radar', 'rangedattackanimations', 'requiresescort', 'rotatebeforeattack', 'sinksinocean',
+  'sinksinsea', 'startsgoldenage', 'stealth', 'tacticalmissile', 'transportsonlyairunits',
+  'transportsonlyfootunits', 'transportsonlytacticalmissiles', 'wheeled'
+];
+
+const UNIT_BOTTOM_LIST_HIDDEN_KEYS = new Set([
+  ...UNIT_ABILITY_OPTION_KEYS,
+  'availableto',
+  'stealthtarget',
+  'numstealthtargets',
+  'telepadrange',
+  'numlegalunittelepads',
+  'numlegalbuildingtelepads'
+]);
 
 const BIQ_STRUCTURE_FIELD_HIDDEN = {
   all: new Set(['byte_length', 'data_length', 'datalength', 'note', 'civilopediaentry']),
@@ -4916,76 +5685,532 @@ const REFERENCE_RULE_SCHEMAS = {
     }
   },
   technologies: {
-    order: ['cost', 'era', 'prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4', 'x', 'y'],
+    order: [
+      'civilopediaentry', 'era', 'cost', 'advanceicon',
+      'x', 'y',
+      'prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4',
+      'notrequiredforadvancement', 'enablesrecycling', 'bonustech', 'permitssacrifice', 'revealmap',
+      'enablesdiplomats', 'enablesalliances', 'enablesrop', 'enablesmpp', 'enablestradeembargoes', 'enablesmaptrading', 'enablescommunicationtrading',
+      'cannotbetraded', 'doubleswealth', 'enablesseatrade', 'enablesoceantrade',
+      'enablesirrigationwithoutfreshwater', 'disablesfloodplaindisease', 'doublesworkrate',
+      'enablesbridges', 'enablesconscription', 'enablesmobilizationlevels', 'enablesprecisionbombing',
+      'flavor_1', 'flavor_2', 'flavor_3', 'flavor_4', 'flavor_5', 'flavor_6', 'flavor_7'
+    ],
     fields: {
-      cost: { group: 'Core', control: 'number', min: 0 },
-      era: { group: 'Core', control: 'reference' },
+      civilopediaentry: { group: 'General', control: 'text', label: 'Civilopedia Entry' },
+      era: { group: 'General', control: 'reference', label: 'Era' },
+      cost: { group: 'General', control: 'number', min: 0, label: 'Cost' },
+      advanceicon: { group: 'General', control: 'number', min: 0, label: 'Icon' },
+      x: { group: 'Tech Tree', control: 'number', min: 0, label: 'X' },
+      y: { group: 'Tech Tree', control: 'number', min: 0, label: 'Y' },
       prerequisite1: { group: 'Prerequisites', control: 'reference' },
       prerequisite2: { group: 'Prerequisites', control: 'reference' },
       prerequisite3: { group: 'Prerequisites', control: 'reference' },
       prerequisite4: { group: 'Prerequisites', control: 'reference' },
-      x: { group: 'Tech Tree Position', control: 'number', min: 0 },
-      y: { group: 'Tech Tree Position', control: 'number', min: 0 }
+      notrequiredforadvancement: { group: 'Flags', control: 'bool', label: 'Not Required for Era Advancement' },
+      enablesrecycling: { group: 'Flags', control: 'bool', label: 'Enables Recycling' },
+      bonustech: { group: 'Flags', control: 'bool', label: 'Bonus Technology Awarded' },
+      permitssacrifice: { group: 'Flags', control: 'bool', label: 'Permits Sacrifice' },
+      revealmap: { group: 'Flags', control: 'bool', label: 'Reveals World Map' },
+      enablesdiplomats: { group: 'Diplomacy', control: 'bool', label: 'Enables Diplomats' },
+      enablesalliances: { group: 'Diplomacy', control: 'bool', label: 'Enables Alliances' },
+      enablesrop: { group: 'Diplomacy', control: 'bool', label: 'Enables Right of Passage' },
+      enablesmpp: { group: 'Diplomacy', control: 'bool', label: 'Enables Mutual Protection Pacts' },
+      enablestradeembargoes: { group: 'Diplomacy', control: 'bool', label: 'Enables Trade Embargos' },
+      enablesmaptrading: { group: 'Diplomacy', control: 'bool', label: 'Enables Map Trading' },
+      enablescommunicationtrading: { group: 'Diplomacy', control: 'bool', label: 'Enables Communication Trading' },
+      cannotbetraded: { group: 'Trade', control: 'bool', label: 'Cannot Be Traded' },
+      doubleswealth: { group: 'Trade', control: 'bool', label: 'Doubles effect of capitalization' },
+      enablesseatrade: { group: 'Trade', control: 'bool', label: 'Enables Trade over Seas' },
+      enablesoceantrade: { group: 'Trade', control: 'bool', label: 'Enables Trade over Oceans' },
+      enablesirrigationwithoutfreshwater: { group: 'Terrain', control: 'bool', label: 'Enables irrigation without water' },
+      disablesfloodplaindisease: { group: 'Terrain', control: 'bool', label: 'Disables Flood Plain Disease' },
+      doublesworkrate: { group: 'Terrain', control: 'bool', label: 'Doubles worker work rate' },
+      enablesbridges: { group: 'Military', control: 'bool', label: 'Enables Bridges' },
+      enablesconscription: { group: 'Military', control: 'bool', label: 'Enables Conscription' },
+      enablesmobilizationlevels: { group: 'Military', control: 'bool', label: 'Enables Mobilization Levels' },
+      enablesprecisionbombing: { group: 'Military', control: 'bool', label: 'Enables Precision Bombing' },
+      flavor_1: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor1' },
+      flavor_2: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor2' },
+      flavor_3: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor3' },
+      flavor_4: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor4' },
+      flavor_5: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor5' },
+      flavor_6: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor6' },
+      flavor_7: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor7' }
     }
   },
   improvements: {
-    order: ['reqadvance', 'obsoleteby', 'reqresource1', 'reqresource2', 'reqgovernment', 'reqimprovement', 'unitproduced', 'unitfrequency'],
+    order: [
+      'civilopediaentry',
+      'cost', 'maintenancecost', 'culture', 'production', 'pollution', 'wonder', 'smallwonder', 'improvement',
+      'bombarddefence', 'navalbombarddefence', 'airpower', 'navalpower', 'defencebonus', 'navaldefencebonus',
+      'veteranairunits', 'veteranunits', 'veteranseaunits',
+      'stealthattackbarrier', 'allowsnuclearweapons', 'decreasessuccessofmissiles',
+      'doublecombatvsbarbarians', 'buildarmieswithoutleader', 'buildlargerarmies',
+      'increaseschanceofleaderappearance', 'safeseatravel', 'increasedshipmovement', 'plustwoshipmovement',
+      'cheaperupgrades', 'allowshealinginenemyterritory', 'increasedarmyvalue', 'doublecitydefences',
+      'increasesfoodinwater', 'doublescitygrowthrate', 'doublecitygrowth', 'allowcitylevel2', 'allowcitylevel3',
+      'increasedresearch', 'doublesresearchoutput', 'twofreeadvances', 'gainanytechsknownbytwocivs',
+      'gainineverycity', 'gainoncontinent', 'unitproduced', 'unitfrequency', 'obsoleteby',
+      'reqimprovement', 'numreqbuildings', 'reqgovernment', 'reqadvance', 'mustbenearriver',
+      'coastalinstallation', 'requiresvictoriousarmy', 'mustbenearwater', 'requireseliteship', 'armiesrequired',
+      'reqresource1', 'reqresource2', 'goodsmustbeincityradius',
+      'allowairtrade', 'allowwatertrade', 'capitalization', 'increasedtaxes', 'increasestradeinwater',
+      'increasedtrade', 'reducescorruption', 'forbiddenpalace', 'paystrademaintenance', 'treasuryearnsinterest',
+      'happy', 'happyall', 'unhappy', 'unhappyall', 'increasesluxurytrade', 'increasedluxuries',
+      'doubleshappiness', 'reduceswarweariness', 'reducewarweariness', 'empirereduceswarweariness',
+      'centerofempire', 'replacesotherwiththistag', 'removepoppollution', 'reducebldgpollution',
+      'mayexplodeormeltdown', 'doublessacrifice', 'increasesshieldsinwater', 'resistanttobribery',
+      'spaceshippart', 'buildspaceshipparts', 'touristattraction', 'allowspymissions', 'allowdiplomaticvictory',
+      'militaristic', 'religious', 'commercial', 'industrious', 'expansionist', 'scientific', 'agricultural', 'seafaring',
+      'charmbarrier', 'actsasgeneraltelepad',
+      'flavor_1', 'flavor_2', 'flavor_3', 'flavor_4', 'flavor_5', 'flavor_6', 'flavor_7'
+    ],
     fields: {
-      reqadvance: { group: 'Prerequisites', control: 'reference' },
-      obsoleteby: { group: 'Prerequisites', control: 'reference' },
-      reqresource1: { group: 'Prerequisites', control: 'reference' },
-      reqresource2: { group: 'Prerequisites', control: 'reference' },
-      reqgovernment: { group: 'Prerequisites', control: 'reference' },
-      reqimprovement: { group: 'Prerequisites', control: 'reference' },
-      unitproduced: { group: 'Auto-Produced Unit', control: 'reference' },
-      unitfrequency: { group: 'Auto-Produced Unit', control: 'number', min: 0 }
+      civilopediaentry: { group: 'Properties', control: 'text', label: 'Civilopedia Entry' },
+      cost: { group: 'Properties', control: 'number', min: 0, label: 'Cost' },
+      maintenancecost: { group: 'Properties', control: 'number', min: 0, label: 'Maintenance' },
+      culture: { group: 'Properties', control: 'number', min: 0, label: 'Culture' },
+      production: { group: 'Properties', control: 'number', min: 0, label: 'Production bonus' },
+      pollution: { group: 'Properties', control: 'number', min: 0, label: 'Pollution' },
+      wonder: { group: 'Properties', control: 'bool', label: 'Wonder' },
+      smallwonder: { group: 'Properties', control: 'bool', label: 'Small Wonder' },
+      improvement: { group: 'Properties', control: 'bool', label: 'Improvement' },
+      bombarddefence: { group: 'Military', control: 'number', min: 0, label: 'Land Bombard' },
+      navalbombarddefence: { group: 'Military', control: 'number', min: 0, label: 'Sea Bombard' },
+      airpower: { group: 'Military', control: 'number', min: 0, label: 'Air attack' },
+      navalpower: { group: 'Military', control: 'number', min: 0, label: 'Sea attack' },
+      defencebonus: { group: 'Military', control: 'number', min: 0, label: 'Defence Bonus' },
+      navaldefencebonus: { group: 'Military', control: 'number', min: 0, label: 'Naval defence' },
+      veteranairunits: { group: 'Military', control: 'bool', label: 'Veteran: Air' },
+      veteranunits: { group: 'Military', control: 'bool', label: 'Veteran: Land' },
+      veteranseaunits: { group: 'Military', control: 'bool', label: 'Veteran: Sea' },
+      stealthattackbarrier: { group: 'Military', control: 'bool', label: 'Stealth Barrier' },
+      allowsnuclearweapons: { group: 'Military', control: 'bool', label: 'Nukes' },
+      decreasessuccessofmissiles: { group: 'Military', control: 'bool', label: "75% defence vs ICBM's" },
+      doublecombatvsbarbarians: { group: 'Military', control: 'bool', label: 'Double combat vs Barbarians' },
+      buildarmieswithoutleader: { group: 'Military', control: 'bool', label: 'Armies without leader' },
+      buildlargerarmies: { group: 'Military', control: 'bool', label: 'Larger armies' },
+      increaseschanceofleaderappearance: { group: 'Military', control: 'bool', label: 'More leaders' },
+      safeseatravel: { group: 'Military', control: 'bool', label: 'Safe at sea' },
+      increasedshipmovement: { group: 'Military', control: 'bool', label: '+1 sea moves' },
+      plustwoshipmovement: { group: 'Military', control: 'bool', label: '+2 sea moves' },
+      cheaperupgrades: { group: 'Military', control: 'bool', label: 'Half cost upgrades' },
+      allowshealinginenemyterritory: { group: 'Military', control: 'bool', label: 'Can heal in enemy territory' },
+      increasedarmyvalue: { group: 'Military', control: 'bool', label: 'Stronger armies' },
+      doublecitydefences: { group: 'Military', control: 'bool', label: 'Double city defences (global)' },
+      increasesfoodinwater: { group: 'Food', control: 'bool', label: '+1 food in water' },
+      doublescitygrowthrate: { group: 'Food', control: 'bool', label: 'Cities store food' },
+      doublecitygrowth: { group: 'Food', control: 'bool', label: 'Cities gain +2 population instead of +1' },
+      allowcitylevel2: { group: 'Food', control: 'bool', label: 'Allows city size 2' },
+      allowcitylevel3: { group: 'Food', control: 'bool', label: 'Allows city size 3' },
+      increasedresearch: { group: 'Science', control: 'bool', label: '+50% in city' },
+      doublesresearchoutput: { group: 'Science', control: 'bool', label: '+100% in city' },
+      twofreeadvances: { group: 'Science', control: 'bool', label: '2 free advances' },
+      gainanytechsknownbytwocivs: { group: 'Science', control: 'bool', label: 'Gain any technology known by two civs' },
+      gainineverycity: { group: 'Gain', control: 'reference', label: 'In every city' },
+      gainoncontinent: { group: 'Gain', control: 'reference', label: 'In every city on this continent' },
+      unitproduced: { group: 'Gain', control: 'reference', label: 'Unit' },
+      unitfrequency: { group: 'Gain', control: 'number', min: 0, label: 'Frequency' },
+      obsoleteby: { group: 'Gain', control: 'reference', label: 'Made obsolete by' },
+      reqimprovement: { group: 'Requirements', control: 'reference', label: 'Building' },
+      numreqbuildings: { group: 'Requirements', control: 'number', min: 0, label: 'Number' },
+      reqgovernment: { group: 'Requirements', control: 'reference', label: 'Government' },
+      reqadvance: { group: 'Requirements', control: 'reference', label: 'Technology' },
+      mustbenearriver: { group: 'Requirements', control: 'bool', label: 'Near river' },
+      coastalinstallation: { group: 'Requirements', control: 'bool', label: 'Coastal' },
+      requiresvictoriousarmy: { group: 'Requirements', control: 'bool', label: 'Victorious army' },
+      mustbenearwater: { group: 'Requirements', control: 'bool', label: 'By water' },
+      requireseliteship: { group: 'Requirements', control: 'bool', label: 'Elite Ship' },
+      armiesrequired: { group: 'Requirements', control: 'number', min: 0, label: 'Armies' },
+      reqresource1: { group: 'Resources', control: 'reference', label: 'Resource slot 1' },
+      reqresource2: { group: 'Resources', control: 'reference', label: 'Resource slot 2' },
+      goodsmustbeincityradius: { group: 'Resources', control: 'bool', label: 'In city radius' },
+      allowairtrade: { group: 'Trade', control: 'bool', label: 'Air trade' },
+      allowwatertrade: { group: 'Trade', control: 'bool', label: 'Water trade' },
+      capitalization: { group: 'Trade', control: 'bool', label: 'Capitalization' },
+      increasedtaxes: { group: 'Trade', control: 'bool', label: '+50% tax revenue' },
+      increasestradeinwater: { group: 'Trade', control: 'bool', label: 'Increased water trade' },
+      increasedtrade: { group: 'Trade', control: 'bool', label: '+1 trade per tile' },
+      reducescorruption: { group: 'Trade', control: 'bool', label: 'Reduces corruption: City' },
+      forbiddenpalace: { group: 'Trade', control: 'bool', label: 'Reduces corruption: Empire' },
+      paystrademaintenance: { group: 'Trade', control: 'bool', label: 'Pays trade maintenance' },
+      treasuryearnsinterest: { group: 'Trade', control: 'bool', label: '5% treasury interest' },
+      happy: { group: 'Happiness', control: 'number', min: 0, label: 'Content faces: City' },
+      happyall: { group: 'Happiness', control: 'number', min: 0, label: 'Content faces: Global' },
+      unhappy: { group: 'Happiness', control: 'number', min: 0, label: 'Unhappy faces: City' },
+      unhappyall: { group: 'Happiness', control: 'number', min: 0, label: 'Unhappy faces: Global' },
+      increasesluxurytrade: { group: 'Happiness', control: 'bool', label: 'More luxury happiness' },
+      increasedluxuries: { group: 'Happiness', control: 'bool', label: '+50% luxury tax' },
+      doubleshappiness: { group: 'Happiness', control: 'reference', label: 'Doubles happiness of' },
+      reduceswarweariness: { group: 'Happiness', control: 'bool', label: 'Reduces war weariness: City' },
+      reducewarweariness: { group: 'Happiness', control: 'bool', label: 'Reduces war weariness: Empire' },
+      empirereduceswarweariness: { group: 'Happiness', control: 'bool', label: 'Reduces war weariness: Empire' },
+      centerofempire: { group: 'Other', control: 'bool', label: 'Center of empire' },
+      replacesotherwiththistag: { group: 'Other', control: 'bool', label: 'Replaces others with this flag' },
+      removepoppollution: { group: 'Other', control: 'bool', label: 'No population pollution' },
+      reducebldgpollution: { group: 'Other', control: 'bool', label: 'Less building pollution' },
+      mayexplodeormeltdown: { group: 'Other', control: 'bool', label: 'Can meltdown' },
+      doublessacrifice: { group: 'Other', control: 'bool', label: 'Doubles sacrifice' },
+      increasesshieldsinwater: { group: 'Other', control: 'bool', label: 'More shields in water' },
+      resistanttobribery: { group: 'Other', control: 'bool', label: 'Propaganda Resistance' },
+      spaceshippart: { group: 'Other', control: 'number', min: -1, label: 'Spaceship part' },
+      buildspaceshipparts: { group: 'Other', control: 'bool', label: 'Can build spaceship parts' },
+      touristattraction: { group: 'Other', control: 'bool', label: 'Tourist Attraction' },
+      allowspymissions: { group: 'Other', control: 'bool', label: 'Allows spies' },
+      allowdiplomaticvictory: { group: 'Other', control: 'bool', label: 'Allows diplomatic victory' },
+      militaristic: { group: 'Characteristics', control: 'bool', label: 'Militaristic' },
+      religious: { group: 'Characteristics', control: 'bool', label: 'Religious' },
+      commercial: { group: 'Characteristics', control: 'bool', label: 'Commercial' },
+      industrious: { group: 'Characteristics', control: 'bool', label: 'Industrial' },
+      expansionist: { group: 'Characteristics', control: 'bool', label: 'Expansionist' },
+      scientific: { group: 'Characteristics', control: 'bool', label: 'Scientific' },
+      agricultural: { group: 'Characteristics', control: 'bool', label: 'Agricultural' },
+      seafaring: { group: 'Characteristics', control: 'bool', label: 'Seafaring' },
+      charmbarrier: { group: 'Special Toggles', control: 'bool', label: 'Charm Barrier' },
+      actsasgeneraltelepad: { group: 'Special Toggles', control: 'bool', label: 'General Telepad' },
+      flavor_1: { group: 'Flavors', control: 'number', min: 0 },
+      flavor_2: { group: 'Flavors', control: 'number', min: 0 },
+      flavor_3: { group: 'Flavors', control: 'number', min: 0 },
+      flavor_4: { group: 'Flavors', control: 'number', min: 0 },
+      flavor_5: { group: 'Flavors', control: 'number', min: 0 },
+      flavor_6: { group: 'Flavors', control: 'number', min: 0 },
+      flavor_7: { group: 'Flavors', control: 'number', min: 0 }
     }
   },
   governments: {
-    order: ['prerequisitetechnology', 'corruption', 'warweariness', 'hurrying', 'freeunitspertown', 'freeunitspercity', 'freeunitspermetropolis', 'costperunit'],
+    order: [
+      'civilopediaentry', 'prerequisitetechnology',
+      'corruption',
+      'sciencecap', 'workerrate', 'assimilationchance', 'draftlimit', 'militarypolicelimit',
+      'defaulttype', 'transitiontype', 'requiresmaintenance', 'tilepenalty', 'commercebonus', 'xenophobic', 'forceresettlement',
+      'diplomatlevel', 'spylevel', 'immuneto',
+      'freeunits', 'costperunit', 'freeunitspertown', 'freeunitspercity', 'freeunitspermetropolis',
+      'hurrying',
+      'warweariness',
+      'performance_of_this_government_versus_government_0',
+      'performance_of_this_government_versus_government_1',
+      'performance_of_this_government_versus_government_2',
+      'performance_of_this_government_versus_government_3',
+      'performance_of_this_government_versus_government_4',
+      'performance_of_this_government_versus_government_5',
+      'performance_of_this_government_versus_government_6',
+      'performance_of_this_government_versus_government_7',
+      'resistancemodifier', 'briberymodifier',
+      'questionmarkone', 'questionmarktwo', 'questionmarkthree', 'questionmarkfour',
+      'rulertitlepairsused',
+      'malerulertitle1', 'femalerulertitle1',
+      'malerulertitle2', 'femalerulertitle2',
+      'malerulertitle3', 'femalerulertitle3',
+      'malerulertitle4', 'femalerulertitle4'
+    ],
     fields: {
-      prerequisitetechnology: { group: 'Core', control: 'reference' },
-      corruption: { group: 'Core', control: 'select' },
-      warweariness: { group: 'Core', control: 'select' },
-      hurrying: { group: 'Core', control: 'select' },
-      freeunitspertown: { group: 'Unit Support', control: 'number' },
-      freeunitspercity: { group: 'Unit Support', control: 'number' },
-      freeunitspermetropolis: { group: 'Unit Support', control: 'number' },
-      costperunit: { group: 'Unit Support', control: 'number' }
+      civilopediaentry: { group: 'General', control: 'text', label: 'Civilopedia Entry' },
+      prerequisitetechnology: { group: 'General', control: 'reference', label: 'Prerequisite' },
+      corruption: { group: 'Corruption/Waste', control: 'select' },
+      sciencecap: { group: 'Government Parameters', control: 'number', min: 0, label: 'Sci/Tax/Ent Cap' },
+      workerrate: { group: 'Government Parameters', control: 'number', min: 0, label: 'Worker Rate' },
+      assimilationchance: { group: 'Government Parameters', control: 'number', min: 0, label: 'Assimilation %' },
+      draftlimit: { group: 'Government Parameters', control: 'number', min: 0, label: 'Draft Limit' },
+      militarypolicelimit: { group: 'Government Parameters', control: 'number', min: 0, label: 'Military Police' },
+      defaulttype: { group: 'Flags', control: 'bool', label: 'Default Type' },
+      transitiontype: { group: 'Flags', control: 'bool', label: 'Transition Type' },
+      requiresmaintenance: { group: 'Flags', control: 'bool', label: 'Requires Maintenance' },
+      tilepenalty: { group: 'Flags', control: 'bool', label: '-1 Penalty on 3+ Food/Prod/Com' },
+      commercebonus: { group: 'Flags', control: 'bool', label: '+1 Bonus on 1+ Commerce' },
+      xenophobic: { group: 'Flags', control: 'bool', label: 'Xenophobia' },
+      forceresettlement: { group: 'Flags', control: 'bool', label: 'Forced Resettlement' },
+      diplomatlevel: { group: 'Espionage', control: 'select', label: 'Diplomats are' },
+      spylevel: { group: 'Espionage', control: 'select', label: 'Spies are' },
+      immuneto: { group: 'Espionage', control: 'select', label: 'Immune to' },
+      freeunits: { group: 'Unit Support', control: 'number', label: 'Free Units (-1 = All Units Free)' },
+      costperunit: { group: 'Unit Support', control: 'number', label: 'Cost Per Unit' },
+      freeunitspertown: { group: 'Unit Support', control: 'number', label: 'Free units per: Town' },
+      freeunitspercity: { group: 'Unit Support', control: 'number', label: 'Free units per: City' },
+      freeunitspermetropolis: { group: 'Unit Support', control: 'number', label: 'Free units per: Metropolis' },
+      hurrying: { group: 'Hurrying Labor', control: 'select' },
+      warweariness: { group: 'War Weariness', control: 'select' },
+      performance_of_this_government_versus_government_0: { group: 'Government Relations Table', control: 'text' },
+      performance_of_this_government_versus_government_1: { group: 'Government Relations Table', control: 'text' },
+      performance_of_this_government_versus_government_2: { group: 'Government Relations Table', control: 'text' },
+      performance_of_this_government_versus_government_3: { group: 'Government Relations Table', control: 'text' },
+      performance_of_this_government_versus_government_4: { group: 'Government Relations Table', control: 'text' },
+      performance_of_this_government_versus_government_5: { group: 'Government Relations Table', control: 'text' },
+      performance_of_this_government_versus_government_6: { group: 'Government Relations Table', control: 'text' },
+      performance_of_this_government_versus_government_7: { group: 'Government Relations Table', control: 'text' },
+      resistancemodifier: { group: 'Government Relations Table', control: 'number', label: 'Resistance Modifier' },
+      briberymodifier: { group: 'Government Relations Table', control: 'number', label: 'Propaganda' },
+      questionmarkone: { group: 'Unknown Parameters', control: 'number', label: 'Unknown 1' },
+      questionmarktwo: { group: 'Unknown Parameters', control: 'number', label: 'Unknown 2' },
+      questionmarkthree: { group: 'Unknown Parameters', control: 'number', label: 'Unknown 3' },
+      questionmarkfour: { group: 'Unknown Parameters', control: 'number', label: 'Unknown 4' },
+      rulertitlepairsused: { group: 'Ruler Titles', control: 'number', min: 0, max: 4, label: 'Enabled Rows' },
+      malerulertitle1: { group: 'Ruler Titles', control: 'text', label: 'Masculine 1' },
+      femalerulertitle1: { group: 'Ruler Titles', control: 'text', label: 'Feminine 1' },
+      malerulertitle2: { group: 'Ruler Titles', control: 'text', label: 'Masculine 2' },
+      femalerulertitle2: { group: 'Ruler Titles', control: 'text', label: 'Feminine 2' },
+      malerulertitle3: { group: 'Ruler Titles', control: 'text', label: 'Masculine 3' },
+      femalerulertitle3: { group: 'Ruler Titles', control: 'text', label: 'Feminine 3' },
+      malerulertitle4: { group: 'Ruler Titles', control: 'text', label: 'Masculine 4' },
+      femalerulertitle4: { group: 'Ruler Titles', control: 'text', label: 'Feminine 4' }
     }
   },
   civilizations: {
-    order: ['leadername', 'leadertitle', 'leadergender', 'civilizationgender', 'culturegroup', 'defaultcolor', 'diplomacytextindex', 'favoritegovernment', 'shunnedgovernment', 'freetech1index', 'freetech2index', 'freetech3index', 'freetech4index', 'aggressionlevel'],
+    order: [
+      'civilopediaentry', 'noun', 'adjective', 'civilizationgender', 'plurality', 'culturegroup',
+      'militaristic', 'religious', 'expansionist', 'agricultural', 'commercial', 'industrious', 'scientific', 'seafaring',
+      'manyoffensivelandunits', 'nooffensivelandunits',
+      'manydefensivelandunits', 'nodefensivelandunits',
+      'manyartillery', 'noartillery',
+      'manysettlers', 'nosettlers',
+      'manyworkers', 'noworkers',
+      'manyships', 'noships',
+      'manyairunits', 'noairunits',
+      'manygrowth', 'nogrowth',
+      'manyproduction', 'noproduction',
+      'manyhappiness', 'nohappiness',
+      'manyscience', 'noscience',
+      'manywealth', 'nowealth',
+      'manytrade', 'notrade',
+      'manyexploration', 'noexploration',
+      'manyculture', 'noculture',
+      'leadertitle', 'leadername', 'leadergender', 'kingunit',
+      'favoritegovernment', 'shunnedgovernment', 'aggressionlevel',
+      'numcitynames', 'numgreatleaders', 'numscientificleaders',
+      'forwardfilename_for_era_0', 'reversefilename_for_era_0',
+      'forwardfilename_for_era_1', 'reversefilename_for_era_1',
+      'forwardfilename_for_era_2', 'reversefilename_for_era_2',
+      'forwardfilename_for_era_3', 'reversefilename_for_era_3',
+      'freetech1index', 'freetech2index', 'freetech3index', 'freetech4index',
+      'managecitizens', 'manageproduction', 'nowonders', 'nosmallwonders', 'emphasizefood', 'emphasizeshields', 'emphasizetrade',
+      'flavor_1', 'flavor_2', 'flavor_3', 'flavor_4', 'flavor_5', 'flavor_6', 'flavor_7',
+      'uniquecolor', 'defaultcolor',
+      'diplomacytextindex', 'questionmark'
+    ],
     fields: {
-      leadername: { group: 'Identity', control: 'text' },
-      leadertitle: { group: 'Identity', control: 'text' },
-      leadergender: { group: 'Identity', control: 'select' },
-      civilizationgender: { group: 'Identity', control: 'select' },
-      culturegroup: { group: 'Identity', control: 'select' },
-      defaultcolor: { group: 'Identity', control: 'select' },
-      diplomacytextindex: { group: 'Identity', control: 'reference' },
-      favoritegovernment: { group: 'Governments', control: 'reference' },
-      shunnedgovernment: { group: 'Governments', control: 'reference' },
-      freetech1index: { group: 'Free Techs', control: 'reference' },
-      freetech2index: { group: 'Free Techs', control: 'reference' },
-      freetech3index: { group: 'Free Techs', control: 'reference' },
-      freetech4index: { group: 'Free Techs', control: 'reference' },
-      aggressionlevel: { group: 'AI', control: 'select' }
+      civilopediaentry: { group: 'Civilization Identity', control: 'text', label: 'Civilopedia Entry' },
+      noun: { group: 'Civilization Identity', control: 'text', label: 'Noun' },
+      adjective: { group: 'Civilization Identity', control: 'text', label: 'Adjective' },
+      civilizationgender: { group: 'Civilization Identity', control: 'select', label: 'Gender' },
+      plurality: { group: 'Civilization Identity', control: 'select', label: 'Number' },
+      culturegroup: { group: 'Civilization Identity', control: 'select', label: 'Culture Group' },
+      militaristic: { group: 'Traits', control: 'bool', label: 'Militaristic' },
+      religious: { group: 'Traits', control: 'bool', label: 'Religious' },
+      expansionist: { group: 'Traits', control: 'bool', label: 'Expansionist' },
+      agricultural: { group: 'Traits', control: 'bool', label: 'Agricultural' },
+      commercial: { group: 'Traits', control: 'bool', label: 'Commercial' },
+      industrious: { group: 'Traits', control: 'bool', label: 'Industrious' },
+      scientific: { group: 'Traits', control: 'bool', label: 'Scientific' },
+      seafaring: { group: 'Traits', control: 'bool', label: 'Seafaring' },
+      manyoffensivelandunits: { group: 'Build Often/Never', control: 'bool', label: 'Often: Offensive Land Units' },
+      nooffensivelandunits: { group: 'Build Often/Never', control: 'bool', label: 'Never: Offensive Land Units' },
+      manydefensivelandunits: { group: 'Build Often/Never', control: 'bool', label: 'Often: Defensive Land Units' },
+      nodefensivelandunits: { group: 'Build Often/Never', control: 'bool', label: 'Never: Defensive Land Units' },
+      manyartillery: { group: 'Build Often/Never', control: 'bool', label: 'Often: Artillery Units' },
+      noartillery: { group: 'Build Often/Never', control: 'bool', label: 'Never: Artillery Units' },
+      manysettlers: { group: 'Build Often/Never', control: 'bool', label: 'Often: Settlers' },
+      nosettlers: { group: 'Build Often/Never', control: 'bool', label: 'Never: Settlers' },
+      manyworkers: { group: 'Build Often/Never', control: 'bool', label: 'Often: Workers' },
+      noworkers: { group: 'Build Often/Never', control: 'bool', label: 'Never: Workers' },
+      manyships: { group: 'Build Often/Never', control: 'bool', label: 'Often: Naval Units' },
+      noships: { group: 'Build Often/Never', control: 'bool', label: 'Never: Naval Units' },
+      manyairunits: { group: 'Build Often/Never', control: 'bool', label: 'Often: Air Units' },
+      noairunits: { group: 'Build Often/Never', control: 'bool', label: 'Never: Air Units' },
+      manygrowth: { group: 'Build Often/Never', control: 'bool', label: 'Often: Growth' },
+      nogrowth: { group: 'Build Often/Never', control: 'bool', label: 'Never: Growth' },
+      manyproduction: { group: 'Build Often/Never', control: 'bool', label: 'Often: Production' },
+      noproduction: { group: 'Build Often/Never', control: 'bool', label: 'Never: Production' },
+      manyhappiness: { group: 'Build Often/Never', control: 'bool', label: 'Often: Happiness' },
+      nohappiness: { group: 'Build Often/Never', control: 'bool', label: 'Never: Happiness' },
+      manyscience: { group: 'Build Often/Never', control: 'bool', label: 'Often: Science' },
+      noscience: { group: 'Build Often/Never', control: 'bool', label: 'Never: Science' },
+      manywealth: { group: 'Build Often/Never', control: 'bool', label: 'Often: Capitalization' },
+      nowealth: { group: 'Build Often/Never', control: 'bool', label: 'Never: Capitalization' },
+      manytrade: { group: 'Build Often/Never', control: 'bool', label: 'Often: Trade' },
+      notrade: { group: 'Build Often/Never', control: 'bool', label: 'Never: Trade' },
+      manyexploration: { group: 'Build Often/Never', control: 'bool', label: 'Often: Exploration' },
+      noexploration: { group: 'Build Often/Never', control: 'bool', label: 'Never: Exploration' },
+      manyculture: { group: 'Build Often/Never', control: 'bool', label: 'Often: Culture' },
+      noculture: { group: 'Build Often/Never', control: 'bool', label: 'Never: Culture' },
+      leadertitle: { group: 'Leader', control: 'text', label: 'Title' },
+      leadername: { group: 'Leader', control: 'text', label: 'Name' },
+      leadergender: { group: 'Leader', control: 'select', label: 'Gender' },
+      kingunit: { group: 'Leader', control: 'reference', label: 'Monarch unit' },
+      favoritegovernment: { group: 'Personality', control: 'reference', label: 'Favorite Govt' },
+      shunnedgovernment: { group: 'Personality', control: 'reference', label: 'Shunned Govt' },
+      aggressionlevel: { group: 'Personality', control: 'range', min: -2, max: 2, label: 'Aggression' },
+      numcitynames: { group: 'Cities', control: 'number', min: 0, label: 'City Names Count' },
+      numgreatleaders: { group: 'Military Leaders', control: 'number', min: 0, label: 'Leader Names Count' },
+      numscientificleaders: { group: 'Scientific Leaders', control: 'number', min: 0, label: 'Leader Names Count' },
+      forwardfilename_for_era_0: { group: 'Animations', control: 'text', label: 'Ancient Fwd' },
+      reversefilename_for_era_0: { group: 'Animations', control: 'text', label: 'Ancient Bwd' },
+      forwardfilename_for_era_1: { group: 'Animations', control: 'text', label: 'Middle Ages Fwd' },
+      reversefilename_for_era_1: { group: 'Animations', control: 'text', label: 'Middle Ages Bwd' },
+      forwardfilename_for_era_2: { group: 'Animations', control: 'text', label: 'Industrial Fwd' },
+      reversefilename_for_era_2: { group: 'Animations', control: 'text', label: 'Industrial Bwd' },
+      forwardfilename_for_era_3: { group: 'Animations', control: 'text', label: 'Modern Fwd' },
+      reversefilename_for_era_3: { group: 'Animations', control: 'text', label: 'Modern Bwd' },
+      freetech1index: { group: 'Free Technologies', control: 'reference', label: 'Technology slot 1' },
+      freetech2index: { group: 'Free Technologies', control: 'reference', label: 'Technology slot 2' },
+      freetech3index: { group: 'Free Technologies', control: 'reference', label: 'Technology slot 3' },
+      freetech4index: { group: 'Free Technologies', control: 'reference', label: 'Technology slot 4' },
+      managecitizens: { group: 'Governor Settings', control: 'bool', label: 'Manage Citizens' },
+      manageproduction: { group: 'Governor Settings', control: 'bool', label: 'Manage Production' },
+      nowonders: { group: 'Governor Settings', control: 'bool', label: 'No Wonders' },
+      nosmallwonders: { group: 'Governor Settings', control: 'bool', label: 'No Small Wonders' },
+      emphasizefood: { group: 'Governor Settings', control: 'bool', label: 'Emphasize Food' },
+      emphasizeshields: { group: 'Governor Settings', control: 'bool', label: 'Emphasize Production' },
+      emphasizetrade: { group: 'Governor Settings', control: 'bool', label: 'Emphasize Trade' },
+      flavor_1: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor1' },
+      flavor_2: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor2' },
+      flavor_3: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor3' },
+      flavor_4: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor4' },
+      flavor_5: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor5' },
+      flavor_6: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor6' },
+      flavor_7: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor7' },
+      uniquecolor: { group: 'Colors', control: 'select', label: 'Unique Color' },
+      defaultcolor: { group: 'Colors', control: 'select', label: 'Default Color' },
+      diplomacytextindex: { group: 'Misc Settings', control: 'reference', label: 'Diplomacy Text Index' },
+      questionmark: { group: 'Misc Settings', control: 'number', label: 'Unknown' }
     }
   },
   units: {
-    order: ['requiredtech', 'upgradeto', 'requiredresource1', 'requiredresource2', 'requiredresource3', 'unitclass', 'attack', 'defense', 'bombard', 'cost'],
+    order: [
+      'name',
+      'requiredresource1', 'requiredresource2', 'requiredresource3', 'upgradeto',
+      'attack', 'defence', 'movement', 'bombardstrength', 'bombardrange', 'rateoffire', 'airdefence',
+      'hitpointbonus', 'operationalrange', 'capacity', 'populationcost', 'shieldcost', 'workerstrengthfloat',
+      'requiressupport', 'zoneofcontrol', 'bombardeffects', 'createscraters',
+      'offence', 'defencestrategy', 'explorestrategy', 'terraform', 'settle', 'king', 'artillery',
+      'cruisemissileunit', 'icbm', 'tacticalnuke', 'leaderunit', 'armyunit', 'flagunit',
+      'navalpower', 'navaltransport', 'navalcarrier', 'navalmissiletransport',
+      'airbombard', 'airdefencestrategy', 'airtransport',
+      'unitclass',
+      'buildcity', 'buildcolony', 'buildroad', 'buildrailroad', 'buildmine', 'irrigate', 'buildfort',
+      'clearforest', 'clearjungle', 'plantforest', 'clearpollution', 'automate', 'joincity',
+      'ptwbuildairfield', 'ptwbuildradartower', 'ptwbuildoutpost',
+      'load', 'unload', 'airlift', 'airdrop', 'pillage', 'bombard', 'buildarmy', 'finishimprovement', 'upgrade', 'enslaveresultsin',
+      'skipturn', 'wait', 'goto', 'fortify', 'disband',
+      'bomb', 'rebase', 'precisionbombing', 'recon', 'intercept',
+      'allterrainasroads', 'amphibiousunit', 'army', 'blitz', 'cruisemissile', 'detectinvisible',
+      'draftable', 'footsoldier', 'hiddennationality', 'immobile', 'infinitebombardrange', 'invisible',
+      'leader', 'lethallandbombardment', 'lethalseabombardment', 'nuclearweapon', 'radar',
+      'rangedattackanimations', 'requiresescort', 'rotatebeforeattack', 'sinksinocean', 'sinksinsea',
+      'startsgoldenage', 'stealth', 'tacticalmissile', 'transportsonlyairunits', 'transportsonlyfootunits',
+      'transportsonlytacticalmissiles', 'wheeled',
+      'availableto', 'stealth_target'
+    ],
     fields: {
-      requiredtech: { group: 'Prerequisites', control: 'reference' },
-      upgradeto: { group: 'Upgrades', control: 'reference' },
+      name: { group: 'Identity', control: 'text' },
       requiredresource1: { group: 'Prerequisites', control: 'reference' },
       requiredresource2: { group: 'Prerequisites', control: 'reference' },
       requiredresource3: { group: 'Prerequisites', control: 'reference' },
-      unitclass: { group: 'Identity', control: 'select' },
-      attack: { group: 'Combat', control: 'number', min: 0 },
-      defense: { group: 'Combat', control: 'number', min: 0 },
-      bombard: { group: 'Combat', control: 'number', min: 0 },
-      cost: { group: 'Costs', control: 'number', min: 0 }
+      upgradeto: { group: 'Prerequisites', control: 'reference' },
+      unitclass: { group: 'Class', control: 'select' },
+      attack: { group: 'Unit Statistics', control: 'number', min: 0 },
+      defence: { group: 'Unit Statistics', control: 'number', min: 0 },
+      movement: { group: 'Unit Statistics', control: 'number', min: 0 },
+      bombardstrength: { group: 'Unit Statistics', control: 'number', min: 0 },
+      bombardrange: { group: 'Unit Statistics', control: 'number', min: 0 },
+      rateoffire: { group: 'Unit Statistics', control: 'number', min: 0 },
+      airdefence: { group: 'Unit Statistics', control: 'number', min: 0 },
+      hitpointbonus: { group: 'Unit Statistics', control: 'bool' },
+      operationalrange: { group: 'Unit Statistics', control: 'number', min: 0 },
+      capacity: { group: 'Unit Statistics', control: 'number', min: 0 },
+      populationcost: { group: 'Unit Statistics', control: 'number', min: 0 },
+      shieldcost: { group: 'Unit Statistics', control: 'number', min: 0 },
+      workerstrengthfloat: { group: 'Unit Statistics', control: 'number', min: 0, label: 'Worker Strength' },
+      requiressupport: { group: 'Unit Statistics', control: 'bool' },
+      zoneofcontrol: { group: 'Unit Statistics', control: 'bool' },
+      bombardeffects: { group: 'Unit Statistics', control: 'bool' },
+      createscraters: { group: 'Unit Statistics', control: 'bool' },
+      offence: { group: 'AI Strategies: Land', control: 'bool' },
+      defencestrategy: { group: 'AI Strategies: Land', control: 'bool' },
+      explorestrategy: { group: 'AI Strategies: Land', control: 'bool' },
+      terraform: { group: 'AI Strategies: Land', control: 'bool' },
+      settle: { group: 'AI Strategies: Land', control: 'bool' },
+      king: { group: 'AI Strategies: Land', control: 'bool' },
+      artillery: { group: 'AI Strategies: Land', control: 'bool' },
+      cruisemissileunit: { group: 'AI Strategies: Land', control: 'bool' },
+      icbm: { group: 'AI Strategies: Land', control: 'bool' },
+      tacticalnuke: { group: 'AI Strategies: Land', control: 'bool' },
+      leaderunit: { group: 'AI Strategies: Land', control: 'bool' },
+      armyunit: { group: 'AI Strategies: Land', control: 'bool' },
+      flagunit: { group: 'AI Strategies: Land', control: 'bool' },
+      navalpower: { group: 'AI Strategies: Sea', control: 'bool' },
+      navaltransport: { group: 'AI Strategies: Sea', control: 'bool' },
+      navalcarrier: { group: 'AI Strategies: Sea', control: 'bool' },
+      navalmissiletransport: { group: 'AI Strategies: Sea', control: 'bool' },
+      airbombard: { group: 'AI Strategies: Air', control: 'bool' },
+      airdefencestrategy: { group: 'AI Strategies: Air', control: 'bool' },
+      airtransport: { group: 'AI Strategies: Air', control: 'bool' },
+      buildcity: { group: 'Worker Actions', control: 'bool' },
+      buildcolony: { group: 'Worker Actions', control: 'bool' },
+      buildroad: { group: 'Worker Actions', control: 'bool' },
+      buildrailroad: { group: 'Worker Actions', control: 'bool' },
+      buildmine: { group: 'Worker Actions', control: 'bool' },
+      irrigate: { group: 'Worker Actions', control: 'bool' },
+      buildfort: { group: 'Worker Actions', control: 'bool' },
+      clearforest: { group: 'Worker Actions', control: 'bool' },
+      clearjungle: { group: 'Worker Actions', control: 'bool' },
+      plantforest: { group: 'Worker Actions', control: 'bool' },
+      clearpollution: { group: 'Worker Actions', control: 'bool' },
+      automate: { group: 'Worker Actions', control: 'bool' },
+      joincity: { group: 'Worker Actions', control: 'bool' },
+      ptwbuildairfield: { group: 'Worker Actions', control: 'bool', label: 'Build Airfield' },
+      ptwbuildradartower: { group: 'Worker Actions', control: 'bool', label: 'Build Radar Tower' },
+      ptwbuildoutpost: { group: 'Worker Actions', control: 'bool', label: 'Build Outpost' },
+      load: { group: 'Special Orders', control: 'bool' },
+      unload: { group: 'Special Orders', control: 'bool' },
+      airlift: { group: 'Special Orders', control: 'bool' },
+      airdrop: { group: 'Special Orders', control: 'bool' },
+      pillage: { group: 'Special Orders', control: 'bool' },
+      bombard: { group: 'Special Orders', control: 'bool' },
+      buildarmy: { group: 'Special Orders', control: 'bool' },
+      finishimprovement: { group: 'Special Orders', control: 'bool' },
+      upgrade: { group: 'Special Orders', control: 'bool' },
+      enslaveresultsin: { group: 'Special Orders', control: 'reference' },
+      skipturn: { group: 'Standard Orders', control: 'bool' },
+      wait: { group: 'Standard Orders', control: 'bool' },
+      goto: { group: 'Standard Orders', control: 'bool' },
+      fortify: { group: 'Standard Orders', control: 'bool' },
+      disband: { group: 'Standard Orders', control: 'bool' },
+      bomb: { group: 'Air Missions', control: 'bool' },
+      rebase: { group: 'Air Missions', control: 'bool' },
+      precisionbombing: { group: 'Air Missions', control: 'bool' },
+      recon: { group: 'Air Missions', control: 'bool' },
+      intercept: { group: 'Air Missions', control: 'bool' },
+      allterrainasroads: { group: 'Lists: Unit Abilities', control: 'bool' },
+      amphibiousunit: { group: 'Lists: Unit Abilities', control: 'bool' },
+      army: { group: 'Lists: Unit Abilities', control: 'bool' },
+      blitz: { group: 'Lists: Unit Abilities', control: 'bool' },
+      cruisemissile: { group: 'Lists: Unit Abilities', control: 'bool' },
+      detectinvisible: { group: 'Lists: Unit Abilities', control: 'bool' },
+      draftable: { group: 'Lists: Unit Abilities', control: 'bool' },
+      footsoldier: { group: 'Lists: Unit Abilities', control: 'bool' },
+      hiddennationality: { group: 'Lists: Unit Abilities', control: 'bool' },
+      immobile: { group: 'Lists: Unit Abilities', control: 'bool' },
+      infinitebombardrange: { group: 'Lists: Unit Abilities', control: 'bool' },
+      invisible: { group: 'Lists: Unit Abilities', control: 'bool' },
+      leader: { group: 'Lists: Unit Abilities', control: 'bool' },
+      lethallandbombardment: { group: 'Lists: Unit Abilities', control: 'bool' },
+      lethalseabombardment: { group: 'Lists: Unit Abilities', control: 'bool' },
+      nuclearweapon: { group: 'Lists: Unit Abilities', control: 'bool' },
+      radar: { group: 'Lists: Unit Abilities', control: 'bool' },
+      rangedattackanimations: { group: 'Lists: Unit Abilities', control: 'bool' },
+      requiresescort: { group: 'Lists: Unit Abilities', control: 'bool' },
+      rotatebeforeattack: { group: 'Lists: Unit Abilities', control: 'bool' },
+      sinksinocean: { group: 'Lists: Unit Abilities', control: 'bool' },
+      sinksinsea: { group: 'Lists: Unit Abilities', control: 'bool' },
+      startsgoldenage: { group: 'Lists: Unit Abilities', control: 'bool' },
+      stealth: { group: 'Lists: Unit Abilities', control: 'bool' },
+      tacticalmissile: { group: 'Lists: Unit Abilities', control: 'bool' },
+      transportsonlyairunits: { group: 'Lists: Unit Abilities', control: 'bool' },
+      transportsonlyfootunits: { group: 'Lists: Unit Abilities', control: 'bool' },
+      transportsonlytacticalmissiles: { group: 'Lists: Unit Abilities', control: 'bool' },
+      wheeled: { group: 'Lists: Unit Abilities', control: 'bool' },
+      availableto: { group: 'Lists', control: 'number', label: 'Available To (bitmask)' },
+      stealth_target: { group: 'Lists', control: 'unit-list', label: 'Stealth Attack Targets' }
     }
   }
 };
@@ -4995,6 +6220,12 @@ function shouldHideBiqField(tabKey, field) {
   const canon = base.replace(/[^a-z0-9]/g, '');
   if (!base) return true;
   if ((BIQ_FIELD_HIDDEN.all && (BIQ_FIELD_HIDDEN.all.has(base) || BIQ_FIELD_HIDDEN.all.has(canon)))) return true;
+  if (tabKey === 'units' && (UNIT_BOTTOM_LIST_HIDDEN_KEYS.has(base) || UNIT_BOTTOM_LIST_HIDDEN_KEYS.has(canon))) return true;
+  if (tabKey === 'units' && !QUINT_UNIT_RULE_VISIBLE_KEYS.has(base) && !QUINT_UNIT_RULE_VISIBLE_KEYS.has(canon)) return true;
+  if (tabKey === 'technologies' && !QUINT_TECH_RULE_VISIBLE_KEYS.has(base) && !QUINT_TECH_RULE_VISIBLE_KEYS.has(canon)) return true;
+  if (tabKey === 'improvements' && !QUINT_IMPROVEMENT_RULE_VISIBLE_KEYS.has(base) && !QUINT_IMPROVEMENT_RULE_VISIBLE_KEYS.has(canon)) return true;
+  if (tabKey === 'governments' && !QUINT_GOVERNMENT_RULE_VISIBLE_KEYS.has(base) && !QUINT_GOVERNMENT_RULE_VISIBLE_KEYS.has(canon)) return true;
+  if (tabKey === 'civilizations' && !QUINT_CIV_RULE_VISIBLE_KEYS.has(base) && !QUINT_CIV_RULE_VISIBLE_KEYS.has(canon)) return true;
   const tabHidden = BIQ_FIELD_HIDDEN[tabKey];
   return !!(tabHidden && (tabHidden.has(base) || tabHidden.has(canon)));
 }
@@ -5004,6 +6235,27 @@ function getRuleFieldSpec(tabKey, field) {
   const schema = REFERENCE_RULE_SCHEMAS[tabKey] || null;
   if (!schema || !schema.fields) return null;
   return schema.fields[base] || null;
+}
+
+function getBiqFlavorNames() {
+  const biq = state.bundle && state.bundle.biq;
+  const sections = biq && Array.isArray(biq.sections) ? biq.sections : [];
+  const flavSection = sections.find((section) => String(section && section.code || '').toUpperCase() === 'FLAV');
+  const records = flavSection && Array.isArray(flavSection.records) ? flavSection.records : [];
+  return records.map((record, idx) => String(record && record.name || '').trim() || `Flavor ${idx + 1}`);
+}
+
+function getRuleFieldDisplayLabel(tabKey, field, spec) {
+  const fallback = String((spec && spec.label) || field.label || field.key || '');
+  if (tabKey !== 'civilizations' && tabKey !== 'technologies') return fallback;
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const m = base.match(/^flavor_(\d+)$/);
+  if (!m) return fallback;
+  const idx = Number.parseInt(m[1], 10);
+  if (!Number.isFinite(idx) || idx <= 0) return fallback;
+  const names = getBiqFlavorNames();
+  const name = String(names[idx - 1] || '').trim();
+  return name || fallback;
 }
 
 function getRuleFieldGroup(tabKey, field) {
@@ -5018,6 +6270,721 @@ function getRuleFieldOrder(tabKey, field) {
   if (!schema || !Array.isArray(schema.order)) return Number.MAX_SAFE_INTEGER;
   const idx = schema.order.indexOf(base);
   return idx >= 0 ? idx : Number.MAX_SAFE_INTEGER;
+}
+
+function canonicalBiqFieldKey(field) {
+  return String(field && (field.baseKey || field.key) || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function collapseUnitRuleFields(fields) {
+  const out = [];
+  const seen = new Set();
+  const multiBuckets = new Map();
+  (Array.isArray(fields) ? fields : []).forEach((field) => {
+    const canon = canonicalBiqFieldKey(field);
+    if (!canon) return;
+    if (UNIT_MULTI_VALUE_FIELD_KEYS.has(canon)) {
+      let bucket = multiBuckets.get(canon);
+      if (!bucket) {
+        bucket = { first: field, values: [] };
+        multiBuckets.set(canon, bucket);
+        out.push(bucket);
+      }
+      const value = String(field && field.value || '').trim();
+      if (value) bucket.values.push(value);
+      return;
+    }
+    if (seen.has(canon)) return;
+    seen.add(canon);
+    out.push(field);
+  });
+  return out.map((item) => {
+    if (!item || !item.first) return item;
+    return {
+      ...item.first,
+      value: item.values.join(', '),
+      multiValues: item.values
+    };
+  });
+}
+
+function setUnitListFieldValues(entry, key, values) {
+  if (!entry || !Array.isArray(entry.biqFields)) return;
+  const targetKey = String(key || '').trim();
+  const targetCanon = targetKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const cleaned = (Array.isArray(values) ? values : []).map((v) => String(v || '').trim()).filter(Boolean);
+  let firstRemoved = null;
+  let insertAt = -1;
+  const kept = [];
+  entry.biqFields.forEach((field) => {
+    const canon = canonicalBiqFieldKey(field);
+    if (canon === targetCanon) {
+      if (!firstRemoved) firstRemoved = field;
+      if (insertAt < 0) insertAt = kept.length;
+      return;
+    }
+    kept.push(field);
+  });
+  if (insertAt < 0) insertAt = kept.length;
+  const template = firstRemoved || { baseKey: targetKey, key: targetKey, label: toFriendlyKey(targetKey) };
+  const nextFields = cleaned.map((value) => ({
+    ...template,
+    value
+  }));
+  kept.splice(insertAt, 0, ...nextFields);
+  entry.biqFields = kept;
+  if (targetCanon === 'stealthtarget') {
+    const countField = entry.biqFields.find((field) => canonicalBiqFieldKey(field) === 'numstealthtargets');
+    if (countField) countField.value = String(cleaned.length);
+  }
+  if (targetCanon === 'legalunittelepad') {
+    const countField = entry.biqFields.find((field) => canonicalBiqFieldKey(field) === 'numlegalunittelepads');
+    if (countField) countField.value = String(cleaned.length);
+  }
+  if (targetCanon === 'legalbuildingtelepad') {
+    const countField = entry.biqFields.find((field) => canonicalBiqFieldKey(field) === 'numlegalbuildingtelepads');
+    if (countField) countField.value = String(cleaned.length);
+  }
+}
+
+function getUnitListFieldState(entry, candidateKeys, fallbackKey) {
+  const aliases = (Array.isArray(candidateKeys) ? candidateKeys : []).map((k) => String(k || '').trim()).filter(Boolean);
+  const wanted = aliases.map((k) => k.toLowerCase().replace(/[^a-z0-9]/g, ''));
+  let selectedKey = '';
+  const values = [];
+  const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+  fields.forEach((field) => {
+    const rawKey = String(field && (field.baseKey || field.key) || '').trim();
+    const canon = rawKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!canon || !wanted.includes(canon)) return;
+    if (!selectedKey) selectedKey = rawKey;
+    const value = String(field && field.value || '').trim();
+    if (value) values.push(value);
+  });
+  return {
+    key: selectedKey || String(fallbackKey || aliases[0] || '').trim(),
+    values
+  };
+}
+
+function getCivilizationNoteListState(entry, countKey) {
+  const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+  const targetCount = String(countKey || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  let countIndex = -1;
+  for (let i = 0; i < fields.length; i += 1) {
+    if (canonicalBiqFieldKey(fields[i]) === targetCount) {
+      countIndex = i;
+      break;
+    }
+  }
+  if (countIndex < 0) {
+    return {
+      countIndex: -1,
+      notesStart: -1,
+      notesEnd: -1,
+      values: []
+    };
+  }
+  const notesStart = countIndex + 1;
+  if (notesStart >= fields.length || canonicalBiqFieldKey(fields[notesStart]) !== 'note') {
+    return {
+      countIndex,
+      notesStart,
+      notesEnd: notesStart,
+      values: []
+    };
+  }
+  let notesEnd = notesStart;
+  while (notesEnd < fields.length && canonicalBiqFieldKey(fields[notesEnd]) === 'note') notesEnd += 1;
+  const values = fields.slice(notesStart, notesEnd)
+    .map((field) => String(field && field.value || '').trim())
+    .filter(Boolean);
+  return { countIndex, notesStart, notesEnd, values };
+}
+
+function setCivilizationNoteListValues(entry, countKey, values) {
+  if (!entry) return;
+  if (!Array.isArray(entry.biqFields)) entry.biqFields = [];
+  const fields = entry.biqFields;
+  const targetCount = String(countKey || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  let countField = fields.find((field) => canonicalBiqFieldKey(field) === targetCount);
+  if (!countField) {
+    countField = ensureBiqFieldByBaseKey(entry, countKey, toFriendlyKey(countKey), '0');
+  }
+  const state = getCivilizationNoteListState(entry, countKey);
+  const cleaned = (Array.isArray(values) ? values : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  const start = state.notesStart < 0 ? Math.max(0, fields.indexOf(countField) + 1) : state.notesStart;
+  const end = state.notesEnd < 0 ? start : state.notesEnd;
+  const existingNotes = (start >= 0 && end > start) ? fields.slice(start, end) : [];
+  const template = existingNotes[0] || {
+    key: 'note',
+    baseKey: 'note',
+    label: 'Note',
+    editable: true
+  };
+  const nextNotes = cleaned.map((value) => ({ ...template, value }));
+  fields.splice(start, Math.max(0, end - start), ...nextNotes);
+  countField.value = String(cleaned.length);
+}
+
+function renderCivilizationNoteListEditor(entry, cfg, referenceEditable) {
+  const wrap = document.createElement('div');
+  wrap.className = 'structured-list';
+  const state = getCivilizationNoteListState(entry, cfg.countKey);
+  if (!referenceEditable) {
+    const text = document.createElement('div');
+    text.className = 'field-meta';
+    text.textContent = state.values.length ? state.values.join(', ') : '(none)';
+    wrap.appendChild(text);
+    return wrap;
+  }
+
+  let items = state.values.slice();
+  const list = document.createElement('div');
+  list.className = 'structured-list';
+  list.style.maxHeight = '180px';
+  list.style.overflow = 'auto';
+  list.style.paddingRight = '2px';
+
+  const commit = () => {
+    setCivilizationNoteListValues(entry, cfg.countKey, items);
+    setDirty(true);
+  };
+
+  const rerender = () => {
+    list.innerHTML = '';
+    if (items.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'field-meta';
+      empty.textContent = '(none)';
+      list.appendChild(empty);
+    } else {
+      items.forEach((value, idx) => {
+        const line = document.createElement('div');
+        line.className = 'kv-row compact';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = cfg.placeholder;
+        input.value = value;
+        input.addEventListener('input', () => {
+          rememberUndoSnapshot();
+          items[idx] = input.value;
+          commit();
+        });
+        const del = document.createElement('button');
+        del.type = 'button';
+        withRemoveIcon(del, ' Remove');
+        del.addEventListener('click', () => {
+          rememberUndoSnapshot();
+          items.splice(idx, 1);
+          commit();
+          rerender();
+        });
+        line.appendChild(input);
+        line.appendChild(del);
+        list.appendChild(line);
+      });
+    }
+  };
+
+  const addRow = document.createElement('div');
+  addRow.className = 'kv-row compact';
+  const addInput = document.createElement('input');
+  addInput.type = 'text';
+  addInput.placeholder = cfg.placeholder;
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.textContent = '+';
+  addBtn.title = `Add ${cfg.label}`;
+  const addItem = () => {
+    const value = String(addInput.value || '').trim();
+    if (!value) return;
+    rememberUndoSnapshot();
+    items.push(value);
+    addInput.value = '';
+    commit();
+    rerender();
+    const lastInput = list.querySelector('.kv-row.compact input:last-of-type');
+    if (lastInput) lastInput.focus({ preventScroll: true });
+  };
+  addBtn.addEventListener('click', addItem);
+  addInput.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    addItem();
+  });
+  addRow.appendChild(addInput);
+  addRow.appendChild(addBtn);
+  wrap.appendChild(addRow);
+  wrap.appendChild(list);
+  rerender();
+  return wrap;
+}
+
+function setUnitAbilitySelections(entry, selectedValues) {
+  if (!entry || !Array.isArray(entry.biqFields)) return;
+  const wanted = new Set((Array.isArray(selectedValues) ? selectedValues : []).map((v) => String(v || '').trim().toLowerCase()).filter(Boolean));
+  UNIT_ABILITY_OPTION_KEYS.forEach((key) => {
+    const field = entry.biqFields.find((f) => canonicalBiqFieldKey(f) === key);
+    if (!field) return;
+    field.value = wanted.has(key) ? 'true' : 'false';
+  });
+}
+
+function getUnitAbilitySelections(entry) {
+  const out = [];
+  const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+  UNIT_ABILITY_OPTION_KEYS.forEach((key) => {
+    const field = fields.find((f) => canonicalBiqFieldKey(f) === key);
+    const on = String(field && field.value || '').trim().toLowerCase() === 'true';
+    if (on) out.push(key);
+  });
+  return out;
+}
+
+function parseSigned32FromValue(value) {
+  const n = parseIntFromDisplayValue(value);
+  if (n == null) return 0;
+  return n | 0;
+}
+
+function toSigned32StringFromUnsigned(unsigned32) {
+  const u = Number(unsigned32) >>> 0;
+  return u > 0x7fffffff ? String(u - 0x100000000) : String(u);
+}
+
+function decodeAvailableToIndices(rawValue) {
+  const mask = parseSigned32FromValue(rawValue) >>> 0;
+  const out = [];
+  for (let i = 0; i < 32; i++) {
+    if (((mask >>> i) & 1) === 1) out.push(i);
+  }
+  return out;
+}
+
+function encodeAvailableToFromIndices(indices) {
+  let mask = 0 >>> 0;
+  (Array.isArray(indices) ? indices : []).forEach((idx) => {
+    const i = Number.parseInt(String(idx), 10);
+    if (!Number.isFinite(i) || i < 0 || i > 31) return;
+    mask = (mask | ((1 << i) >>> 0)) >>> 0;
+  });
+  return toSigned32StringFromUnsigned(mask);
+}
+
+function getCivilizationBitmaskOptions() {
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.civilizations;
+  const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+  return entries.map((entry, fallbackIdx) => {
+    const idx = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
+    return {
+      value: String(idx),
+      label: String(entry && entry.name || `Civilization ${idx}`),
+      entry: entry || null
+    };
+  }).filter((opt) => Number.isFinite(Number.parseInt(opt.value, 10)) && Number.parseInt(opt.value, 10) >= 0 && Number.parseInt(opt.value, 10) < 32);
+}
+
+function isGovernmentRelationsField(field) {
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  return /^performance_of_this_government_versus_government_\d+$/.test(base)
+    || base === 'resistancemodifier'
+    || base === 'briberymodifier'
+    || base === 'canbribe';
+}
+
+function buildGovernmentRelationsRows(entry) {
+  const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+  const rows = [];
+  let current = null;
+  fields.forEach((field) => {
+    const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+    const perfMatch = base.match(/^performance_of_this_government_versus_government_(\d+)$/);
+    if (perfMatch) {
+      const index = Number.parseInt(perfMatch[1], 10);
+      const label = String(field && field.label || '').trim();
+      const government = label.replace(/^Performance Vs\s*/i, '').trim() || `Government ${index + 1}`;
+      current = { index, government, resistanceField: null, propagandaField: null };
+      rows.push(current);
+      return;
+    }
+    if (!current) return;
+    if (base === 'resistancemodifier' && !current.resistanceField) {
+      current.resistanceField = field;
+      return;
+    }
+    if (base === 'briberymodifier' && !current.propagandaField) {
+      current.propagandaField = field;
+    }
+  });
+  return rows.sort((a, b) => a.index - b.index);
+}
+
+function renderGovernmentRelationsCard(entry, referenceEditable) {
+  const rows = buildGovernmentRelationsRows(entry);
+  if (rows.length === 0) return null;
+  const card = document.createElement('div');
+  card.className = 'rule-group-card';
+  const title = document.createElement('div');
+  title.className = 'rule-group-title';
+  title.textContent = 'Government Relations Table';
+  card.appendChild(title);
+
+  const table = document.createElement('table');
+  table.style.width = '100%';
+  table.style.borderCollapse = 'collapse';
+  table.style.fontSize = '12px';
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  ['Government', 'Resistance Modifier', 'Propaganda'].forEach((h) => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    th.style.textAlign = 'left';
+    th.style.padding = '6px 4px';
+    th.style.borderBottom = '1px solid rgba(36, 25, 64, 0.2)';
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  rows.forEach((row) => {
+    const tr = document.createElement('tr');
+    const tdGov = document.createElement('td');
+    tdGov.textContent = row.government;
+    tdGov.style.padding = '6px 4px';
+    const tdResistance = document.createElement('td');
+    if (referenceEditable && row.resistanceField) {
+      const input = document.createElement('input');
+      input.type = 'number';
+      const n = parseIntFromDisplayValue(row.resistanceField.value);
+      input.value = n == null ? '' : String(n);
+      input.addEventListener('input', () => {
+        rememberUndoSnapshot();
+        row.resistanceField.value = input.value;
+        setDirty(true);
+      });
+      tdResistance.appendChild(input);
+    } else {
+      tdResistance.textContent = formatFieldValueForDisplay('governments', row.resistanceField || { value: '' });
+    }
+    tdResistance.style.padding = '6px 4px';
+    const tdProp = document.createElement('td');
+    if (referenceEditable && row.propagandaField) {
+      const input = document.createElement('input');
+      input.type = 'number';
+      const n = parseIntFromDisplayValue(row.propagandaField.value);
+      input.value = n == null ? '' : String(n);
+      input.addEventListener('input', () => {
+        rememberUndoSnapshot();
+        row.propagandaField.value = input.value;
+        setDirty(true);
+      });
+      tdProp.appendChild(input);
+    } else {
+      tdProp.textContent = formatFieldValueForDisplay('governments', row.propagandaField || { value: '' });
+    }
+    tdProp.style.padding = '6px 4px';
+    tr.appendChild(tdGov);
+    tr.appendChild(tdResistance);
+    tr.appendChild(tdProp);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  card.appendChild(table);
+  return card;
+}
+
+const CIV_BUILD_PRIORITY_ROWS = [
+  { label: 'Offensive Land Units', often: 'manyoffensivelandunits', never: 'nooffensivelandunits' },
+  { label: 'Defensive Land Units', often: 'manydefensivelandunits', never: 'nodefensivelandunits' },
+  { label: 'Artillery Units', often: 'manyartillery', never: 'noartillery' },
+  { label: 'Settlers', often: 'manysettlers', never: 'nosettlers' },
+  { label: 'Workers', often: 'manyworkers', never: 'noworkers' },
+  { label: 'Naval Units', often: 'manyships', never: 'noships' },
+  { label: 'Air Units', often: 'manyairunits', never: 'noairunits' },
+  { label: 'Growth', often: 'manygrowth', never: 'nogrowth' },
+  { label: 'Production', often: 'manyproduction', never: 'noproduction' },
+  { label: 'Happiness', often: 'manyhappiness', never: 'nohappiness' },
+  { label: 'Science', often: 'manyscience', never: 'noscience' },
+  { label: 'Capitalization', often: 'manywealth', never: 'nowealth' },
+  { label: 'Trade', often: 'manytrade', never: 'notrade' },
+  { label: 'Exploration', often: 'manyexploration', never: 'noexploration' },
+  { label: 'Culture', often: 'manyculture', never: 'noculture' }
+];
+
+function isCivilizationBuildPriorityField(field) {
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  return CIV_BUILD_PRIORITY_ROWS.some((row) => row.often === base || row.never === base);
+}
+
+function renderCivilizationBuildPriorityCard(entry, referenceEditable) {
+  const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+  const hasAny = CIV_BUILD_PRIORITY_ROWS.some((row) => {
+    return fields.some((f) => {
+      const base = String(f && (f.baseKey || f.key) || '').toLowerCase();
+      return base === row.often || base === row.never;
+    });
+  });
+  if (!hasAny) return null;
+  const card = document.createElement('div');
+  card.className = 'rule-group-card';
+  const title = document.createElement('div');
+  title.className = 'rule-group-title';
+  title.textContent = 'Build Often/Never';
+  card.appendChild(title);
+
+  const table = document.createElement('table');
+  table.style.width = '100%';
+  table.style.borderCollapse = 'collapse';
+  table.style.tableLayout = 'fixed';
+  table.style.fontSize = '12px';
+  const colgroup = document.createElement('colgroup');
+  const colCategory = document.createElement('col');
+  colCategory.style.width = 'auto';
+  const colOften = document.createElement('col');
+  colOften.style.width = '82px';
+  const colNever = document.createElement('col');
+  colNever.style.width = '82px';
+  colgroup.appendChild(colCategory);
+  colgroup.appendChild(colOften);
+  colgroup.appendChild(colNever);
+  table.appendChild(colgroup);
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  ['Category', 'Often', 'Never'].forEach((h, idx) => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    th.style.textAlign = idx === 0 ? 'left' : 'center';
+    th.style.padding = '6px 4px';
+    th.style.borderBottom = '1px solid rgba(36, 25, 64, 0.2)';
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  CIV_BUILD_PRIORITY_ROWS.forEach((cfg) => {
+    const tr = document.createElement('tr');
+    const tdLabel = document.createElement('td');
+    tdLabel.textContent = cfg.label;
+    tdLabel.style.padding = '6px 4px';
+    const oftenField = getBiqFieldByBaseKey(entry, cfg.often);
+    const neverField = getBiqFieldByBaseKey(entry, cfg.never);
+    const tdOften = document.createElement('td');
+    tdOften.style.padding = '6px 4px';
+    tdOften.style.textAlign = 'center';
+    const tdNever = document.createElement('td');
+    tdNever.style.padding = '6px 4px';
+    tdNever.style.textAlign = 'center';
+    if (referenceEditable) {
+      const oftenChk = document.createElement('input');
+      oftenChk.type = 'checkbox';
+      oftenChk.checked = String(oftenField && oftenField.value || '').toLowerCase() === 'true';
+      oftenChk.addEventListener('change', () => {
+        rememberUndoSnapshot();
+        if (oftenField) oftenField.value = oftenChk.checked ? 'true' : 'false';
+        setDirty(true);
+      });
+      tdOften.appendChild(oftenChk);
+      const neverChk = document.createElement('input');
+      neverChk.type = 'checkbox';
+      neverChk.checked = String(neverField && neverField.value || '').toLowerCase() === 'true';
+      neverChk.addEventListener('change', () => {
+        rememberUndoSnapshot();
+        if (neverField) neverField.value = neverChk.checked ? 'true' : 'false';
+        setDirty(true);
+      });
+      tdNever.appendChild(neverChk);
+    } else {
+      tdOften.textContent = String(oftenField && oftenField.value || '').toLowerCase() === 'true' ? 'Yes' : 'No';
+      tdNever.textContent = String(neverField && neverField.value || '').toLowerCase() === 'true' ? 'Yes' : 'No';
+    }
+    tr.appendChild(tdLabel);
+    tr.appendChild(tdOften);
+    tr.appendChild(tdNever);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  card.appendChild(table);
+  return card;
+}
+
+function isCivilizationNoteListCountField(field) {
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  return CIV_NOTE_LIST_COUNT_KEYS.has(base);
+}
+
+function renderCivilizationNameListsCard(entry, referenceEditable) {
+  const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+  const hasAny = fields.some((field) => isCivilizationNoteListCountField(field));
+  if (!hasAny) return null;
+  const card = document.createElement('div');
+  card.className = 'rule-group-card';
+  const title = document.createElement('div');
+  title.className = 'rule-group-title';
+  title.textContent = 'Name Lists';
+  card.appendChild(title);
+  const rows = [
+    { label: 'City Names', countKey: 'numcitynames', placeholder: 'City name' },
+    { label: 'Military Leaders', countKey: 'numgreatleaders', placeholder: 'Military leader name' },
+    { label: 'Scientific Leaders', countKey: 'numscientificleaders', placeholder: 'Scientific leader name' }
+  ];
+  rows.forEach((cfg) => {
+    const row = document.createElement('div');
+    row.className = 'rule-row';
+    const label = document.createElement('label');
+    label.className = 'field-meta';
+    label.textContent = cfg.label;
+    row.appendChild(label);
+    const controlWrap = document.createElement('div');
+    controlWrap.className = 'rule-control';
+    controlWrap.appendChild(renderCivilizationNoteListEditor(entry, cfg, referenceEditable));
+    row.appendChild(controlWrap);
+    card.appendChild(row);
+  });
+  return card;
+}
+
+function renderUnitBottomListsCard(entry, referenceEditable) {
+  const card = document.createElement('div');
+  card.className = 'rule-group-card';
+  const title = document.createElement('div');
+  title.className = 'rule-group-title';
+  title.textContent = 'Lists';
+  card.appendChild(title);
+  const rows = [
+    { label: 'Unit Abilities', kind: 'abilities' },
+    { label: 'Available To (Civs)', kind: 'availableTo' },
+    { label: 'Stealth Attack Targets (Units)', kind: 'stealthTargets' },
+    { label: 'Ignore Movement Cost (Terrains)', kind: 'ignoreMovement' },
+    { label: 'Legal Unit Telepads (Units)', kind: 'legalUnitTelepads' },
+    { label: 'Legal Building Telepads (Improvements)', kind: 'legalBuildingTelepads' }
+  ];
+  rows.forEach((cfg) => {
+    const row = document.createElement('div');
+    row.className = 'rule-row';
+    const label = document.createElement('label');
+    label.className = 'field-meta';
+    label.textContent = cfg.label;
+    row.appendChild(label);
+    const controlWrap = document.createElement('div');
+    controlWrap.className = 'rule-control';
+    const stealthState = getUnitListFieldState(entry, ['stealth_target', 'stealthtarget'], 'stealth_target');
+    const ignoreMoveState = getUnitListFieldState(entry, ['ignore_movement_cost', 'ignoremovementcost'], 'ignore_movement_cost');
+    const legalUnitTelepadState = getUnitListFieldState(entry, ['legal_unit_telepad', 'legalunittelepad'], 'legal_unit_telepad');
+    const legalBuildingTelepadState = getUnitListFieldState(entry, ['legal_building_telepad', 'legalbuildingtelepad'], 'legal_building_telepad');
+    const civOptions = getCivilizationBitmaskOptions();
+    const civNameByIdx = new Map(civOptions.map((opt) => [Number.parseInt(String(opt.value), 10), String(opt.label || '')]));
+    const availableField = getBiqFieldByBaseKey(entry, 'availableto');
+    if (!referenceEditable) {
+      const text = document.createElement('div');
+      text.className = 'field-meta';
+      if (cfg.kind === 'abilities') {
+        const selected = getUnitAbilitySelections(entry).map((k) => toFriendlyKey(k));
+        text.textContent = selected.length ? selected.join(', ') : '(none)';
+      } else if (cfg.kind === 'availableTo') {
+        const selected = decodeAvailableToIndices(availableField && availableField.value);
+        const labels = selected.map((idx) => civNameByIdx.get(idx) || `Civ ${idx}`).filter(Boolean);
+        text.textContent = labels.length ? labels.join(', ') : '(none)';
+      } else if (cfg.kind === 'stealthTargets') {
+        text.textContent = stealthState.values.length ? stealthState.values.join(', ') : '(none)';
+      } else if (cfg.kind === 'ignoreMovement') {
+        text.textContent = ignoreMoveState.values.length ? ignoreMoveState.values.join(', ') : '(none)';
+      } else if (cfg.kind === 'legalUnitTelepads') {
+        text.textContent = legalUnitTelepadState.values.length ? legalUnitTelepadState.values.join(', ') : '(none)';
+      } else if (cfg.kind === 'legalBuildingTelepads') {
+        text.textContent = legalBuildingTelepadState.values.length ? legalBuildingTelepadState.values.join(', ') : '(none)';
+      } else {
+        text.textContent = '(none)';
+      }
+      controlWrap.appendChild(text);
+      row.appendChild(controlWrap);
+      card.appendChild(row);
+      return;
+    }
+    if (cfg.kind === 'abilities') {
+      const options = UNIT_ABILITY_OPTION_KEYS.map((key) => ({ value: key, label: toFriendlyKey(key) }));
+      const editor = makeNamedListTokenEditor({
+        tabKey: '',
+        options,
+        values: getUnitAbilitySelections(entry),
+        onValuesChange: (values) => {
+          rememberUndoSnapshot();
+          setUnitAbilitySelections(entry, values);
+          setDirty(true);
+        }
+      });
+      controlWrap.appendChild(editor);
+    } else if (cfg.kind === 'availableTo') {
+      let field = availableField;
+      if (!field) {
+        if (!Array.isArray(entry.biqFields)) entry.biqFields = [];
+        field = { key: 'availableto', baseKey: 'availableto', label: 'Available To', value: '0', originalValue: '0', editable: true };
+        entry.biqFields.push(field);
+      }
+      const selectedIndices = decodeAvailableToIndices(field && field.value);
+      const editor = makeNamedListTokenEditor({
+        tabKey: 'civilizations',
+        options: civOptions,
+        values: selectedIndices.map((idx) => String(idx)),
+        onValuesChange: (values) => {
+          rememberUndoSnapshot();
+          if (field) field.value = encodeAvailableToFromIndices(values);
+          setDirty(true);
+        }
+      });
+      controlWrap.appendChild(editor);
+    } else if (cfg.kind === 'stealthTargets') {
+      const editor = makeNamedListTokenEditor({
+        tabKey: 'units',
+        values: stealthState.values,
+        onValuesChange: (values) => {
+          rememberUndoSnapshot();
+          setUnitListFieldValues(entry, stealthState.key, values);
+          setDirty(true);
+        }
+      });
+      controlWrap.appendChild(editor);
+    } else if (cfg.kind === 'ignoreMovement') {
+      const editor = makeNamedListTokenEditor({
+        tabKey: 'terrain',
+        values: ignoreMoveState.values,
+        onValuesChange: (values) => {
+          rememberUndoSnapshot();
+          setUnitListFieldValues(entry, ignoreMoveState.key, values);
+          setDirty(true);
+        }
+      });
+      controlWrap.appendChild(editor);
+    } else if (cfg.kind === 'legalUnitTelepads') {
+      const editor = makeNamedListTokenEditor({
+        tabKey: 'units',
+        values: legalUnitTelepadState.values,
+        onValuesChange: (values) => {
+          rememberUndoSnapshot();
+          setUnitListFieldValues(entry, legalUnitTelepadState.key, values);
+          setDirty(true);
+        }
+      });
+      controlWrap.appendChild(editor);
+    } else if (cfg.kind === 'legalBuildingTelepads') {
+      const editor = makeNamedListTokenEditor({
+        tabKey: 'improvements',
+        values: legalBuildingTelepadState.values,
+        onValuesChange: (values) => {
+          rememberUndoSnapshot();
+          setUnitListFieldValues(entry, legalBuildingTelepadState.key, values);
+          setDirty(true);
+        }
+      });
+      controlWrap.appendChild(editor);
+    }
+    row.appendChild(controlWrap);
+    card.appendChild(row);
+  });
+  return card;
 }
 
 function getReadableSetterReason(field) {
@@ -5057,8 +7024,29 @@ function getReferenceOptionsForField(tabKey, field) {
   return makeIndexOptionsForTab(target);
 }
 
+function getRuleSectionIndexOptions(sectionCode, { includeNone = false } = {}) {
+  const rulesTab = state.bundle && state.bundle.tabs && state.bundle.tabs.rules;
+  const sections = rulesTab && Array.isArray(rulesTab.sections) ? rulesTab.sections : [];
+  const section = sections.find((s) => String(s && s.code || '').toUpperCase() === String(sectionCode || '').toUpperCase());
+  const records = section && Array.isArray(section.records) ? section.records : [];
+  const out = records.map((record, idx) => ({
+    value: String(Number.isFinite(record && record.index) ? record.index : idx),
+    label: String(record && record.name || `${sectionCode} ${idx + 1}`)
+  }));
+  if (includeNone) {
+    out.unshift({ value: '-1', label: 'None' });
+  }
+  return out;
+}
+
 function getEnumOptionsForField(tabKey, field) {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  if (tabKey === 'governments' && (base === 'diplomatlevel' || base === 'spylevel')) {
+    return getRuleSectionIndexOptions('EXPR');
+  }
+  if (tabKey === 'governments' && base === 'immuneto') {
+    return getRuleSectionIndexOptions('ESPN', { includeNone: true });
+  }
   const enums = BIQ_FIELD_ENUMS[tabKey] || {};
   return enums[base] || [];
 }
@@ -5135,6 +7123,7 @@ function createReferencePicker(config) {
   const targetTabKey = String(opts.targetTabKey || '').trim();
   const noneLabel = String(opts.noneLabel || '(none)');
   const searchPlaceholder = String(opts.searchPlaceholder || 'Search...');
+  const showOptionThumbs = opts.showOptionThumbs !== false;
   const rawCurrentValue = String(opts.currentValue ?? '-1');
   const parsedCurrent = parseIntFromDisplayValue(rawCurrentValue);
   const currentValue = parsedCurrent == null ? rawCurrentValue : String(parsedCurrent);
@@ -5208,6 +7197,30 @@ function createReferencePicker(config) {
   menu.appendChild(search);
   const listWrap = document.createElement('div');
   listWrap.className = 'tech-picker-list';
+  const pendingThumbNodes = [];
+  const maybeLoadThumbForNode = (thumbNode) => {
+    if (!thumbNode || thumbNode.dataset.thumbPending !== '1') return false;
+    if (!showOptionThumbs || !targetTabKey) return false;
+    const entry = thumbNode.__thumbEntry || null;
+    if (!entry) return false;
+    thumbNode.dataset.thumbPending = '0';
+    loadReferenceListThumbnail(targetTabKey, entry, thumbNode);
+    return true;
+  };
+  const hydrateVisibleOptionThumbs = (limit = 32) => {
+    if (!showOptionThumbs || !targetTabKey) return;
+    let remaining = Math.max(1, Number(limit) || 32);
+    const menuRect = menu.getBoundingClientRect();
+    for (let i = 0; i < pendingThumbNodes.length && remaining > 0; i += 1) {
+      const node = pendingThumbNodes[i];
+      if (!node || node.dataset.thumbPending !== '1') continue;
+      const row = node.closest('.tech-picker-row');
+      if (!row || row.classList.contains('hidden')) continue;
+      const rowRect = row.getBoundingClientRect();
+      if (rowRect.bottom < (menuRect.top - 42) || rowRect.top > (menuRect.bottom + 42)) continue;
+      if (maybeLoadThumbForNode(node)) remaining -= 1;
+    }
+  };
   normalizedOptions.forEach((opt) => {
     const row = document.createElement('div');
     row.className = 'tech-picker-row';
@@ -5215,16 +7228,14 @@ function createReferencePicker(config) {
     const selectBtn = document.createElement('button');
     selectBtn.type = 'button';
     selectBtn.className = 'tech-picker-row-main';
-    if (opt.entry && targetTabKey) {
-      const thumb = document.createElement('span');
-      thumb.className = 'entry-thumb';
-      selectBtn.appendChild(thumb);
-      loadReferenceListThumbnail(targetTabKey, opt.entry, thumb);
-    } else {
-      const spacer = document.createElement('span');
-      spacer.className = 'entry-thumb';
-      selectBtn.appendChild(spacer);
+    const thumb = document.createElement('span');
+    thumb.className = 'entry-thumb';
+    if (showOptionThumbs && opt.entry && targetTabKey) {
+      thumb.dataset.thumbPending = '1';
+      thumb.__thumbEntry = opt.entry;
+      pendingThumbNodes.push(thumb);
     }
+    selectBtn.appendChild(thumb);
     const text = document.createElement('span');
     text.textContent = String(opt.label || '');
     selectBtn.appendChild(text);
@@ -5261,6 +7272,8 @@ function createReferencePicker(config) {
     if (!menu.classList.contains('hidden')) {
       search.value = '';
       Array.from(listWrap.querySelectorAll('.tech-picker-row')).forEach((row) => row.classList.remove('hidden'));
+      hydrateVisibleOptionThumbs(28);
+      requestAnimationFrame(() => hydrateVisibleOptionThumbs(28));
       search.focus();
     }
   });
@@ -5277,6 +7290,11 @@ function createReferencePicker(config) {
       const hay = String(row.dataset.search || '');
       row.classList.toggle('hidden', !!needle && !hay.includes(needle));
     });
+    hydrateVisibleOptionThumbs(28);
+  });
+  menu.addEventListener('scroll', () => {
+    if (menu.classList.contains('hidden')) return;
+    hydrateVisibleOptionThumbs(20);
   });
   document.addEventListener('click', (ev) => {
     if (!wrap.contains(ev.target)) menu.classList.add('hidden');
@@ -5359,6 +7377,24 @@ function getBiqFieldByBaseKey(entry, baseKey) {
   const target = String(baseKey || '').toLowerCase();
   if (!entry || !Array.isArray(entry.biqFields) || !target) return null;
   return entry.biqFields.find((f) => String(f.baseKey || f.key || '').toLowerCase() === target) || null;
+}
+
+function ensureBiqFieldByBaseKey(entry, baseKey, label = '', initialValue = '') {
+  const target = String(baseKey || '').toLowerCase();
+  if (!entry || !target) return null;
+  let field = getBiqFieldByBaseKey(entry, target);
+  if (field) return field;
+  if (!Array.isArray(entry.biqFields)) entry.biqFields = [];
+  field = {
+    key: target,
+    baseKey: target,
+    label: label || toFriendlyKey(target),
+    value: String(initialValue || ''),
+    originalValue: '',
+    editable: true
+  };
+  entry.biqFields.push(field);
+  return field;
 }
 
 function buildIdentityTechContext(tabKey, entry) {
@@ -7289,6 +9325,12 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
 
 function renamePendingReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw) {
   if (!tab || !entry || !entry.isNew) return false;
+  return renameReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw, { allowExisting: false });
+}
+
+function renameReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw, { allowExisting = false } = {}) {
+  if (!tab || !entry) return false;
+  if (!allowExisting && !entry.isNew) return false;
   const oldKey = String(entry.civilopediaKey || '').toUpperCase();
   const nextKey = makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredKeyRaw, oldKey);
   if (!nextKey || nextKey === oldKey) return false;
@@ -7296,11 +9338,19 @@ function renamePendingReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw) {
   const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
   entry.id = prefix && nextKey.startsWith(prefix) ? nextKey.slice(prefix.length) : nextKey;
   const ops = ensureReferenceRecordOps(tab);
-  ops.forEach((op) => {
-    if (!op) return;
-    if (String(op.newRecordRef || '').toUpperCase() === oldKey) op.newRecordRef = nextKey;
-    if (String(op.recordRef || '').toUpperCase() === oldKey) op.recordRef = nextKey;
-  });
+  if (entry.isNew) {
+    ops.forEach((op) => {
+      if (!op) return;
+      if (String(op.newRecordRef || '').toUpperCase() === oldKey) op.newRecordRef = nextKey;
+      if (String(op.recordRef || '').toUpperCase() === oldKey) op.recordRef = nextKey;
+    });
+  } else {
+    const hasDelete = ops.some((op) => String(op && op.op || '').toLowerCase() === 'delete' && String(op && op.recordRef || '').toUpperCase() === oldKey);
+    if (!hasDelete) {
+      ops.push({ op: 'delete', recordRef: oldKey });
+    }
+    ops.push({ op: 'rename', recordRef: oldKey, newRecordRef: nextKey });
+  }
   const set = state.dirtyReferenceKeysByTab && state.dirtyReferenceKeysByTab[tabKey];
   if (set && set.has(oldKey)) {
     set.delete(oldKey);
@@ -7840,6 +9890,8 @@ function renderReferenceTab(tab, tabKey) {
     });
 
   const currentBaseIndex = state.referenceSelection[tabKey] || 0;
+  const filterText = String(state.referenceFilter[tabKey] || '').trim();
+  const hasFilterText = !!filterText;
   let selectedFilteredIndex = filteredEntries.findIndex((x) => x.baseIndex === currentBaseIndex);
   if (selectedFilteredIndex < 0) selectedFilteredIndex = 0;
   if (filteredEntries.length > 0) {
@@ -7851,8 +9903,33 @@ function renderReferenceTab(tab, tabKey) {
 
   const listPane = document.createElement('div');
   listPane.className = 'entry-list-pane';
+  const pendingListThumbs = [];
+  const hydrateVisibleReferenceListThumbs = (limit = 24) => {
+    let remaining = Math.max(1, Number(limit) || 24);
+    if (remaining <= 0) return;
+    const paneRect = listPane.getBoundingClientRect();
+    for (let i = 0; i < pendingListThumbs.length && remaining > 0; i += 1) {
+      const item = pendingListThumbs[i];
+      if (!item || !item.thumb || item.thumb.dataset.thumbPending !== '1') continue;
+      if (!item.thumb.isConnected) {
+        item.thumb.dataset.thumbPending = '0';
+        continue;
+      }
+      const row = item.thumb.closest('.entry-list-item');
+      if (!row) {
+        item.thumb.dataset.thumbPending = '0';
+        continue;
+      }
+      const rowRect = row.getBoundingClientRect();
+      if (rowRect.bottom < (paneRect.top - 48) || rowRect.top > (paneRect.bottom + 48)) continue;
+      item.thumb.dataset.thumbPending = '0';
+      loadReferenceListThumbnail(tabKey, item.entry, item.thumb);
+      remaining -= 1;
+    }
+  };
   listPane.addEventListener('scroll', () => {
     state.referenceListScrollTop[tabKey] = listPane.scrollTop;
+    hydrateVisibleReferenceListThumbs(hasFilterText ? 40 : 24);
   });
 
   filteredEntries.forEach(({ entry, baseIndex }, index) => {
@@ -7861,16 +9938,26 @@ function renderReferenceTab(tab, tabKey) {
     itemBtn.type = 'button';
     itemBtn.setAttribute('data-entry-key', String(entry.civilopediaKey || '').toUpperCase());
     itemBtn.classList.toggle('active', index === selectedFilteredIndex);
-    const thumb = document.createElement('span');
-    thumb.className = 'entry-thumb';
+    const showListThumb = tabKey !== 'gameConcepts';
+    if (!showListThumb) itemBtn.classList.add('no-thumb');
+    const thumb = showListThumb ? document.createElement('span') : null;
+    if (thumb) thumb.className = 'entry-thumb';
     const title = document.createElement('strong');
     title.textContent = entry.name;
-    itemBtn.appendChild(thumb);
+    if (thumb) itemBtn.appendChild(thumb);
     itemBtn.appendChild(title);
     if (isReferenceEntryDirty(tabKey, entry)) {
       appendDirtyBadge(itemBtn, `${entry.name || entry.civilopediaKey} has unsaved edits`);
     }
-    loadReferenceListThumbnail(tabKey, entry, thumb);
+    if (thumb) {
+      if (index === selectedFilteredIndex) {
+        thumb.dataset.thumbPending = '0';
+        loadReferenceListThumbnail(tabKey, entry, thumb);
+      } else {
+        thumb.dataset.thumbPending = '1';
+        pendingListThumbs.push({ thumb, entry });
+      }
+    }
     itemBtn.addEventListener('mousedown', () => {
       state.referenceListScrollTop[tabKey] = listPane.scrollTop;
     });
@@ -7884,6 +9971,7 @@ function renderReferenceTab(tab, tabKey) {
     listPane.appendChild(itemBtn);
   });
   layout.appendChild(listPane);
+  requestAnimationFrame(() => hydrateVisibleReferenceListThumbs(hasFilterText ? 56 : 32));
 
   const detailPane = document.createElement('div');
   detailPane.className = 'entry-detail-pane';
@@ -7945,7 +10033,9 @@ function renderReferenceTab(tab, tabKey) {
 
     const top = document.createElement('div');
     top.className = 'section-top';
-    top.innerHTML = `<strong>${entry.name}</strong>`;
+    const topName = document.createElement('strong');
+    topName.textContent = String(entry.name || '');
+    top.appendChild(topName);
     card.appendChild(top);
 
     const detailLayout = document.createElement('div');
@@ -7987,41 +10077,92 @@ function renderReferenceTab(tab, tabKey) {
     identityMeta.appendChild(identityTitle);
     const identityGrid = document.createElement('div');
     identityGrid.className = 'kv-grid';
-    const keyRow = document.createElement('div');
-    keyRow.className = 'identity-key-row';
-    const keyLabel = document.createElement('label');
-    keyLabel.className = 'field-meta identity-key-label';
-    keyLabel.textContent = 'Key';
-    const keyControl = document.createElement('div');
-    keyControl.className = 'identity-key-control';
-    const canEditKey = referenceEditable && !!entry.isNew;
-    if (canEditKey) {
-      const keyInput = document.createElement('input');
-      keyInput.type = 'text';
-      keyInput.className = 'key-input-inline';
-      keyInput.value = String(entry.civilopediaKey || '');
-      keyInput.addEventListener('change', () => {
-        rememberUndoSnapshot();
-        const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, keyInput.value);
-        if (!changed) {
-          keyInput.value = String(entry.civilopediaKey || '');
-          return;
-        }
-        setDirty(true);
-        renderActiveTab({ preserveTabScroll: true });
-      });
-      keyControl.appendChild(keyInput);
-    } else {
-      const keyDisplay = document.createElement('span');
-      keyDisplay.className = 'key-display-chip';
-      keyDisplay.textContent = String(entry.civilopediaKey || '(none)');
-      keyDisplay.title = 'Existing record keys are currently locked.';
-      keyControl.appendChild(keyDisplay);
+    const showInlineReadonlyKey = REFERENCE_TOP_NAME_EDIT_TABS.has(tabKey);
+    if (showInlineReadonlyKey) {
+      const nameRow = document.createElement('div');
+      nameRow.className = 'identity-key-row';
+      const nameLabel = document.createElement('label');
+      nameLabel.className = 'field-meta identity-key-label';
+      nameLabel.textContent = 'Name';
+      const nameControl = document.createElement('div');
+      nameControl.className = 'identity-key-control';
+      if (referenceEditable) {
+        const nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.className = 'key-input-inline';
+        nameInput.value = String(entry.name || '');
+        nameInput.addEventListener('input', () => {
+          rememberUndoSnapshot();
+          const next = String(nameInput.value || '');
+          entry.name = next;
+          topName.textContent = next;
+          const activeName = listPane.querySelector('.entry-list-item.active strong');
+          if (activeName) activeName.textContent = next;
+          if (tabKey === 'gameConcepts') {
+            const renamed = renameReferenceEntryKey(tab, tabKey, entry, next, { allowExisting: true });
+            if (renamed) {
+              inlineKey.textContent = String(entry.civilopediaKey || '(none)');
+            }
+          } else {
+            const nameField = ensureBiqFieldByBaseKey(entry, 'name', 'Name', next);
+            if (nameField) nameField.value = next;
+          }
+          setDirty(true);
+        });
+        nameControl.appendChild(nameInput);
+      } else {
+        const nameDisplay = document.createElement('span');
+        nameDisplay.className = 'key-display-chip';
+        nameDisplay.textContent = String(entry.name || '(none)');
+        nameControl.appendChild(nameDisplay);
+      }
+      const inlineKey = document.createElement('span');
+      inlineKey.className = 'key-display-chip';
+      inlineKey.textContent = String(entry.civilopediaKey || '(none)');
+      inlineKey.title = 'Record key (read-only)';
+      nameControl.appendChild(inlineKey);
+      nameRow.appendChild(nameLabel);
+      nameRow.appendChild(nameControl);
+      attachRichTooltip(nameRow, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
+      identityGrid.appendChild(nameRow);
     }
-    keyRow.appendChild(keyLabel);
-    keyRow.appendChild(keyControl);
-    attachRichTooltip(keyRow, formatSourceInfo({ source: 'Derived', readPath: '', writePath: '' }, 'Derived'));
-    identityGrid.appendChild(keyRow);
+    if (!showInlineReadonlyKey) {
+      const keyRow = document.createElement('div');
+      keyRow.className = 'identity-key-row';
+      const keyLabel = document.createElement('label');
+      keyLabel.className = 'field-meta identity-key-label';
+      keyLabel.textContent = 'Key';
+      const keyControl = document.createElement('div');
+      keyControl.className = 'identity-key-control';
+      const canEditKey = referenceEditable && !!entry.isNew;
+      if (canEditKey) {
+        const keyInput = document.createElement('input');
+        keyInput.type = 'text';
+        keyInput.className = 'key-input-inline';
+        keyInput.value = String(entry.civilopediaKey || '');
+        keyInput.addEventListener('change', () => {
+          rememberUndoSnapshot();
+          const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, keyInput.value);
+          if (!changed) {
+            keyInput.value = String(entry.civilopediaKey || '');
+            return;
+          }
+          setDirty(true);
+          renderActiveTab({ preserveTabScroll: true });
+        });
+        keyControl.appendChild(keyInput);
+      } else {
+        const keyDisplay = document.createElement('span');
+        keyDisplay.className = 'key-display-chip';
+        keyDisplay.textContent = String(entry.civilopediaKey || '(none)');
+        keyDisplay.title = 'Existing record keys are currently locked.';
+        keyControl.appendChild(keyDisplay);
+      }
+      keyRow.appendChild(keyLabel);
+      keyRow.appendChild(keyControl);
+      attachRichTooltip(keyRow, formatSourceInfo({ source: 'Derived', readPath: '', writePath: '' }, 'Derived'));
+      identityGrid.appendChild(keyRow);
+    }
     const depsLine = document.createElement('div');
     depsLine.className = 'field-meta';
     const techCtx = buildIdentityTechContext(tabKey, entry);
@@ -8096,7 +10237,7 @@ function renderReferenceTab(tab, tabKey) {
       rulesMeta.appendChild(rulesTitle);
       const rulesGrid = document.createElement('div');
       rulesGrid.className = 'kv-grid';
-      const visibleRuleFields = entry.biqFields
+      let visibleRuleFields = entry.biqFields
         .filter((field) => !shouldHideBiqField(tabKey, field))
         .sort((a, b) => {
           const ao = getRuleFieldOrder(tabKey, a);
@@ -8104,6 +10245,16 @@ function renderReferenceTab(tab, tabKey) {
           if (ao !== bo) return ao - bo;
           return String(a.label || a.key).localeCompare(String(b.label || b.key), 'en', { sensitivity: 'base' });
         });
+      if (tabKey === 'units') {
+        visibleRuleFields = collapseUnitRuleFields(visibleRuleFields);
+      }
+      if (tabKey === 'governments') {
+        visibleRuleFields = visibleRuleFields.filter((field) => !isGovernmentRelationsField(field));
+      }
+      if (tabKey === 'civilizations') {
+        visibleRuleFields = visibleRuleFields.filter((field) => !isCivilizationBuildPriorityField(field));
+        visibleRuleFields = visibleRuleFields.filter((field) => !isCivilizationNoteListCountField(field));
+      }
       const groups = new Map();
       visibleRuleFields.forEach((field) => {
         const group = getRuleFieldGroup(tabKey, field);
@@ -8116,7 +10267,7 @@ function renderReferenceTab(tab, tabKey) {
         const groupTitle = document.createElement('div');
         groupTitle.className = 'rule-group-title';
         groupTitle.textContent = groupName;
-        if (tabKey === 'technologies' && groupName === 'Tree Position') {
+        if (tabKey === 'technologies' && groupName === 'Tech Tree') {
           const openBtn = document.createElement('button');
           openBtn.type = 'button';
           openBtn.className = 'ghost tech-tree-inline-btn tech-tree-action-btn';
@@ -8136,11 +10287,13 @@ function renderReferenceTab(tab, tabKey) {
         }
         groupCard.appendChild(groupTitle);
         fields.forEach((field) => {
+          const spec = getRuleFieldSpec(tabKey, field) || {};
           const row = document.createElement('div');
           row.className = 'rule-row';
           const label = document.createElement('label');
           label.className = 'field-meta';
-          label.textContent = field.label || field.key;
+          const displayLabel = getRuleFieldDisplayLabel(tabKey, field, spec);
+          label.textContent = displayLabel;
           const ruleFieldKey = String(field.baseKey || field.key || '');
           attachRichTooltip(
             label,
@@ -8153,7 +10306,6 @@ function renderReferenceTab(tab, tabKey) {
 
           const controlWrap = document.createElement('div');
           controlWrap.className = 'rule-control';
-          const spec = getRuleFieldSpec(tabKey, field) || {};
           const enumOptions = getEnumOptionsForField(tabKey, field);
           const refOptions = getReferenceOptionsForField(tabKey, field);
           const desiredControl = spec.control || '';
@@ -8165,7 +10317,22 @@ function renderReferenceTab(tab, tabKey) {
             const hasRefOptions = refOptions.length > 0;
             const useReferencePicker = hasRefOptions && (desiredControl === 'reference' || (!desiredControl && !hasEnumOptions));
 
-            if (useColorSlotPicker) {
+            if (desiredControl === 'unit-list') {
+              const initialValues = Array.isArray(field.multiValues)
+                ? field.multiValues
+                : String(field.value || '').split(',').map((v) => v.trim()).filter(Boolean);
+              const editor = makeNamedListPickerEditor({
+                tabKey: 'units',
+                values: initialValues,
+                onValuesChange: (values) => {
+                  rememberUndoSnapshot();
+                  setUnitListFieldValues(entry, String(field.baseKey || field.key || 'stealth_target'), values);
+                  setDirty(true);
+                  renderActiveTab({ preserveTabScroll: true });
+                }
+              });
+              controlWrap.appendChild(editor);
+            } else if (useColorSlotPicker) {
               const colorPicker = createColorSlotPicker({
                 currentValue: field.value,
                 max: 31,
@@ -8198,6 +10365,31 @@ function renderReferenceTab(tab, tabKey) {
                 }
               });
               controlWrap.appendChild(picker);
+            } else if (desiredControl === 'range') {
+              const wrap = document.createElement('div');
+              wrap.style.display = 'flex';
+              wrap.style.alignItems = 'center';
+              wrap.style.gap = '8px';
+              const range = document.createElement('input');
+              range.type = 'range';
+              const min = Number.isFinite(spec.min) ? Number(spec.min) : 0;
+              const max = Number.isFinite(spec.max) ? Number(spec.max) : 100;
+              range.min = String(min);
+              range.max = String(max);
+              const current = parseIntFromDisplayValue(field.value);
+              range.value = String(current == null ? min : Math.max(min, Math.min(max, current)));
+              const valueText = document.createElement('span');
+              valueText.className = 'field-meta';
+              valueText.textContent = range.value;
+              range.addEventListener('input', () => {
+                valueText.textContent = range.value;
+                rememberUndoSnapshot();
+                field.value = String(range.value);
+                setDirty(true);
+              });
+              wrap.appendChild(range);
+              wrap.appendChild(valueText);
+              controlWrap.appendChild(wrap);
             } else if (desiredControl === 'select' || desiredControl === 'reference' || hasEnumOptions || hasRefOptions) {
               const options = hasEnumOptions ? enumOptions : refOptions;
               const select = document.createElement('select');
@@ -8275,6 +10467,19 @@ function renderReferenceTab(tab, tabKey) {
           groupCard.appendChild(row);
         });
         rulesGrid.appendChild(groupCard);
+      }
+      if (tabKey === 'units') {
+        rulesGrid.appendChild(renderUnitBottomListsCard(entry, referenceEditable));
+      }
+      if (tabKey === 'governments') {
+        const relCard = renderGovernmentRelationsCard(entry, referenceEditable);
+        if (relCard) rulesGrid.appendChild(relCard);
+      }
+      if (tabKey === 'civilizations') {
+        const buildCard = renderCivilizationBuildPriorityCard(entry, referenceEditable);
+        if (buildCard) rulesGrid.appendChild(buildCard);
+        const nameListsCard = renderCivilizationNameListsCard(entry, referenceEditable);
+        if (nameListsCard) rulesGrid.appendChild(nameListsCard);
       }
       rulesMeta.appendChild(rulesGrid);
       deferredInfoBlocks.push(rulesMeta);
@@ -10700,9 +12905,34 @@ function renderSectionTab(tab, tabKey) {
 
   const listPane = document.createElement('div');
   listPane.className = 'entry-list-pane';
+  const pendingSectionThumbs = [];
+  const hydrateVisibleSectionThumbs = (limit = 20) => {
+    let remaining = Math.max(1, Number(limit) || 20);
+    if (remaining <= 0) return;
+    const paneRect = listPane.getBoundingClientRect();
+    for (let i = 0; i < pendingSectionThumbs.length && remaining > 0; i += 1) {
+      const item = pendingSectionThumbs[i];
+      if (!item || !item.thumb || item.thumb.dataset.thumbPending !== '1') continue;
+      if (!item.thumb.isConnected) {
+        item.thumb.dataset.thumbPending = '0';
+        continue;
+      }
+      const row = item.thumb.closest('.entry-list-item');
+      if (!row) {
+        item.thumb.dataset.thumbPending = '0';
+        continue;
+      }
+      const rowRect = row.getBoundingClientRect();
+      if (rowRect.bottom < (paneRect.top - 48) || rowRect.top > (paneRect.bottom + 48)) continue;
+      item.thumb.dataset.thumbPending = '0';
+      item.load();
+      remaining -= 1;
+    }
+  };
   const savedListTop = state.sectionListScrollTop[tabKey] || 0;
   listPane.addEventListener('scroll', () => {
     state.sectionListScrollTop[tabKey] = listPane.scrollTop;
+    hydrateVisibleSectionThumbs(20);
   });
   const sectionNeedle = String(state.sectionFilter[tabKey] || '').trim().toLowerCase();
   const sectionEntries = tab.model.sections
@@ -10735,7 +12965,16 @@ function renderSectionTab(tab, tabKey) {
       const thumb = document.createElement('span');
       thumb.className = 'entry-thumb district-entry-thumb';
       itemBtn.appendChild(thumb);
-      loadDistrictRepresentativePreview(section, thumb, 35);
+      if (sectionIndex === selectedIndex) {
+        thumb.dataset.thumbPending = '0';
+        loadDistrictRepresentativePreview(section, thumb, 35);
+      } else {
+        thumb.dataset.thumbPending = '1';
+        pendingSectionThumbs.push({
+          thumb,
+          load: () => loadDistrictRepresentativePreview(section, thumb, 35)
+        });
+      }
       const primary = document.createElement('strong');
       primary.className = 'district-entry-primary';
       primary.textContent = districtDisplay.primary;
@@ -10748,8 +12987,20 @@ function renderSectionTab(tab, tabKey) {
       const thumb = document.createElement('span');
       thumb.className = 'entry-thumb district-entry-thumb section-entry-thumb-large';
       itemBtn.appendChild(thumb);
-      if (tabKey === 'wonders') loadWonderCompletedThumbnail(section, thumb, 44);
-      else loadNaturalWonderThumbnail(section, thumb, 44);
+      if (sectionIndex === selectedIndex) {
+        thumb.dataset.thumbPending = '0';
+        if (tabKey === 'wonders') loadWonderCompletedThumbnail(section, thumb, 44);
+        else loadNaturalWonderThumbnail(section, thumb, 44);
+      } else {
+        thumb.dataset.thumbPending = '1';
+        pendingSectionThumbs.push({
+          thumb,
+          load: () => {
+            if (tabKey === 'wonders') loadWonderCompletedThumbnail(section, thumb, 44);
+            else loadNaturalWonderThumbnail(section, thumb, 44);
+          }
+        });
+      }
       itemBtn.insertAdjacentHTML('beforeend', `<strong>${sectionTitle}</strong>`);
     } else {
       itemBtn.innerHTML = `<strong>${sectionTitle}</strong>`;
@@ -10777,6 +13028,7 @@ function renderSectionTab(tab, tabKey) {
     renderActiveTab({ preserveTabScroll: true });
   });
   layout.appendChild(listPane);
+  requestAnimationFrame(() => hydrateVisibleSectionThumbs(28));
 
   const detailPane = document.createElement('div');
   detailPane.className = 'entry-detail-pane';
@@ -11267,12 +13519,18 @@ function markReferenceTabEntryOriginals(tab) {
     entry.originalIconPaths = Array.isArray(entry.iconPaths) ? [...entry.iconPaths] : [];
     entry.originalRacePaths = Array.isArray(entry.racePaths) ? [...entry.racePaths] : [];
     entry.originalAnimationName = String(entry.animationName || '');
-    if (entry.unitIniEditor && Array.isArray(entry.unitIniEditor.actions)) {
-      entry.unitIniEditor.originalActions = entry.unitIniEditor.actions.map((row) => ({
+    if (entry.unitIniEditor) {
+      entry.unitIniEditor.originalActions = Array.isArray(entry.unitIniEditor.actions) ? entry.unitIniEditor.actions.map((row) => ({
         key: String(row && row.key || '').trim().toUpperCase(),
         relativePath: String(row && row.relativePath || '').trim(),
         timingSeconds: Number.isFinite(Number(row && row.timingSeconds)) ? Number(row.timingSeconds) : null
-      }));
+      })) : [];
+      if (Array.isArray(entry.unitIniEditor.typeRows)) {
+        entry.unitIniEditor.originalTypeRows = cloneUnitTypeRows(entry.unitIniEditor.typeRows);
+      }
+      if (Array.isArray(entry.unitIniEditor.sections)) {
+        entry.unitIniEditor.originalSections = cloneUnitIniSections(entry.unitIniEditor.sections);
+      }
       entry.unitIniEditor.animationName = String(entry.animationName || '').trim();
     }
     if (Array.isArray(entry.biqFields)) {

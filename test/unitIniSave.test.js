@@ -71,3 +71,104 @@ test('scenario save writes edited unit INI to scenario Art/Units and preserves b
   assert.match(baseText, /RUN=TestRun\.flc/);
   assert.doesNotMatch(baseText, /TestRunFast\.flc/);
 });
+
+test('scenario save writes full unit INI sections when section model is provided', () => {
+  const civ3Root = mkTmpDir();
+  const c3xRoot = mkTmpDir();
+  const scenarioDir = mkTmpDir();
+  fs.writeFileSync(path.join(c3xRoot, 'default.c3x_config.ini'), 'flag = true\n', 'utf8');
+
+  const baseUnitDir = path.join(civ3Root, 'Conquests', 'Art', 'Units', 'TemplateUnit');
+  fs.mkdirSync(baseUnitDir, { recursive: true });
+  const baseIniPath = path.join(baseUnitDir, 'TemplateUnit.ini');
+  fs.writeFileSync(baseIniPath, [
+    '[Speed]',
+    'Normal Speed=225',
+    '[Animations]',
+    'DEFAULT=TemplateDefault.flc',
+    '[Timing]',
+    'DEFAULT=0.500000'
+  ].join('\n'), 'latin1');
+
+  const tabs = {
+    units: {
+      entries: [
+        {
+          animationName: 'TemplateUnit',
+          unitIniEditor: {
+            iniPath: baseIniPath,
+            sections: [
+              {
+                name: 'Speed',
+                fields: [
+                  { key: 'Normal Speed', value: '160' },
+                  { key: 'Fast Speed', value: '140' }
+                ]
+              },
+              {
+                name: 'Animations',
+                fields: [
+                  { key: 'DEFAULT', value: 'TemplateDefault.flc' },
+                  { key: 'RUN', value: 'TemplateRun.flc' }
+                ]
+              },
+              {
+                name: 'Timing',
+                fields: [
+                  { key: 'DEFAULT', value: '0.42' },
+                  { key: 'RUN', value: '0.30' }
+                ]
+              },
+              {
+                name: 'Sound Effects',
+                fields: [
+                  { key: 'RUN', value: 'TemplateRun.amb' }
+                ]
+              }
+            ],
+            originalSections: [
+              {
+                name: 'Speed',
+                fields: [
+                  { key: 'Normal Speed', value: '225' }
+                ]
+              },
+              {
+                name: 'Animations',
+                fields: [
+                  { key: 'DEFAULT', value: 'TemplateDefault.flc' }
+                ]
+              },
+              {
+                name: 'Timing',
+                fields: [
+                  { key: 'DEFAULT', value: '0.500000' }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  };
+
+  const res = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xRoot,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioDir,
+    tabs
+  });
+  assert.equal(res.ok, true);
+
+  const scenarioIni = path.join(scenarioDir, 'Art', 'Units', 'TemplateUnit', 'TemplateUnit.ini');
+  assert.equal(fs.existsSync(scenarioIni), true);
+  const scenarioText = fs.readFileSync(scenarioIni, 'latin1');
+  assert.match(scenarioText, /\[Speed\]/);
+  assert.match(scenarioText, /Normal Speed=160/);
+  assert.match(scenarioText, /Fast Speed=140/);
+  assert.match(scenarioText, /\[Animations\]/);
+  assert.match(scenarioText, /RUN=TemplateRun\.flc/);
+  assert.match(scenarioText, /\[Sound Effects\]/);
+  assert.match(scenarioText, /RUN=TemplateRun\.amb/);
+});

@@ -3070,6 +3070,15 @@ function buildScenarioCivilopediaEditResult({ targetPath, edits }) {
     edits.forEach((edit) => {
       const sectionKey = String(edit && edit.sectionKey || '').trim().toUpperCase();
       if (!sectionKey) return;
+      const op = String(edit && edit.op || 'upsert').trim().toLowerCase();
+      if (op === 'delete') {
+        if (doc.sections[sectionKey]) {
+          delete doc.sections[sectionKey];
+          doc.order = (doc.order || []).filter((k) => String(k || '').trim().toUpperCase() !== sectionKey);
+          applied += 1;
+        }
+        return;
+      }
       const nextLines = textToCivilopediaLines(edit.value);
       const prevLines = (doc.sections[sectionKey] && Array.isArray(doc.sections[sectionKey].rawLines))
         ? doc.sections[sectionKey].rawLines
@@ -3347,6 +3356,8 @@ function saveBundle(payload) {
       const unitIniSave = buildScenarioUnitIniEditResult({
         targetPath: edit.targetPath,
         sourcePath: edit.sourcePath,
+        sections: edit.sections,
+        originalSections: edit.originalSections,
         actions: edit.actions,
         originalActions: edit.originalActions
       });
@@ -3490,32 +3501,69 @@ function collectBiqStructureEdits(tabs) {
 
 function collectCivilopediaReferenceEdits(tabs) {
   const edits = [];
+  const deleted = new Set();
+  const forcedUpserts = new Set();
   const upsert = (sectionKey, value) => {
     const key = String(sectionKey || '').trim().toUpperCase();
     if (!key) return;
+    if (deleted.has(key)) return;
     const normalizedValue = normalizeCivilopediaTextValue(value);
     const existing = edits.find((entry) => entry.sectionKey === key);
     if (existing) {
+      existing.op = 'upsert';
       existing.value = normalizedValue;
       return;
     }
-    edits.push({ sectionKey: key, value: normalizedValue });
+    edits.push({ op: 'upsert', sectionKey: key, value: normalizedValue });
+  };
+  const del = (sectionKey) => {
+    const key = String(sectionKey || '').trim().toUpperCase();
+    if (!key) return;
+    deleted.add(key);
+    const existing = edits.find((entry) => entry.sectionKey === key);
+    if (existing) {
+      existing.op = 'delete';
+      delete existing.value;
+      return;
+    }
+    edits.push({ op: 'delete', sectionKey: key });
   };
 
   for (const spec of REFERENCE_TAB_SPECS) {
     const tab = tabs[spec.key];
     if (!tab || !Array.isArray(tab.entries)) continue;
+    if (Array.isArray(tab.recordOps)) {
+      tab.recordOps.forEach((op) => {
+        const kind = String(op && op.op || '').toLowerCase();
+        if (kind === 'delete') {
+          const key = String(op && op.recordRef || '').trim().toUpperCase();
+          if (!key) return;
+          del(key);
+          del(`DESC_${key}`);
+          return;
+        }
+        if (kind === 'rename') {
+          const oldKey = String(op && op.recordRef || '').trim().toUpperCase();
+          const newKey = String(op && op.newRecordRef || '').trim().toUpperCase();
+          if (!oldKey || !newKey) return;
+          del(oldKey);
+          del(`DESC_${oldKey}`);
+          forcedUpserts.add(newKey);
+          forcedUpserts.add(`DESC_${newKey}`);
+        }
+      });
+    }
     tab.entries.forEach((entry) => {
       const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
       if (!key) return;
       const overview = normalizeCivilopediaTextValue(entry && entry.overview);
       const originalOverview = normalizeCivilopediaTextValue(entry && entry.originalOverview);
-      if (overview !== originalOverview) {
+      if (overview !== originalOverview || forcedUpserts.has(key)) {
         upsert(key, overview);
       }
       const description = normalizeCivilopediaTextValue(entry && entry.description);
       const originalDescription = normalizeCivilopediaTextValue(entry && entry.originalDescription);
-      if (description !== originalDescription) {
+      if (description !== originalDescription || forcedUpserts.has(`DESC_${key}`)) {
         upsert(`DESC_${key}`, description);
       }
     });
@@ -3614,6 +3662,38 @@ function normalizeUnitIniActionRows(rows) {
   return out;
 }
 
+function normalizeUnitIniSections(sections) {
+  const out = [];
+  (Array.isArray(sections) ? sections : []).forEach((section) => {
+    const name = String(section && section.name || '').trim();
+    if (!name) return;
+    const fields = [];
+    (Array.isArray(section && section.fields) ? section.fields : []).forEach((field) => {
+      const key = String(field && field.key || '').trim();
+      if (!key) return;
+      fields.push({
+        key,
+        value: String(field && field.value || '')
+      });
+    });
+    out.push({ name, fields });
+  });
+  return out;
+}
+
+function serializeUnitIniSections(sections) {
+  const out = [];
+  const normalized = normalizeUnitIniSections(sections);
+  normalized.forEach((section, secIdx) => {
+    if (secIdx > 0) out.push('');
+    out.push(`[${section.name}]`);
+    section.fields.forEach((field) => {
+      out.push(`${field.key}=${String(field.value || '')}`);
+    });
+  });
+  return `${out.join('\n').replace(/\r\n/g, '\n').trimEnd()}\n`;
+}
+
 function collectUnitIniReferenceEdits(tabs, scenarioDir) {
   const out = [];
   if (!tabs || !tabs.units || !Array.isArray(tabs.units.entries) || !scenarioDir) return out;
@@ -3622,6 +3702,21 @@ function collectUnitIniReferenceEdits(tabs, scenarioDir) {
     const animationName = String(entry.animationName || '').trim();
     if (!animationName) return;
     const model = entry.unitIniEditor;
+    const nextSections = normalizeUnitIniSections(model.sections);
+    const prevSections = normalizeUnitIniSections(model.originalSections);
+    if (nextSections.length > 0 || prevSections.length > 0) {
+      if (JSON.stringify(nextSections) === JSON.stringify(prevSections)) return;
+      out.push({
+        animationName,
+        sourcePath: String(model.iniPath || '').trim(),
+        targetPath: path.join(scenarioDir, 'Art', 'Units', animationName, `${animationName}.ini`),
+        sections: nextSections,
+        originalSections: prevSections,
+        actions: normalizeUnitIniActionRows(model.actions),
+        originalActions: normalizeUnitIniActionRows(model.originalActions)
+      });
+      return;
+    }
     const nextRows = normalizeUnitIniActionRows(model.actions);
     const prevRows = normalizeUnitIniActionRows(model.originalActions);
     if (JSON.stringify(nextRows) === JSON.stringify(prevRows)) return;
@@ -3659,9 +3754,17 @@ function readIniTextWithFallback(primaryPath, fallbackPath) {
   }
 }
 
-function buildScenarioUnitIniEditResult({ targetPath, sourcePath, actions, originalActions }) {
+function buildScenarioUnitIniEditResult({ targetPath, sourcePath, actions, originalActions, sections, originalSections }) {
   try {
     const existing = readIniTextWithFallback(targetPath, sourcePath);
+    const nextSections = normalizeUnitIniSections(sections);
+    const prevSections = normalizeUnitIniSections(originalSections);
+    if (nextSections.length > 0 || prevSections.length > 0) {
+      const serialized = serializeUnitIniSections(nextSections);
+      const normalizedExisting = String(existing || '').replace(/\r\n/g, '\n').trimEnd();
+      const applied = normalizedExisting === serialized.trimEnd() ? 0 : 1;
+      return { ok: true, applied, buffer: Buffer.from(serialized, 'latin1') };
+    }
     const lines = String(existing || '').split(/\r?\n/);
     const out = [];
     const desiredMap = new Map();

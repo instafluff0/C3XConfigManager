@@ -32,6 +32,10 @@ test('parseUnitAnimationIni reads all FLC actions and picks DEFAULT as default a
   assert.ok(parsed);
   assert.equal(parsed.defaultActionKey, 'DEFAULT');
   assert.deepEqual(parsed.actions.map((a) => a.key), ['RUN', 'DEFAULT', 'ATTACK1']);
+  assert.ok(Array.isArray(parsed.sections));
+  const animationSection = parsed.sections.find((section) => String(section.name).toUpperCase() === 'ANIMATIONS');
+  assert.ok(animationSection);
+  assert.ok(animationSection.fields.some((field) => String(field.key).toUpperCase() === 'DEFAULT'));
   const run = parsed.actions.find((a) => a.key === 'RUN');
   const attack = parsed.actions.find((a) => a.key === 'ATTACK1');
   assert.equal(run.timingSeconds, 0.45);
@@ -79,6 +83,8 @@ test('unitAnimationManifest returns all parsed actions and source paths', () => 
   assert.equal(res.ok, true);
   assert.equal(res.defaultActionKey, 'DEFAULT');
   assert.deepEqual(res.actions.map((a) => a.key), ['DEFAULT', 'ATTACK1', 'FIDGET']);
+  assert.ok(Array.isArray(res.sections));
+  assert.ok(res.sections.some((section) => String(section.name).toUpperCase() === 'TIMING'));
   const missing = res.actions.find((a) => a.key === 'FIDGET');
   assert.ok(missing);
   assert.equal(missing.exists, false);

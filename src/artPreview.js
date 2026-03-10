@@ -242,10 +242,15 @@ function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
   const b = fs.readFileSync(filePath);
   if (b.length < 128) throw new Error('FLC too small');
 
+  const magic = u16(b, 4);
   const w = u16(b, 8);
   const h = u16(b, 10);
   const headerFrameCount = u16(b, 6);
-  const speedField = u16(b, 16);
+  const speedRaw = u32(b, 16);
+  // FLC (0xAF12) uses milliseconds; legacy FLI (0xAF11) uses 1/70s ticks.
+  const speedField = (magic === 0xAF11)
+    ? Math.round((speedRaw * 1000) / 70)
+    : speedRaw;
   const frameLimit = Number.isFinite(maxFrames) && maxFrames > 0
     ? Math.floor(maxFrames)
     : Math.max(1, Math.min(240, headerFrameCount + 1));
@@ -358,6 +363,8 @@ function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
     height: h,
     framesBase64,
     speedField,
+    speedRaw,
+    magic,
     frameCountHeader: headerFrameCount,
     debug: { chunkCounts, maxFramesRequested: frameLimit, framesDecoded: frames.length }
   };
@@ -425,13 +432,27 @@ function parseUnitAnimationIni(iniPath) {
   const actions = [];
   const seen = new Set();
   const timings = new Map();
+  const sections = [];
+  const sectionByUpper = new Map();
+  let normalSpeedMs = null;
+  let fastSpeedMs = null;
   let section = '';
+  const ensureSection = (name) => {
+    const upper = String(name || '').trim().toUpperCase();
+    if (!sectionByUpper.has(upper)) {
+      const next = { name: String(name || '').trim() || 'General', nameUpper: upper, fields: [] };
+      sectionByUpper.set(upper, next);
+      sections.push(next);
+    }
+    return sectionByUpper.get(upper);
+  };
   lines.forEach((raw) => {
     const line = String(raw || '').trim();
     if (!line || line.startsWith(';')) return;
     const sec = line.match(/^\[(.+)\]$/);
     if (sec) {
       section = String(sec[1] || '').trim().toUpperCase();
+      ensureSection(section);
       return;
     }
     const eq = line.indexOf('=');
@@ -440,15 +461,27 @@ function parseUnitAnimationIni(iniPath) {
     const keyUpper = key.toUpperCase();
     if (!keyUpper) return;
     let val = stripInlineIniComment(line.slice(eq + 1));
-    if (!val) return;
     val = val.replace(/^["']|["']$/g, '').trim();
+    ensureSection(section || 'General').fields.push({
+      key,
+      keyUpper,
+      value: val
+    });
     if (section === 'TIMING') {
       const t = Number.parseFloat(val);
       if (Number.isFinite(t) && t > 0) timings.set(keyUpper, t);
       return;
     }
+    if (section === 'SPEED') {
+      const speed = Number.parseFloat(val);
+      if (Number.isFinite(speed) && speed > 0) {
+        if (keyUpper === 'NORMAL SPEED') normalSpeedMs = speed;
+        if (keyUpper === 'FAST SPEED') fastSpeedMs = speed;
+      }
+    }
     if (section && section !== 'ANIMATIONS') return;
     if (seen.has(keyUpper)) return;
+    if (!val) return;
     if (!/\.flc$/i.test(val)) return;
     const flcPath = path.join(path.dirname(iniPath), val.replace(/\\/g, path.sep).replace(/\//g, path.sep));
     actions.push({
@@ -473,8 +506,18 @@ function parseUnitAnimationIni(iniPath) {
   const defaultActionKey = (actions.find((a) => a.key === 'DEFAULT') || actions[0]).key;
   return {
     iniPath,
+    sections: sections.map((sec) => ({
+      name: sec.name,
+      fields: (Array.isArray(sec.fields) ? sec.fields : []).map((field) => ({
+        key: String(field && field.key || ''),
+        keyUpper: String(field && field.keyUpper || '').toUpperCase(),
+        value: String(field && field.value || '')
+      }))
+    })),
     actions,
-    defaultActionKey
+    defaultActionKey,
+    normalSpeedMs: Number.isFinite(normalSpeedMs) ? normalSpeedMs : null,
+    fastSpeedMs: Number.isFinite(fastSpeedMs) ? fastSpeedMs : null
   };
 }
 
@@ -668,6 +711,16 @@ function getPreview(request) {
       ok: true,
       iniPath: manifest.iniPath,
       defaultActionKey: manifest.defaultActionKey,
+      normalSpeedMs: Number.isFinite(manifest.normalSpeedMs) ? manifest.normalSpeedMs : null,
+      fastSpeedMs: Number.isFinite(manifest.fastSpeedMs) ? manifest.fastSpeedMs : null,
+      sections: (Array.isArray(manifest.sections) ? manifest.sections : []).map((section) => ({
+        name: String(section && section.name || ''),
+        fields: (Array.isArray(section && section.fields) ? section.fields : []).map((field) => ({
+          key: String(field && field.key || ''),
+          keyUpper: String(field && field.keyUpper || '').toUpperCase(),
+          value: String(field && field.value || '')
+        }))
+      })),
       actions: manifest.actions.map((a) => ({
         key: a.key,
         relativePath: a.relativePath,
