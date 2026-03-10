@@ -238,12 +238,17 @@ function decodeDeltaFlc(payload, frame, w, h) {
   }
 }
 
-function decodeFlcFrames(filePath, maxFrames = 48) {
+function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
   const b = fs.readFileSync(filePath);
   if (b.length < 128) throw new Error('FLC too small');
 
   const w = u16(b, 8);
   const h = u16(b, 10);
+  const headerFrameCount = u16(b, 6);
+  const speedField = u16(b, 16);
+  const frameLimit = Number.isFinite(maxFrames) && maxFrames > 0
+    ? Math.floor(maxFrames)
+    : Math.max(1, Math.min(240, headerFrameCount + 1));
   const palette = new Uint8Array(256 * 3);
   for (let i = 0; i < 256; i += 1) {
     palette[i * 3] = i;
@@ -266,9 +271,15 @@ function decodeFlcFrames(filePath, maxFrames = 48) {
       let touched = false;
 
       for (let i = 0; i < subCount && sub + 6 <= off + chunkSize; i += 1) {
-        const ss = u32(b, sub);
+        const ssRaw = u32(b, sub);
         const st = u16(b, sub + 4);
         chunkCounts[st] = (chunkCounts[st] || 0) + 1;
+        let ss = ssRaw;
+        // Civ3 unit FLCs sometimes have malformed COLOR_256 chunk sizes.
+        if (st === CHUNK_COLOR_256 && (ss < 6 || sub + ss > off + chunkSize)) {
+          const fallback = Math.min(778, (off + chunkSize) - sub);
+          ss = fallback >= 6 ? fallback : ss;
+        }
         if (ss < 6 || sub + ss > off + chunkSize) break;
         const payload = b.subarray(sub + 6, sub + ss);
 
@@ -296,7 +307,7 @@ function decodeFlcFrames(filePath, maxFrames = 48) {
 
       if (touched) {
         frames.push(new Uint8Array(frame));
-        if (frames.length >= maxFrames) {
+        if (frames.length >= frameLimit) {
           break;
         }
       }
@@ -313,15 +324,43 @@ function decodeFlcFrames(filePath, maxFrames = 48) {
     const rgba = new Uint8Array(w * h * 4);
     for (let i = 0; i < pix.length; i += 1) {
       const idx = pix[i];
-      rgba[i * 4] = palette[idx * 3];
-      rgba[i * 4 + 1] = palette[idx * 3 + 1];
-      rgba[i * 4 + 2] = palette[idx * 3 + 2];
-      rgba[i * 4 + 3] = 255;
+      let r = palette[idx * 3];
+      let g = palette[idx * 3 + 1];
+      let b2 = palette[idx * 3 + 2];
+      let a = 255;
+      if (options && options.civ3UnitPalette) {
+        if (idx === 255) {
+          a = 0;
+        } else if (idx >= 240 && idx <= 254) {
+          // Civ3 shadow ramp (transparent black -> darker shadow).
+          r = 0;
+          g = 0;
+          b2 = 0;
+          a = Math.min(255, (255 - idx) * 16);
+        } else if (idx >= 224 && idx <= 239) {
+          // Civ3 smoke/haze ramp (transparent -> opaque white).
+          r = 255;
+          g = 255;
+          b2 = 255;
+          a = Math.min(255, (idx - 224) * 16);
+        }
+      }
+      rgba[i * 4] = r;
+      rgba[i * 4 + 1] = g;
+      rgba[i * 4 + 2] = b2;
+      rgba[i * 4 + 3] = a;
     }
     return Buffer.from(rgba).toString('base64');
   });
 
-  return { width: w, height: h, framesBase64, debug: { chunkCounts, maxFramesRequested: maxFrames, framesDecoded: frames.length } };
+  return {
+    width: w,
+    height: h,
+    framesBase64,
+    speedField,
+    frameCountHeader: headerFrameCount,
+    debug: { chunkCounts, maxFramesRequested: frameLimit, framesDecoded: frames.length }
+  };
 }
 
 function cropCell(image, row, col, cellW, cellH) {
@@ -359,6 +398,84 @@ function parseIniForFlc(iniPath) {
     }
   }
   return null;
+}
+
+function readIniText(iniPath) {
+  const raw = fs.readFileSync(iniPath);
+  const utf8 = raw.toString('utf8');
+  // If UTF-8 decoding introduced replacement chars, prefer latin1 fallback.
+  return utf8.includes('\uFFFD') ? raw.toString('latin1') : utf8;
+}
+
+function stripInlineIniComment(value) {
+  const s = String(value || '');
+  let inQuote = false;
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i];
+    if (ch === '"') inQuote = !inQuote;
+    if (!inQuote && ch === ';') return s.slice(0, i).trim();
+  }
+  return s.trim();
+}
+
+function parseUnitAnimationIni(iniPath) {
+  if (!fileExists(iniPath)) return null;
+  const text = readIniText(iniPath);
+  const lines = text.split(/\r?\n/);
+  const actions = [];
+  const seen = new Set();
+  const timings = new Map();
+  let section = '';
+  lines.forEach((raw) => {
+    const line = String(raw || '').trim();
+    if (!line || line.startsWith(';')) return;
+    const sec = line.match(/^\[(.+)\]$/);
+    if (sec) {
+      section = String(sec[1] || '').trim().toUpperCase();
+      return;
+    }
+    const eq = line.indexOf('=');
+    if (eq < 0) return;
+    const key = line.slice(0, eq).trim();
+    const keyUpper = key.toUpperCase();
+    if (!keyUpper) return;
+    let val = stripInlineIniComment(line.slice(eq + 1));
+    if (!val) return;
+    val = val.replace(/^["']|["']$/g, '').trim();
+    if (section === 'TIMING') {
+      const t = Number.parseFloat(val);
+      if (Number.isFinite(t) && t > 0) timings.set(keyUpper, t);
+      return;
+    }
+    if (section && section !== 'ANIMATIONS') return;
+    if (seen.has(keyUpper)) return;
+    if (!/\.flc$/i.test(val)) return;
+    const flcPath = path.join(path.dirname(iniPath), val.replace(/\\/g, path.sep).replace(/\//g, path.sep));
+    actions.push({
+      key: keyUpper,
+      relativePath: val,
+      flcPath,
+      exists: fileExists(flcPath),
+      timingSeconds: timings.get(keyUpper) || null
+    });
+    seen.add(keyUpper);
+  });
+  actions.forEach((a) => {
+    if (!a.timingSeconds && timings.has(a.key)) a.timingSeconds = timings.get(a.key);
+  });
+  if (!actions.length) {
+    return {
+      iniPath,
+      actions: [],
+      defaultActionKey: ''
+    };
+  }
+  const defaultActionKey = (actions.find((a) => a.key === 'DEFAULT') || actions[0]).key;
+  return {
+    iniPath,
+    actions,
+    defaultActionKey
+  };
 }
 
 function normalizeAssetPath(raw) {
@@ -454,13 +571,14 @@ function resolvePcxPath(c3xPath, fileName) {
   return candidates.find((p) => fileExists(p)) || null;
 }
 
-function decodeByPath(filePath, crop) {
+function decodeByPath(filePath, crop, options = {}) {
   const ext = path.extname(filePath).toLowerCase();
   let image;
   if (ext === '.pcx') {
     image = decodePcx(filePath);
   } else if (ext === '.flc') {
-    image = decodeFlcFrames(filePath);
+    const maxFrames = Number.isFinite(options.maxFrames) ? Number(options.maxFrames) : null;
+    image = decodeFlcFrames(filePath, maxFrames, options);
   } else {
     throw new Error(`Unsupported preview extension: ${ext}`);
   }
@@ -541,9 +659,61 @@ function getPreview(request) {
     return { ok: true, ...decodeByPath(flc) };
   }
 
+  if (kind === 'unitAnimationManifest') {
+    const unitIni = resolveUnitIniPath(civ3Path, request.animationName, scenarioPath, scenarioPaths);
+    if (!unitIni) return { ok: false, error: 'Unit INI not found for animation name' };
+    const manifest = parseUnitAnimationIni(unitIni);
+    if (!manifest) return { ok: false, error: 'Could not parse unit INI' };
+    return {
+      ok: true,
+      iniPath: manifest.iniPath,
+      defaultActionKey: manifest.defaultActionKey,
+      actions: manifest.actions.map((a) => ({
+        key: a.key,
+        relativePath: a.relativePath,
+        exists: !!a.exists,
+        sourcePath: a.exists ? a.flcPath : '',
+        timingSeconds: Number.isFinite(a.timingSeconds) ? a.timingSeconds : null
+      }))
+    };
+  }
+
+  if (kind === 'unitAnimationAction') {
+    const unitIni = resolveUnitIniPath(civ3Path, request.animationName, scenarioPath, scenarioPaths);
+    if (!unitIni) return { ok: false, error: 'Unit INI not found for animation name' };
+    const manifest = parseUnitAnimationIni(unitIni);
+    if (!manifest || !Array.isArray(manifest.actions) || manifest.actions.length === 0) {
+      return { ok: false, error: 'No FLC entries found in unit INI' };
+    }
+    const reqKey = String(request.actionKey || '').trim().toUpperCase();
+    const selected = manifest.actions.find((a) => a.key === reqKey) || manifest.actions.find((a) => a.key === manifest.defaultActionKey) || manifest.actions[0];
+    if (!selected || !selected.exists || !fileExists(selected.flcPath)) {
+      return { ok: false, error: `FLC not found for action ${selected ? selected.key : reqKey || '(none)'}` };
+    }
+    return {
+      ok: true,
+      actionKey: selected.key,
+      iniPath: manifest.iniPath,
+      ...decodeByPath(selected.flcPath, null, { civ3UnitPalette: true, maxFrames: 1000 })
+    };
+  }
+
+  if (kind === 'unitAnimationPath') {
+    const iniPath = String(request.unitIniPath || '').trim();
+    const flcRaw = String(request.flcPath || '').trim();
+    if (!iniPath || !flcRaw) return { ok: false, error: 'Missing unitIniPath or flcPath' };
+    const flcPath = path.isAbsolute(flcRaw)
+      ? flcRaw
+      : path.join(path.dirname(iniPath), flcRaw.replace(/\\/g, path.sep).replace(/\//g, path.sep));
+    if (!fileExists(flcPath)) return { ok: false, error: 'FLC not found for requested path' };
+    return { ok: true, ...decodeByPath(flcPath, null, { civ3UnitPalette: true, maxFrames: 1000 }) };
+  }
+
   return { ok: false, error: 'Unknown preview kind' };
 }
 
 module.exports = {
-  getPreview
+  getPreview,
+  parseUnitAnimationIni,
+  resolveUnitIniPath
 };

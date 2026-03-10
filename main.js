@@ -9,6 +9,32 @@ const JAVA_BIN_RELATIVE_PATHS = process.platform === 'win32'
   ? [path.join('bin', 'javaw.exe'), path.join('bin', 'java.exe')]
   : [path.join('bin', 'java')];
 
+function getSettingsPathUnsafe() {
+  try {
+    return path.join(app.getPath('userData'), APP_SETTINGS_FILE);
+  } catch (_err) {
+    return '';
+  }
+}
+
+function readStartupPerformanceMode() {
+  try {
+    const settingsPath = getSettingsPathUnsafe();
+    if (!settingsPath || !fs.existsSync(settingsPath)) return 'high';
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    return String((raw && raw.performanceMode) || 'high').toLowerCase() === 'safe' ? 'safe' : 'high';
+  } catch (_err) {
+    return 'high';
+  }
+}
+
+const startupPerformanceMode = readStartupPerformanceMode();
+// Prevent frequent macOS IOSurface allocation crashes in canvas-heavy screens.
+if (process.platform === 'darwin' && startupPerformanceMode === 'safe' && process.env.C3X_MANAGER_FORCE_GPU !== '1') {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu-compositing');
+}
+
 function dirExists(dirPath) {
   try {
     return !!dirPath && fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory();
@@ -191,6 +217,7 @@ ipcMain.handle('manager:get-settings', async () => {
     civ3Path: '',
     scenarioPath: '',
     mode: 'global',
+    performanceMode: 'high',
     uiFontScale: 1,
     uiStateByContext: {}
   };
@@ -245,6 +272,12 @@ ipcMain.handle('manager:list-scenarios', async (_event, civ3Path) => {
   } catch (_err) {
     return [];
   }
+});
+
+ipcMain.handle('manager:relaunch', async () => {
+  app.relaunch();
+  app.exit(0);
+  return { ok: true };
 });
 
 ipcMain.handle('manager:load-bundle', async (_event, payload) => {

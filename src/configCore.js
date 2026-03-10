@@ -3267,6 +3267,29 @@ function saveBundle(payload) {
         saveReport.push({ kind: 'civilopedia', path: targetPath, applied: civilopediaSave.applied });
       }
     }
+
+    const unitIniEdits = collectUnitIniReferenceEdits(payload.tabs || {}, scenarioDir);
+    for (const edit of unitIniEdits) {
+      const protectErr = failIfProtected(edit.targetPath, 'Unit INI target');
+      if (protectErr) return { ok: false, error: protectErr };
+      const unitIniSave = buildScenarioUnitIniEditResult({
+        targetPath: edit.targetPath,
+        sourcePath: edit.sourcePath,
+        actions: edit.actions,
+        originalActions: edit.originalActions
+      });
+      if (!unitIniSave.ok) {
+        return { ok: false, error: unitIniSave.error || 'Failed to save unit INI edits.' };
+      }
+      if (unitIniSave.applied > 0) {
+        plannedWrites.push({
+          kind: 'unitIni',
+          path: edit.targetPath,
+          data: unitIniSave.buffer
+        });
+        saveReport.push({ kind: 'unitIni', path: edit.targetPath, applied: unitIniSave.applied });
+      }
+    }
   }
 
   const committed = commitWritesWithRollback(plannedWrites);
@@ -3501,6 +3524,150 @@ function collectPediaIconsReferenceEdits(tabs) {
     merged.set(k, { blockKey: k, lines: normalizePediaIconsLines(edit.lines) });
   });
   return Array.from(merged.values());
+}
+
+function normalizeUnitIniActionRows(rows) {
+  const out = [];
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const key = String(row && row.key || '').trim().toUpperCase();
+    if (!key) return;
+    const relativePath = String(row && row.relativePath || '').trim();
+    const timingRaw = row && row.timingSeconds;
+    const timingSeconds = Number.isFinite(Number(timingRaw)) && Number(timingRaw) > 0
+      ? Number(timingRaw)
+      : null;
+    out.push({ key, relativePath, timingSeconds });
+  });
+  out.sort((a, b) => String(a.key).localeCompare(String(b.key), 'en', { sensitivity: 'base' }));
+  return out;
+}
+
+function collectUnitIniReferenceEdits(tabs, scenarioDir) {
+  const out = [];
+  if (!tabs || !tabs.units || !Array.isArray(tabs.units.entries) || !scenarioDir) return out;
+  tabs.units.entries.forEach((entry) => {
+    if (!entry || !entry.unitIniEditor) return;
+    const animationName = String(entry.animationName || '').trim();
+    if (!animationName) return;
+    const model = entry.unitIniEditor;
+    const nextRows = normalizeUnitIniActionRows(model.actions);
+    const prevRows = normalizeUnitIniActionRows(model.originalActions);
+    if (JSON.stringify(nextRows) === JSON.stringify(prevRows)) return;
+    out.push({
+      animationName,
+      sourcePath: String(model.iniPath || '').trim(),
+      targetPath: path.join(scenarioDir, 'Art', 'Units', animationName, `${animationName}.ini`),
+      actions: nextRows,
+      originalActions: prevRows
+    });
+  });
+  return out;
+}
+
+function parseIniKeyValueLine(line) {
+  const raw = String(line || '');
+  const eq = raw.indexOf('=');
+  if (eq < 0) return null;
+  const key = raw.slice(0, eq).trim();
+  if (!key) return null;
+  return {
+    key,
+    keyUpper: key.toUpperCase(),
+    value: raw.slice(eq + 1).trim()
+  };
+}
+
+function readIniTextWithFallback(primaryPath, fallbackPath) {
+  const pick = [primaryPath, fallbackPath].find((p) => !!p && fs.existsSync(p));
+  if (!pick) return '';
+  try {
+    return fs.readFileSync(pick, 'latin1');
+  } catch (_err) {
+    return '';
+  }
+}
+
+function buildScenarioUnitIniEditResult({ targetPath, sourcePath, actions, originalActions }) {
+  try {
+    const existing = readIniTextWithFallback(targetPath, sourcePath);
+    const lines = String(existing || '').split(/\r?\n/);
+    const out = [];
+    const desiredMap = new Map();
+    const timingMap = new Map();
+    (Array.isArray(actions) ? actions : []).forEach((a) => {
+      const key = String(a && a.key || '').trim().toUpperCase();
+      if (!key) return;
+      desiredMap.set(key, String(a && a.relativePath || '').trim());
+      if (Number.isFinite(a && a.timingSeconds) && Number(a.timingSeconds) > 0) {
+        timingMap.set(key, Number(a.timingSeconds));
+      }
+    });
+    const managedKeys = new Set();
+    (Array.isArray(originalActions) ? originalActions : []).forEach((a) => {
+      const key = String(a && a.key || '').trim().toUpperCase();
+      if (key) managedKeys.add(key);
+    });
+    desiredMap.forEach((_v, key) => managedKeys.add(key));
+
+    let section = '';
+    let sawAnimations = false;
+    let sawTiming = false;
+    const seenAnimKeys = new Set();
+    const seenTimingKeys = new Set();
+
+    lines.forEach((line) => {
+      const sec = String(line || '').trim().match(/^\[(.+)\]$/);
+      if (sec) {
+        section = String(sec[1] || '').trim().toUpperCase();
+        if (section === 'ANIMATIONS') sawAnimations = true;
+        if (section === 'TIMING') sawTiming = true;
+        out.push(line);
+        return;
+      }
+      const kv = parseIniKeyValueLine(line);
+      if (!kv || !managedKeys.has(kv.keyUpper)) {
+        out.push(line);
+        return;
+      }
+      if (section === 'ANIMATIONS') {
+        seenAnimKeys.add(kv.keyUpper);
+        if (desiredMap.has(kv.keyUpper)) out.push(`${kv.key}=${desiredMap.get(kv.keyUpper)}`);
+        return;
+      }
+      if (section === 'TIMING') {
+        seenTimingKeys.add(kv.keyUpper);
+        if (timingMap.has(kv.keyUpper)) out.push(`${kv.key}=${Number(timingMap.get(kv.keyUpper)).toFixed(6)}`);
+        return;
+      }
+      out.push(line);
+    });
+
+    const appendLine = (value) => {
+      if (out.length === 0 || out[out.length - 1] !== '') out.push('');
+      out.push(value);
+    };
+    if (!sawAnimations) {
+      appendLine('[Animations]');
+    }
+    desiredMap.forEach((value, key) => {
+      if (seenAnimKeys.has(key)) return;
+      out.push(`${key}=${value}`);
+    });
+    if (!sawTiming) {
+      appendLine('[Timing]');
+    }
+    timingMap.forEach((value, key) => {
+      if (seenTimingKeys.has(key)) return;
+      out.push(`${key}=${Number(value).toFixed(6)}`);
+    });
+
+    const normalizedExisting = String(existing || '').replace(/\r\n/g, '\n').trimEnd();
+    const serialized = `${out.join('\n').replace(/\r\n/g, '\n').trimEnd()}\n`;
+    const applied = normalizedExisting === serialized.trimEnd() ? 0 : 1;
+    return { ok: true, applied, buffer: Buffer.from(serialized, 'latin1') };
+  } catch (err) {
+    return { ok: false, error: `Failed to save unit INI edits: ${err.message}` };
+  }
 }
 
 function applyBiqReferenceEdits({ biqPath, edits, javaPath, civ3Path, outputPath }) {

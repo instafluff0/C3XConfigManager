@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('c3xManager', {
   pickFile: (options) => ipcRenderer.invoke('manager:pick-file', options),
   pathExists: (dirPath) => ipcRenderer.invoke('manager:path-exists', dirPath),
   listScenarios: (civ3Path) => ipcRenderer.invoke('manager:list-scenarios', civ3Path),
+  relaunch: () => ipcRenderer.invoke('manager:relaunch'),
   getPreview: (payload) => ipcRenderer.invoke('manager:get-preview', payload),
   loadBundle: (payload) => ipcRenderer.invoke('manager:load-bundle', payload),
   saveBundle: (payload) => ipcRenderer.invoke('manager:save-bundle', payload)

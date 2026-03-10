@@ -10,6 +10,7 @@ const state = {
   trackDirty: false,
   suppressDirtyUntilInteraction: true,
   cleanSnapshot: '',
+  cleanTabsCache: null,
   undoSnapshot: null,
   sectionListScrollTop: {
     districts: 0,
@@ -57,6 +58,7 @@ const state = {
   biqMapArtCache: {},
   biqMapArtLoading: {},
   previewCache: new Map(),
+  unitAnimationUiByKey: {},
   isLoading: false,
   pendingAutoReload: false,
   autoReloadTimer: null,
@@ -87,7 +89,8 @@ const state = {
     results: []
   },
   techTreeEraSelectionByTab: {},
-  settingsPersistTimer: null
+  settingsPersistTimer: null,
+  startupPerformanceMode: 'high'
 };
 const richTooltip = {
   node: null,
@@ -115,6 +118,60 @@ const pediaLinkPreview = {
   body: null,
   activeKey: ''
 };
+const UNIT_FACING_OPTIONS = [
+  { index: 0, key: 'sw', label: 'SW', glyph: '↙' },
+  { index: 1, key: 's', label: 'S', glyph: '↓' },
+  { index: 2, key: 'se', label: 'SE', glyph: '↘' },
+  { index: 3, key: 'e', label: 'E', glyph: '→' },
+  { index: 4, key: 'ne', label: 'NE', glyph: '↗' },
+  { index: 5, key: 'n', label: 'N', glyph: '↑' },
+  { index: 6, key: 'nw', label: 'NW', glyph: '↖' },
+  { index: 7, key: 'w', label: 'W', glyph: '←' }
+];
+const UNIT_DIRECTION_SLICE_OFFSET = 0;
+const DEFAULT_PERFORMANCE_MODE = 'high';
+const previewScratch = {
+  canvas: null,
+  ctx: null
+};
+
+function setPreviewCache(key, value) {
+  const cacheKey = String(key || '');
+  if (!cacheKey) return;
+  if (state.previewCache.has(cacheKey)) state.previewCache.delete(cacheKey);
+  state.previewCache.set(cacheKey, value);
+  while (state.previewCache.size > getPreviewCacheLimit()) {
+    const first = state.previewCache.keys().next();
+    if (first && !first.done) state.previewCache.delete(first.value);
+    else break;
+  }
+}
+
+function getPerformanceMode() {
+  const mode = String(state.settings && state.settings.performanceMode || DEFAULT_PERFORMANCE_MODE).toLowerCase();
+  return mode === 'safe' ? 'safe' : 'high';
+}
+
+function getPreviewCacheLimit() {
+  return getPerformanceMode() === 'safe' ? 220 : 700;
+}
+
+function getDefaultFrameSampleLimit() {
+  return getPerformanceMode() === 'safe' ? 90 : 220;
+}
+
+function getPreviewScratchCanvas(width, height) {
+  const w = Math.max(1, Number(width) || 1);
+  const h = Math.max(1, Number(height) || 1);
+  if (!previewScratch.canvas) {
+    previewScratch.canvas = document.createElement('canvas');
+    previewScratch.ctx = previewScratch.canvas.getContext('2d');
+  }
+  if (!previewScratch.ctx) return null;
+  if (previewScratch.canvas.width !== w) previewScratch.canvas.width = w;
+  if (previewScratch.canvas.height !== h) previewScratch.canvas.height = h;
+  return previewScratch;
+}
 
 const el = {
   modeGlobal: document.getElementById('mode-global'),
@@ -133,6 +190,7 @@ const el = {
   pathsToggle: document.getElementById('paths-toggle'),
   pathsSummary: document.getElementById('paths-summary'),
   globalSearchBtn: document.getElementById('global-search-btn'),
+  performanceMode: document.getElementById('performance-mode'),
   modeStateBadge: document.getElementById('mode-state-badge'),
   modeStateDetail: document.getElementById('mode-state-detail'),
   scenarioTitleChip: document.getElementById('scenario-title-chip'),
@@ -460,6 +518,7 @@ function rememberUndoSnapshot() {
 
 function captureCleanSnapshot() {
   state.cleanSnapshot = snapshotTabs();
+  state.cleanTabsCache = parseSnapshotTabs(state.cleanSnapshot);
   state.undoSnapshot = null;
   state.isDirty = false;
   clearDirtyTabCounts();
@@ -478,12 +537,20 @@ function setDirty(next) {
     refreshActiveReferenceListDirtyBadges();
     return;
   }
-  const currentSnapshot = snapshotTabs();
-  state.isDirty = currentSnapshot !== state.cleanSnapshot;
   if (!state.isDirty) {
-    clearDirtyTabCounts();
+    const currentSnapshot = snapshotTabs();
+    state.isDirty = currentSnapshot !== state.cleanSnapshot;
+    if (!state.isDirty) {
+      clearDirtyTabCounts();
+    } else {
+      updateActiveDirtyCaches();
+    }
   } else {
     updateActiveDirtyCaches();
+    state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+    if (!state.isDirty) {
+      state.undoSnapshot = null;
+    }
   }
   refreshDirtyUi();
   refreshTabDirtyBadges();
@@ -501,7 +568,9 @@ function parseSnapshotTabs(snapshotText) {
 }
 
 function getCleanTabsObject() {
-  return parseSnapshotTabs(state.cleanSnapshot);
+  if (state.cleanTabsCache && typeof state.cleanTabsCache === 'object') return state.cleanTabsCache;
+  state.cleanTabsCache = parseSnapshotTabs(state.cleanSnapshot);
+  return state.cleanTabsCache;
 }
 
 function hasChangedFromClean(currentValue, cleanValue) {
@@ -798,6 +867,21 @@ function setUiFontScale(scale, persist = false) {
   }
 }
 
+function applyPerformanceModeRuntime(mode, options = {}) {
+  const nextMode = String(mode || DEFAULT_PERFORMANCE_MODE).toLowerCase() === 'safe' ? 'safe' : 'high';
+  if (state.settings) {
+    state.settings.performanceMode = nextMode;
+  }
+  if (el.performanceMode && el.performanceMode.value !== nextMode) {
+    el.performanceMode.value = nextMode;
+  }
+  if (options.clearCaches !== false) {
+    state.previewCache.clear();
+  }
+  document.body.classList.toggle('perf-safe', nextMode === 'safe');
+  document.body.classList.toggle('perf-high', nextMode === 'high');
+}
+
 function getScenarioPreviewPaths() {
   const roots = (state.bundle && Array.isArray(state.bundle.scenarioSearchPaths))
     ? state.bundle.scenarioSearchPaths
@@ -1005,6 +1089,7 @@ function setLoadingUi(isLoading, text = 'Loading configs...') {
     el.pickScenario,
     el.pathsToggle,
     el.globalSearchBtn,
+    el.performanceMode,
     el.backBtn,
     el.forwardBtn,
     el.saveBtn,
@@ -1029,6 +1114,7 @@ function clearBundleView() {
   state.trackDirty = false;
   state.baseFilter = '';
   state.cleanSnapshot = '';
+  state.cleanTabsCache = null;
   state.undoSnapshot = null;
   state.isDirty = false;
   clearDirtyTabCounts();
@@ -1241,6 +1327,26 @@ function scoreSearchMatch(haystack, tokens, query) {
   if (haystack.startsWith(query)) score += 14;
   else if (haystack.includes(` ${query}`)) score += 8;
   return score;
+}
+
+function navigateToReferenceEntry(tabKey, entryOrKey, options = {}) {
+  const targetTabKey = String(tabKey || '').trim();
+  if (!targetTabKey || !state.bundle || !state.bundle.tabs) return false;
+  const tab = state.bundle.tabs[targetTabKey];
+  if (!tab || tab.type !== 'reference' || !Array.isArray(tab.entries)) return false;
+  const rawKey = typeof entryOrKey === 'string'
+    ? entryOrKey
+    : String(entryOrKey && entryOrKey.civilopediaKey || '');
+  const targetKey = String(rawKey || '').trim().toUpperCase();
+  if (!targetKey) return false;
+  const idx = tab.entries.findIndex((entry) => String(entry && entry.civilopediaKey || '').trim().toUpperCase() === targetKey);
+  if (idx < 0) return false;
+  navigateWithHistory(() => {
+    state.activeTab = targetTabKey;
+    state.referenceSelection[targetTabKey] = idx;
+    state.referenceFilter[targetTabKey] = '';
+  }, { preserveTabScroll: !!options.preserveTabScroll });
+  return true;
 }
 
 function collectGlobalSearchItems() {
@@ -1475,6 +1581,9 @@ function syncSettingsFromInputs() {
   state.settings.c3xPath = el.c3xPath.value.trim();
   state.settings.civ3Path = el.civ3Path.value.trim();
   state.settings.scenarioPath = el.scenarioPath.value.trim();
+  if (el.performanceMode) {
+    state.settings.performanceMode = String(el.performanceMode.value || DEFAULT_PERFORMANCE_MODE);
+  }
 }
 
 function fillInputsFromSettings() {
@@ -1485,6 +1594,9 @@ function fillInputsFromSettings() {
   }
   el.civ3Path.value = state.settings.civ3Path || '';
   el.scenarioPath.value = state.settings.scenarioPath || '';
+  if (el.performanceMode) {
+    el.performanceMode.value = String(state.settings.performanceMode || DEFAULT_PERFORMANCE_MODE);
+  }
   updateScenarioSelectValue();
   updatePathsSummary();
 }
@@ -2126,7 +2238,7 @@ function getPreviewDelayMs(tabKey, section, title) {
   return 100;
 }
 
-function renderRgbaPreview(container, preview, title, delayMsProvider, displayWidth = null) {
+function renderRgbaPreview(container, preview, title, delayMsProvider, displayWidth = null, options = null) {
   const card = document.createElement('div');
   card.className = 'preview-card';
   const h = document.createElement('div');
@@ -2152,7 +2264,13 @@ function renderRgbaPreview(container, preview, title, delayMsProvider, displayWi
   container.appendChild(card);
 
   if (preview.animated && Array.isArray(preview.framesBase64) && preview.framesBase64.length > 0) {
-    const frames = preview.framesBase64.map((b64) =>
+    const maxFramesForRender = Number.isFinite(options && options.sampleMaxFrames)
+      ? Math.max(0, Number(options.sampleMaxFrames))
+      : getDefaultFrameSampleLimit();
+    const rawFrames = (maxFramesForRender > 0 && preview.framesBase64.length > maxFramesForRender)
+      ? preview.framesBase64.filter((_f, idx) => (idx % Math.ceil(preview.framesBase64.length / maxFramesForRender)) === 0)
+      : preview.framesBase64;
+    const frames = rawFrames.map((b64) =>
       new ImageData(new Uint8ClampedArray(fromBase64ToUint8(b64)), preview.width, preview.height)
     );
     appendDebugLog('preview:animated:init', { title, frames: frames.length, w: preview.width, h: preview.height, sourcePath: preview.sourcePath });
@@ -2270,7 +2388,7 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
   }
 
   if (resolved.length > 0) {
-    state.previewCache.set(cacheKey, resolved);
+    setPreviewCache(cacheKey, resolved);
   }
 }
 
@@ -2315,20 +2433,54 @@ function makeReferencePreviewTasks(tabKey, entry) {
       });
     });
   }
-  if (tabKey === 'units' && entry.animationName) {
-    tasks.push({
-      title: 'Unit Animation',
-      displayWidth: Math.min(180, state.previewSize),
-      request: {
-        kind: 'unitAnimation',
-        civ3Path: state.settings.civ3Path,
-        scenarioPath: state.settings.scenarioPath,
-        scenarioPaths: getScenarioPreviewPaths(),
-        animationName: entry.animationName
-      }
-    });
-  }
   return tasks;
+}
+
+function sliceUnitPreviewByDirection(preview, directionIndex) {
+  if (!preview || !preview.animated || !Array.isArray(preview.framesBase64)) return preview;
+  const frames = preview.framesBase64;
+  if (frames.length < 8) return preview;
+  const perDir = Math.floor(frames.length / 8);
+  if (perDir < 1) return preview;
+  const dirBase = ((Number(directionIndex) % 8) + 8) % 8;
+  const dir = (dirBase + UNIT_DIRECTION_SLICE_OFFSET) % 8;
+  const start = dir * perDir;
+  const end = dir === 7 ? frames.length : Math.min(frames.length, start + perDir);
+  const subset = frames.slice(start, end);
+  if (!subset.length) return preview;
+  return {
+    ...preview,
+    framesBase64: subset
+  };
+}
+
+function getUnitAnimationUiState(entry) {
+  const key = String(entry && entry.civilopediaKey || '');
+  if (!key) return { actionKey: '', direction: 0 };
+  if (!state.unitAnimationUiByKey[key]) state.unitAnimationUiByKey[key] = { actionKey: '', direction: 0 };
+  return state.unitAnimationUiByKey[key];
+}
+
+function makeUnitDirectionPad(selectedIndex, onPick) {
+  const pad = document.createElement('div');
+  pad.className = 'unit-direction-pad';
+  UNIT_FACING_OPTIONS.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'unit-direction-btn';
+    btn.classList.add(`dir-${opt.key}`);
+    btn.classList.toggle('active', Number(selectedIndex) === opt.index);
+    btn.dataset.dir = String(opt.index);
+    btn.title = `${opt.label} facing`;
+    btn.setAttribute('aria-label', `${opt.label} facing`);
+    btn.innerHTML = `<span>${opt.glyph}</span><small>${opt.label}</small>`;
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      if (typeof onPick === 'function') onPick(opt.index);
+    });
+    pad.appendChild(btn);
+  });
+  return pad;
 }
 
 async function loadPreviewsForReferenceEntry(tabKey, entry, previewWrap) {
@@ -2360,7 +2512,7 @@ async function loadPreviewsForReferenceEntry(tabKey, entry, previewWrap) {
     }
   }
   if (resolved.length > 0) {
-    state.previewCache.set(cacheKey, resolved);
+    setPreviewCache(cacheKey, resolved);
   }
 }
 
@@ -2375,12 +2527,9 @@ function drawPreviewFrameToCanvas(preview, canvas) {
   } else {
     return;
   }
-  const src = document.createElement('canvas');
-  src.width = preview.width;
-  src.height = preview.height;
-  const srcCtx = src.getContext('2d');
-  if (!srcCtx) return;
-  srcCtx.putImageData(new ImageData(new Uint8ClampedArray(rgba), preview.width, preview.height), 0, 0);
+  const scratch = getPreviewScratchCanvas(preview.width, preview.height);
+  if (!scratch || !scratch.ctx || !scratch.canvas) return;
+  scratch.ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), preview.width, preview.height), 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const ratio = Math.min(canvas.width / preview.width, canvas.height / preview.height);
   const w = Math.max(1, Math.floor(preview.width * ratio));
@@ -2388,7 +2537,7 @@ function drawPreviewFrameToCanvas(preview, canvas) {
   const x = Math.floor((canvas.width - w) / 2);
   const y = Math.floor((canvas.height - h) / 2);
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(src, x, y, w, h);
+  ctx.drawImage(scratch.canvas, x, y, w, h);
 }
 
 function loadReferenceListThumbnail(tabKey, entry, holder) {
@@ -2427,10 +2576,358 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
   })
     .then((res) => {
       if (!res || !res.ok) return;
-      state.previewCache.set(key, res);
+      setPreviewCache(key, res);
       if (holder.isConnected) paint(res);
     })
     .catch(() => {});
+}
+
+function renderUnitAnimationPanel(tabKey, entry, host, editable) {
+  const panel = document.createElement('div');
+  panel.className = 'unit-animation-panel';
+  const title = document.createElement('div');
+  title.className = 'section-top';
+  title.innerHTML = '<strong>Unit Animations</strong>';
+  attachRichTooltip(title, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.animationName, 'PediaIcons'));
+  panel.appendChild(title);
+
+  const keyRow = document.createElement('div');
+  keyRow.className = 'rule-row';
+  const keyLabel = document.createElement('label');
+  keyLabel.className = 'field-meta';
+  keyLabel.textContent = 'Animation Folder Key';
+  keyRow.appendChild(keyLabel);
+  const keyCtrl = document.createElement('div');
+  keyCtrl.className = 'rule-control';
+  const keyInput = document.createElement(editable ? 'input' : 'span');
+  if (editable) {
+    keyInput.type = 'text';
+    keyInput.placeholder = 'e.g. Warrior';
+    keyInput.value = String(entry.animationName || '');
+  } else {
+    keyInput.className = 'key-display-chip';
+    keyInput.textContent = String(entry.animationName || '(none)');
+  }
+  keyCtrl.appendChild(keyInput);
+  keyRow.appendChild(keyCtrl);
+  panel.appendChild(keyRow);
+
+  const controls = document.createElement('div');
+  controls.className = 'unit-animation-controls';
+  const actionWrap = document.createElement('label');
+  actionWrap.className = 'unit-animation-action';
+  actionWrap.textContent = 'Action';
+  const actionSelect = document.createElement('select');
+  actionWrap.appendChild(actionSelect);
+  controls.appendChild(actionWrap);
+  const previewWrap = document.createElement('div');
+  previewWrap.className = 'unit-animation-preview';
+  const actionList = document.createElement('div');
+  actionList.className = 'unit-animation-list';
+
+  const mainRow = document.createElement('div');
+  mainRow.className = 'unit-animation-main';
+  const leftCol = document.createElement('div');
+  leftCol.className = 'unit-animation-left';
+  leftCol.appendChild(controls);
+  leftCol.appendChild(previewWrap);
+  leftCol.appendChild(actionList);
+  mainRow.appendChild(leftCol);
+  const dirWrap = document.createElement('div');
+  dirWrap.className = 'unit-direction-wrap';
+  mainRow.appendChild(dirWrap);
+  panel.appendChild(mainRow);
+
+  host.appendChild(panel);
+
+  const ui = getUnitAnimationUiState(entry);
+  let manifest = null;
+  let activePreview = null;
+  let activeAction = '';
+  let activeTimingSeconds = null;
+  const cloneActions = (rows) => (Array.isArray(rows) ? rows.map((r) => ({
+    key: String(r && r.key || '').trim().toUpperCase(),
+    relativePath: String(r && r.relativePath || '').trim(),
+    timingSeconds: Number.isFinite(Number(r && r.timingSeconds)) ? Number(r.timingSeconds) : null,
+    exists: !!(r && r.exists),
+    sourcePath: String(r && r.sourcePath || '')
+  })).filter((r) => r.key) : []);
+  const normalizeEditorRows = (rows) => cloneActions(rows)
+    .sort((a, b) => String(a.key).localeCompare(String(b.key), 'en', { sensitivity: 'base' }));
+  const ensureEditorModel = () => {
+    if (!manifest || !Array.isArray(manifest.actions)) return null;
+    const animName = String(entry.animationName || '').trim();
+    if (!entry.unitIniEditor || String(entry.unitIniEditor.animationName || '') !== animName) {
+      const baseRows = cloneActions(manifest.actions);
+      entry.unitIniEditor = {
+        animationName: animName,
+        iniPath: String(manifest.iniPath || ''),
+        actions: cloneActions(baseRows),
+        originalActions: cloneActions(baseRows)
+      };
+    } else if (!entry.unitIniEditor.iniPath && manifest.iniPath) {
+      entry.unitIniEditor.iniPath = String(manifest.iniPath);
+    }
+    return entry.unitIniEditor;
+  };
+  const getEditorRows = () => {
+    const model = ensureEditorModel();
+    return model ? model.actions : cloneActions(manifest && manifest.actions);
+  };
+
+  const renderPreview = () => {
+    previewWrap.innerHTML = '';
+    if (!activePreview) return;
+    const dir = Number.isFinite(ui.direction) ? ui.direction : 0;
+    const subset = sliceUnitPreviewByDirection(activePreview, dir);
+    const dirLabel = (UNIT_FACING_OPTIONS.find((d) => d.index === dir) || UNIT_FACING_OPTIONS[0]).label;
+    const nativeWidth = Math.max(1, Number(subset.width) || 1);
+    const frameCount = Array.isArray(subset.framesBase64) ? subset.framesBase64.length : 0;
+    let delayMs = 80;
+    if (Number.isFinite(activeTimingSeconds) && activeTimingSeconds > 0 && frameCount > 0) {
+      delayMs = Math.max(16, Math.round((activeTimingSeconds * 1000) / frameCount));
+    } else if (Number.isFinite(activePreview.speedField) && activePreview.speedField > 0) {
+      delayMs = Math.max(16, Math.round(activePreview.speedField));
+    }
+    renderRgbaPreview(
+      previewWrap,
+      subset,
+      `${activeAction || 'Animation'} - ${dirLabel}`,
+      () => delayMs,
+      Math.min(nativeWidth, 320),
+      { sampleMaxFrames: 0 }
+    );
+  };
+
+  const renderDirectionPad = () => {
+    const old = dirWrap.querySelector('.unit-direction-pad');
+    if (old) old.remove();
+    dirWrap.appendChild(makeUnitDirectionPad(ui.direction, (nextDir) => {
+      ui.direction = nextDir;
+      renderDirectionPad();
+      renderPreview();
+    }));
+  };
+
+  const loadActionPreview = async (actionKey) => {
+    if (!actionKey || !entry.animationName) return;
+    activeAction = actionKey;
+    const currentRows = getEditorRows();
+    const actionMeta = currentRows.find((a) => String(a.key || '') === actionKey) || null;
+    activeTimingSeconds = actionMeta && Number.isFinite(actionMeta.timingSeconds) ? actionMeta.timingSeconds : null;
+    const unitIniPath = String((entry.unitIniEditor && entry.unitIniEditor.iniPath) || (manifest && manifest.iniPath) || '').trim();
+    const relativeFlc = String(actionMeta && actionMeta.relativePath || '').trim();
+    const cacheKey = JSON.stringify({
+      kind: 'unitAnimationPath',
+      unitIniPath,
+      flcPath: relativeFlc
+    });
+    let res = state.previewCache.get(cacheKey);
+    if (!res) {
+      res = await window.c3xManager.getPreview({
+        kind: 'unitAnimationPath',
+        unitIniPath,
+        flcPath: relativeFlc
+      });
+      if (res && res.ok) setPreviewCache(cacheKey, res);
+    }
+    if (!res || !res.ok) {
+      previewWrap.innerHTML = `<div class="hint">Unable to load ${actionKey}: ${res && res.error ? res.error : 'unknown error'}</div>`;
+      activePreview = null;
+      return;
+    }
+    activePreview = res;
+    renderPreview();
+  };
+
+  const markActionRow = (actionKey) => {
+    Array.from(actionList.querySelectorAll('.unit-animation-list-row')).forEach((row) => {
+      row.classList.toggle('active', String(row.dataset.action || '') === actionKey);
+    });
+  };
+
+  const renderActions = () => {
+    actionSelect.innerHTML = '';
+    actionList.innerHTML = '';
+    const actions = getEditorRows();
+    if (!actions.length) {
+      actionList.innerHTML = '<div class="hint">No FLC animation entries found in this unit INI.</div>';
+      previewWrap.innerHTML = '';
+      return;
+    }
+    actions.forEach((action) => {
+      const option = document.createElement('option');
+      option.value = action.key;
+      option.textContent = action.key;
+      actionSelect.appendChild(option);
+      const row = document.createElement('div');
+      row.className = 'unit-animation-list-row';
+      row.classList.toggle('missing', !action.relativePath);
+      row.dataset.action = action.key;
+      if (!editable) {
+        const pickBtn = document.createElement('button');
+        pickBtn.type = 'button';
+        pickBtn.className = 'unit-animation-pick-btn';
+        pickBtn.innerHTML = `<strong>${action.key}</strong><span>${action.relativePath || '(not set)'}</span>`;
+        pickBtn.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ui.actionKey = action.key;
+          actionSelect.value = action.key;
+          markActionRow(action.key);
+          loadActionPreview(action.key);
+        });
+        row.appendChild(pickBtn);
+      } else {
+        const model = ensureEditorModel();
+        row.classList.add('editable');
+        const keyInput = document.createElement('input');
+        keyInput.className = 'unit-ini-key';
+        keyInput.value = String(action.key || '');
+        keyInput.placeholder = 'ACTION';
+        keyInput.addEventListener('change', () => {
+          const nextKey = String(keyInput.value || '').trim().toUpperCase().replace(/\s+/g, '_');
+          if (!nextKey) return;
+          rememberUndoSnapshot();
+          action.key = nextKey;
+          model.actions = normalizeEditorRows(model.actions);
+          setDirty(true);
+          renderActions();
+        });
+        const pathInput = document.createElement('input');
+        pathInput.className = 'unit-ini-path';
+        pathInput.value = String(action.relativePath || '');
+        pathInput.placeholder = 'ExampleAttack.flc';
+        pathInput.addEventListener('change', () => {
+          rememberUndoSnapshot();
+          action.relativePath = String(pathInput.value || '').trim();
+          setDirty(true);
+          renderActions();
+        });
+        const timingInput = document.createElement('input');
+        timingInput.type = 'number';
+        timingInput.step = '0.01';
+        timingInput.min = '0';
+        timingInput.className = 'unit-ini-timing';
+        timingInput.value = Number.isFinite(action.timingSeconds) ? String(action.timingSeconds) : '';
+        timingInput.placeholder = 'sec';
+        timingInput.addEventListener('change', () => {
+          rememberUndoSnapshot();
+          const n = Number.parseFloat(timingInput.value);
+          action.timingSeconds = Number.isFinite(n) && n > 0 ? n : null;
+          setDirty(true);
+          renderActions();
+        });
+        const previewBtn = document.createElement('button');
+        previewBtn.type = 'button';
+        previewBtn.className = 'ghost unit-ini-preview-btn';
+        previewBtn.textContent = 'Preview';
+        previewBtn.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ui.actionKey = action.key;
+          actionSelect.value = action.key;
+          markActionRow(action.key);
+          loadActionPreview(action.key);
+        });
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'ghost unit-ini-delete-btn';
+        delBtn.textContent = 'Delete';
+        delBtn.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          rememberUndoSnapshot();
+          model.actions = model.actions.filter((r) => r !== action);
+          if (ui.actionKey === action.key) ui.actionKey = '';
+          setDirty(true);
+          renderActions();
+        });
+        row.appendChild(keyInput);
+        row.appendChild(pathInput);
+        row.appendChild(timingInput);
+        row.appendChild(previewBtn);
+        row.appendChild(delBtn);
+      }
+      actionList.appendChild(row);
+    });
+    if (editable) {
+      const addWrap = document.createElement('div');
+      addWrap.className = 'unit-ini-add-row';
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'ghost';
+      add.textContent = 'Add Action';
+      add.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const model = ensureEditorModel();
+        rememberUndoSnapshot();
+        const existingKeys = new Set((model.actions || []).map((r) => String(r.key || '').toUpperCase()));
+        let idx = 1;
+        let nextKey = `ACTION_${idx}`;
+        while (existingKeys.has(nextKey)) {
+          idx += 1;
+          nextKey = `ACTION_${idx}`;
+        }
+        model.actions.unshift({ key: nextKey, relativePath: '', timingSeconds: null, exists: false, sourcePath: '' });
+        setDirty(true);
+        renderActions();
+      });
+      addWrap.appendChild(add);
+      actionList.appendChild(addWrap);
+    }
+    const desired = String(ui.actionKey || manifest.defaultActionKey || actions[0].key || '');
+    const selected = actions.find((a) => a.key === desired) || actions[0];
+    ui.actionKey = selected.key;
+    actionSelect.value = selected.key;
+    markActionRow(selected.key);
+    loadActionPreview(selected.key);
+  };
+
+  actionSelect.addEventListener('change', () => {
+    const next = String(actionSelect.value || '').trim();
+    if (!next) return;
+    ui.actionKey = next;
+    markActionRow(next);
+    loadActionPreview(next);
+  });
+
+  const loadManifest = async () => {
+    const animationName = String(entry.animationName || '').trim();
+    if (!animationName) {
+      actionSelect.innerHTML = '';
+      actionList.innerHTML = '<div class="hint">No animation folder key set for this unit.</div>';
+      previewWrap.innerHTML = '';
+      return;
+    }
+    const res = await window.c3xManager.getPreview({
+      kind: 'unitAnimationManifest',
+      civ3Path: state.settings.civ3Path,
+      scenarioPath: state.settings.scenarioPath,
+      scenarioPaths: getScenarioPreviewPaths(),
+      animationName
+    });
+    if (!res || !res.ok) {
+      actionSelect.innerHTML = '';
+      actionList.innerHTML = `<div class="hint">Unable to load unit INI: ${res && res.error ? res.error : 'unknown error'}</div>`;
+      previewWrap.innerHTML = '';
+      return;
+    }
+    manifest = res;
+    ensureEditorModel();
+    renderActions();
+    renderDirectionPad();
+  };
+
+  if (editable) {
+    keyInput.addEventListener('change', () => {
+      rememberUndoSnapshot();
+      entry.animationName = keyInput.value.trim();
+      entry.unitIniEditor = null;
+      ui.actionKey = '';
+      setDirty(true);
+      loadManifest();
+    });
+  }
+  renderDirectionPad();
+  loadManifest();
 }
 
 function getSectionTitle(section, schema, index) {
@@ -2538,6 +3035,83 @@ function formatSourceInfo(meta, fallbackLabel = 'Unknown') {
     lines.push('File: (not available)');
   }
   return lines.join('\n');
+}
+
+function normalizeHelpFieldKey(key) {
+  return String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+const FIELD_HELP_NOTES = {
+  tabs: {
+    civilizations: {
+      civilizationgender: 'Grammar gender used by some in-game labels and text references for the civ.',
+      defaultcolor: 'Palette slot index used as the civilization\'s default map/interface color.',
+      diplomacytextindex: 'Selects which diplomacy.txt dialogue set this civilization uses.',
+      favoritegovernment: 'AI preference: when changing governments, it tends to choose this if available.',
+      shunnedgovernment: 'AI avoidance: this government is deprioritized when alternatives are available.',
+      aggressionlevel: 'AI aggression setting. In practice, levels 4 and 5 behave nearly the same.'
+    },
+    units: {
+      requiredtech: 'Technology that must be known before this unit can be built.',
+      upgradeto: 'Unit this one upgrades into when upgrade conditions are met.'
+    },
+    improvements: {
+      obsoleteby: 'Technology that obsoletes this improvement or wonder.',
+      reqadvance: 'Technology required before this improvement or wonder can be built.'
+    }
+  },
+  sections: {
+    RULE: {
+      minimumresearchtime: 'Hard lower bound on turns to complete research, regardless of cost.',
+      maximumresearchtime: 'Hard upper bound on turns before research auto-completes.',
+      futuretechcost: 'Base cost factor used when calculating repeated Future Tech research.',
+      startingtreasury: 'Starting gold each civilization begins with before difficulty modifiers.',
+      foodconsumptionpercitizen: 'Food consumed per population point each turn.',
+      roadmovementrate: 'Controls road speed by setting how many road tiles one movement point can cover.',
+      upgradecost: 'Gold cost factor for unit upgrades (based on shield cost difference).',
+      maxcity1size: 'Population limit where a town must become a city.',
+      maxcity2size: 'Population limit where a city must become a metropolis.',
+      towndefencebonus: 'Defensive bonus percentage for towns.',
+      citydefencebonus: 'Defensive bonus percentage for cities.',
+      metropolisdefencebonus: 'Defensive bonus percentage for metropolises.',
+      fortressdefencebonus: 'Defensive bonus percentage for units in fortresses.',
+      fortificationsdefencebonus: 'Defensive bonus percentage for fortified units.'
+    },
+    RACE: {
+      buildoften: 'AI preference flags for unit/improvement flavors to prioritize; more than a few flags can be set.',
+      buildnever: 'AI exclusion flags for unit/improvement flavors to avoid building.'
+    },
+    WSIZ: {
+      numberofcivs: 'Suggested civilization count for this world size preset.',
+      distancebetweencivs: 'Starting-position spacing target used by map generation.',
+      optimalnumberofcities: 'Reference city-count target used by AI/economy balancing formulas.',
+      techrate: 'Research cost multiplier for this world size.'
+    },
+    GAME: {
+      cityeliminationcount: 'Elimination threshold: 1 means a civ is eliminated when it loses its last city.',
+      cityelimination: 'Elimination threshold: 1 means a civ is eliminated when it loses its last city.'
+    },
+    LEAD: {
+      color: 'Palette slot index for this player\'s in-game color.'
+    }
+  }
+};
+
+function getFieldHelpNote({ tabKey = '', sectionCode = '', fieldKey = '' } = {}) {
+  const key = normalizeHelpFieldKey(fieldKey);
+  if (!key) return '';
+  const byTab = FIELD_HELP_NOTES.tabs[String(tabKey || '').toLowerCase()];
+  if (byTab && byTab[key]) return byTab[key];
+  const bySection = FIELD_HELP_NOTES.sections[String(sectionCode || '').toUpperCase()];
+  if (bySection && bySection[key]) return bySection[key];
+  return '';
+}
+
+function withFieldHelp(baseText, context = {}) {
+  const tip = String(baseText || '').trim();
+  const note = getFieldHelpNote(context);
+  if (!note) return tip;
+  return `${tip}\nDescription: ${note}`;
 }
 
 function ensureRichTooltipNode() {
@@ -3255,13 +3829,22 @@ function createReferencePicker(config) {
 
   const wrap = document.createElement('div');
   wrap.className = 'tech-picker';
+  const head = document.createElement('div');
+  head.className = 'tech-picker-head';
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'tech-picker-btn';
+  const selectedJumpBtn = document.createElement('button');
+  selectedJumpBtn.type = 'button';
+  selectedJumpBtn.className = 'tech-picker-selected-jump hidden';
+  selectedJumpBtn.textContent = '↗';
+  selectedJumpBtn.title = 'Open selected item';
+  selectedJumpBtn.setAttribute('aria-label', 'Open selected item');
   const buttonThumb = document.createElement('span');
   buttonThumb.className = 'entry-thumb';
   const buttonText = document.createElement('span');
   buttonText.className = 'tech-picker-btn-label';
+  let selectedJumpTarget = null;
   const renderButton = (value) => {
     const normalizedValue = (() => {
       const parsed = parseIntFromDisplayValue(value);
@@ -3272,14 +3855,22 @@ function createReferencePicker(config) {
     buttonText.textContent = selectedLabel;
     buttonText.title = selectedLabel;
     buttonThumb.innerHTML = '';
+    selectedJumpTarget = null;
+    selectedJumpBtn.classList.add('hidden');
     if (selected && selected.entry && targetTabKey) {
       loadReferenceListThumbnail(targetTabKey, selected.entry, buttonThumb);
+      selectedJumpTarget = selected.entry;
+      selectedJumpBtn.classList.remove('hidden');
+      selectedJumpBtn.title = `Open ${selectedLabel}`;
+      selectedJumpBtn.setAttribute('aria-label', `Open ${selectedLabel}`);
     }
   };
   renderButton(currentValue);
   button.appendChild(buttonThumb);
   button.appendChild(buttonText);
-  wrap.appendChild(button);
+  head.appendChild(button);
+  head.appendChild(selectedJumpBtn);
+  wrap.appendChild(head);
 
   const menu = document.createElement('div');
   menu.className = 'tech-picker-menu hidden';
@@ -3292,29 +3883,47 @@ function createReferencePicker(config) {
   const listWrap = document.createElement('div');
   listWrap.className = 'tech-picker-list';
   normalizedOptions.forEach((opt) => {
-    const row = document.createElement('button');
-    row.type = 'button';
+    const row = document.createElement('div');
     row.className = 'tech-picker-row';
     row.dataset.search = String(opt.label || '').toLowerCase();
+    const selectBtn = document.createElement('button');
+    selectBtn.type = 'button';
+    selectBtn.className = 'tech-picker-row-main';
     if (opt.entry && targetTabKey) {
       const thumb = document.createElement('span');
       thumb.className = 'entry-thumb';
-      row.appendChild(thumb);
+      selectBtn.appendChild(thumb);
       loadReferenceListThumbnail(targetTabKey, opt.entry, thumb);
     } else {
       const spacer = document.createElement('span');
       spacer.className = 'entry-thumb';
-      row.appendChild(spacer);
+      selectBtn.appendChild(spacer);
     }
     const text = document.createElement('span');
     text.textContent = String(opt.label || '');
-    row.appendChild(text);
-    row.addEventListener('click', (ev) => {
+    selectBtn.appendChild(text);
+    selectBtn.addEventListener('click', (ev) => {
       ev.preventDefault();
       renderButton(opt.value);
       menu.classList.add('hidden');
       if (onSelect) onSelect(opt.value);
     });
+    row.appendChild(selectBtn);
+    if (opt.entry && targetTabKey) {
+      const jumpBtn = document.createElement('button');
+      jumpBtn.type = 'button';
+      jumpBtn.className = 'tech-picker-row-jump';
+      jumpBtn.textContent = '↗';
+      jumpBtn.title = `Open ${opt.label}`;
+      jumpBtn.setAttribute('aria-label', `Open ${opt.label}`);
+      jumpBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        menu.classList.add('hidden');
+        navigateToReferenceEntry(targetTabKey, opt.entry);
+      });
+      row.appendChild(jumpBtn);
+    }
     listWrap.appendChild(row);
   });
   menu.appendChild(listWrap);
@@ -3328,6 +3937,13 @@ function createReferencePicker(config) {
       Array.from(listWrap.querySelectorAll('.tech-picker-row')).forEach((row) => row.classList.remove('hidden'));
       search.focus();
     }
+  });
+  selectedJumpBtn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (!selectedJumpTarget || !targetTabKey) return;
+    menu.classList.add('hidden');
+    navigateToReferenceEntry(targetTabKey, selectedJumpTarget);
   });
   search.addEventListener('input', () => {
     const needle = search.value.trim().toLowerCase();
@@ -4797,7 +5413,7 @@ function setReferenceArtSlotPath(entry, slot, nextPathRaw) {
   entry[key] = arr;
 }
 
-function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle = true }) {
+function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle = false }) {
   const card = document.createElement('div');
   card.className = 'art-slot-card';
   if (!editable) card.classList.add('read-only');
@@ -6007,10 +6623,6 @@ function renderReferenceTab(tab, tabKey) {
     if (primaryArtSlot) {
       const sidebarArt = document.createElement('div');
       sidebarArt.className = 'section-card reference-sidebar-art';
-      const sidebarTitle = document.createElement('div');
-      sidebarTitle.className = 'section-top';
-      sidebarTitle.innerHTML = `<strong>${primaryArtSlot.label}</strong>`;
-      sidebarArt.appendChild(sidebarTitle);
       sidebarArt.appendChild(makeArtSlotCard({
         tabKey,
         entry,
@@ -6036,28 +6648,36 @@ function renderReferenceTab(tab, tabKey) {
     const identityGrid = document.createElement('div');
     identityGrid.className = 'kv-grid';
     const keyRow = document.createElement('div');
-    keyRow.className = 'rule-row';
+    keyRow.className = 'identity-key-row';
     const keyLabel = document.createElement('label');
-    keyLabel.className = 'field-meta';
+    keyLabel.className = 'field-meta identity-key-label';
     keyLabel.textContent = 'Key';
     const keyControl = document.createElement('div');
-    keyControl.className = 'rule-control';
-    const keyInput = document.createElement('input');
-    keyInput.type = 'text';
-    keyInput.value = String(entry.civilopediaKey || '');
-    keyInput.disabled = !(referenceEditable && !!entry.isNew);
-    keyInput.title = keyInput.disabled ? 'Existing record keys are currently locked. New entries can be renamed before save.' : '';
-    keyInput.addEventListener('change', () => {
-      rememberUndoSnapshot();
-      const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, keyInput.value);
-      if (!changed) {
-        keyInput.value = String(entry.civilopediaKey || '');
-        return;
-      }
-      setDirty(true);
-      renderActiveTab({ preserveTabScroll: true });
-    });
-    keyControl.appendChild(keyInput);
+    keyControl.className = 'identity-key-control';
+    const canEditKey = referenceEditable && !!entry.isNew;
+    if (canEditKey) {
+      const keyInput = document.createElement('input');
+      keyInput.type = 'text';
+      keyInput.className = 'key-input-inline';
+      keyInput.value = String(entry.civilopediaKey || '');
+      keyInput.addEventListener('change', () => {
+        rememberUndoSnapshot();
+        const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, keyInput.value);
+        if (!changed) {
+          keyInput.value = String(entry.civilopediaKey || '');
+          return;
+        }
+        setDirty(true);
+        renderActiveTab({ preserveTabScroll: true });
+      });
+      keyControl.appendChild(keyInput);
+    } else {
+      const keyDisplay = document.createElement('span');
+      keyDisplay.className = 'key-display-chip';
+      keyDisplay.textContent = String(entry.civilopediaKey || '(none)');
+      keyDisplay.title = 'Existing record keys are currently locked.';
+      keyControl.appendChild(keyDisplay);
+    }
     keyRow.appendChild(keyLabel);
     keyRow.appendChild(keyControl);
     attachRichTooltip(keyRow, formatSourceInfo({ source: 'Derived', readPath: '', writePath: '' }, 'Derived'));
@@ -6119,11 +6739,7 @@ function renderReferenceTab(tab, tabKey) {
       artGrid.appendChild(collapse);
     }
     if (tabKey === 'units') {
-      const animationLine = document.createElement('div');
-      animationLine.className = 'field-meta';
-      animationLine.innerHTML = `<strong>Animation:</strong> ${entry.animationName || '(none)'}`;
-      attachRichTooltip(animationLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.animationName, 'PediaIcons'));
-      artGrid.appendChild(animationLine);
+      renderUnitAnimationPanel(tabKey, entry, artGrid, referenceEditable);
     }
     if (secondaryArtSlots.length > 0 || tabKey === 'units') {
       identityMeta.appendChild(artGrid);
@@ -6185,7 +6801,14 @@ function renderReferenceTab(tab, tabKey) {
           const label = document.createElement('label');
           label.className = 'field-meta';
           label.textContent = field.label || field.key;
-          attachRichTooltip(label, `${formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ')}\nField: ${field.key}`);
+          const ruleFieldKey = String(field.baseKey || field.key || '');
+          attachRichTooltip(
+            label,
+            withFieldHelp(
+              `${formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ')}\nField: ${ruleFieldKey}`,
+              { tabKey, fieldKey: ruleFieldKey }
+            )
+          );
           row.appendChild(label);
 
           const controlWrap = document.createElement('div');
@@ -6857,9 +7480,13 @@ function renderBiqTab(tab) {
           const label = document.createElement('label');
           label.className = 'field-meta';
           label.textContent = String(field.label || field.key);
+          const biqFieldKey = String(field.baseKey || field.key || '');
           attachRichTooltip(
             label,
-            `Source: BIQ\nFile: ${compactPathFromCiv3Root(tab.sourcePath || '') || '(not available)'}\nSection: ${selected.title || selected.code}\nSection Code: ${selected.code}\nField: ${field.baseKey || field.key}\nRecord: ${record.index + 1}`
+            withFieldHelp(
+              `Source: BIQ\nFile: ${compactPathFromCiv3Root(tab.sourcePath || '') || '(not available)'}\nSection: ${selected.title || selected.code}\nSection Code: ${selected.code}\nField: ${biqFieldKey}\nRecord: ${record.index + 1}`,
+              { sectionCode: selected.code, fieldKey: biqFieldKey }
+            )
           );
           row.appendChild(label);
 
@@ -7984,7 +8611,7 @@ function renderAdvancedFields(section, schemaKeys) {
   list.className = 'kv-grid';
   unknownFields.forEach((field, idx) => {
     const row = document.createElement('div');
-    row.className = 'kv-row compact';
+    row.className = 'kv-row compact advanced-kv-row';
 
     const keyInput = document.createElement('input');
     keyInput.value = field.key || '';
@@ -8018,8 +8645,24 @@ function renderAdvancedFields(section, schemaKeys) {
       renderActiveTab();
     });
 
-    row.appendChild(keyInput);
-    row.appendChild(valueInput);
+    const keyCell = document.createElement('div');
+    keyCell.className = 'advanced-kv-cell';
+    const keyLabel = document.createElement('span');
+    keyLabel.className = 'advanced-kv-label';
+    keyLabel.textContent = 'Key';
+    keyCell.appendChild(keyLabel);
+    keyCell.appendChild(keyInput);
+
+    const valueCell = document.createElement('div');
+    valueCell.className = 'advanced-kv-cell';
+    const valueLabel = document.createElement('span');
+    valueLabel.className = 'advanced-kv-label';
+    valueLabel.textContent = 'Value';
+    valueCell.appendChild(valueLabel);
+    valueCell.appendChild(valueInput);
+
+    row.appendChild(keyCell);
+    row.appendChild(valueCell);
     row.appendChild(del);
     list.appendChild(row);
   });
@@ -8295,12 +8938,15 @@ function renderTabs() {
 
 function renderActiveTab(options = {}) {
   const preserveTabScroll = !!options.preserveTabScroll;
+  const resetScrollToTop = !!options.resetScrollToTop;
   if (state.referenceSectionNavCleanup) {
     try { state.referenceSectionNavCleanup(); } catch (_err) {}
     state.referenceSectionNavCleanup = null;
   }
-  if (!preserveTabScroll) {
-    state.tabContentScrollTop = el.tabContent.scrollTop;
+  if (resetScrollToTop) {
+    state.tabContentScrollTop = 0;
+  } else if (!preserveTabScroll) {
+    state.tabContentScrollTop = 0;
   }
   state.isRendering = true;
   hideRichTooltip();
@@ -8529,6 +9175,14 @@ function markReferenceTabEntryOriginals(tab) {
     entry.originalIconPaths = Array.isArray(entry.iconPaths) ? [...entry.iconPaths] : [];
     entry.originalRacePaths = Array.isArray(entry.racePaths) ? [...entry.racePaths] : [];
     entry.originalAnimationName = String(entry.animationName || '');
+    if (entry.unitIniEditor && Array.isArray(entry.unitIniEditor.actions)) {
+      entry.unitIniEditor.originalActions = entry.unitIniEditor.actions.map((row) => ({
+        key: String(row && row.key || '').trim().toUpperCase(),
+        relativePath: String(row && row.relativePath || '').trim(),
+        timingSeconds: Number.isFinite(Number(row && row.timingSeconds)) ? Number(row.timingSeconds) : null
+      }));
+      entry.unitIniEditor.animationName = String(entry.animationName || '').trim();
+    }
     if (Array.isArray(entry.biqFields)) {
       entry.biqFields.forEach((field) => {
         if (!field) return;
@@ -8617,8 +9271,10 @@ function undoOneStep() {
   try {
     state.bundle.tabs = JSON.parse(state.undoSnapshot);
     state.undoSnapshot = null;
-    state.isDirty = snapshotTabs() !== state.cleanSnapshot;
-    rebuildDirtyTabCounts();
+    // Undo restores the captured pre-edit snapshot (current single-step model),
+    // so we can mark clean directly and avoid expensive whole-bundle diffs.
+    state.isDirty = false;
+    clearDirtyTabCounts();
     refreshDirtyUi();
     renderTabs();
     renderActiveTab({ preserveTabScroll: true });
@@ -8678,6 +9334,11 @@ async function shouldAutoLoad() {
 
 async function init() {
   state.settings = await window.c3xManager.getSettings();
+  if (!state.settings.performanceMode) {
+    state.settings.performanceMode = DEFAULT_PERFORMANCE_MODE;
+  }
+  state.startupPerformanceMode = String(state.settings.performanceMode || DEFAULT_PERFORMANCE_MODE);
+  applyPerformanceModeRuntime(state.settings.performanceMode, { clearCaches: false });
   applyUiFontScale(state.settings.uiFontScale || 1);
   state.trackDirty = false;
   state.suppressDirtyUntilInteraction = true;
@@ -8735,6 +9396,25 @@ async function init() {
     el.fontUp.addEventListener('click', () => {
       const current = state.settings && state.settings.uiFontScale ? state.settings.uiFontScale : 1;
       setUiFontScale(current + 0.05, true);
+    });
+  }
+
+  if (el.performanceMode) {
+    el.performanceMode.addEventListener('change', async () => {
+      const nextMode = String(el.performanceMode.value || DEFAULT_PERFORMANCE_MODE);
+      applyPerformanceModeRuntime(nextMode, { clearCaches: true });
+      await window.c3xManager.setSettings(state.settings);
+      const needsRestart = String(state.startupPerformanceMode || '') !== String(nextMode);
+      if (needsRestart) {
+        const doRestart = window.confirm('Performance mode changed. Restart now to apply GPU rendering mode?');
+        if (doRestart && window.c3xManager && typeof window.c3xManager.relaunch === 'function') {
+          await window.c3xManager.relaunch();
+          return;
+        }
+      } else {
+        setStatus(`Performance mode set to ${nextMode === 'safe' ? 'Safe' : 'High'}.`);
+      }
+      renderActiveTab({ preserveTabScroll: true });
     });
   }
 
