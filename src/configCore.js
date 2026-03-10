@@ -2771,7 +2771,9 @@ function parseSectionedConfig(text, marker) {
 
     const match = rawLine.match(/^\s*([^=]+?)\s*=\s*(.*?)\s*$/);
     if (match) {
-      current.fields.push({ key: match[1].trim(), value: match[2] });
+      const parsedValue = String(match[2] == null ? '' : match[2]).trim();
+      const normalizedValue = parsedValue.replace(/^"(.*)"$/, '$1');
+      current.fields.push({ key: match[1].trim(), value: normalizedValue });
     }
   }
 
@@ -2782,8 +2784,77 @@ function parseSectionedConfig(text, marker) {
   return result;
 }
 
-function serializeSectionedConfig(model, marker) {
+function quoteSectionToken(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  const unquoted = raw.replace(/^"(.*)"$/, '$1');
+  const escaped = unquoted.replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
+function tokenizeSectionListPreservingQuotes(text) {
+  const input = String(text == null ? '' : text);
+  const items = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      cur += ch;
+      continue;
+    }
+    if (!inQuotes && (ch === ',' || ch === '\n' || ch === '\r')) {
+      const t = cur.trim();
+      if (t) items.push(t);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  const tail = cur.trim();
+  if (tail) items.push(tail);
+  return items;
+}
+
+const SECTION_QUOTED_VALUE_KEYS_BY_KIND = {
+  districts: new Set([
+    'name', 'display_name', 'tooltip', 'obsoleted_by',
+    'advance_prereqs', 'resource_prereqs', 'dependent_improvs', 'wonder_prereqs', 'natural_wonder_prereqs',
+    'buildable_on_districts', 'buildable_adjacent_to_districts',
+    'buildable_by_civs', 'buildable_by_civ_traits', 'buildable_by_civ_govs', 'buildable_by_civ_cultures',
+    'img_paths'
+  ]),
+  wonders: new Set([
+    'name', 'buildable_by_civs', 'buildable_by_civ_traits', 'buildable_by_civ_govs', 'buildable_by_civ_cultures', 'img_path'
+  ]),
+  naturalWonders: new Set(['name', 'img_path', 'animation'])
+};
+
+function normalizeSectionFieldValueForWrite(kind, key, value) {
+  const kindKey = String(kind || '');
+  const rawKey = String(key || '').trim();
+  const keyLower = rawKey.toLowerCase();
+  const rawValue = String(value == null ? '' : value).trim();
+  const quotedKeys = SECTION_QUOTED_VALUE_KEYS_BY_KIND[kindKey];
+  if (!quotedKeys || !quotedKeys.has(rawKey) || !rawValue) return rawValue;
+  const tokens = tokenizeSectionListPreservingQuotes(rawValue).map((token) => {
+    const clean = String(token || '').trim();
+    if (!clean) return '';
+    return quoteSectionToken(clean);
+  }).filter(Boolean);
+  if (tokens.length > 1 || rawValue.includes(',')) {
+    return tokens.join(', ');
+  }
+  if (tokens.length === 1 && keyLower !== 'img_path' && keyLower !== 'name' && keyLower !== 'display_name' && keyLower !== 'tooltip' && keyLower !== 'obsoleted_by') {
+    return tokens[0];
+  }
+  return tokens[0] || rawValue;
+}
+
+function serializeSectionedConfig(model, marker, options = null) {
   const lines = [];
+  const kind = options && options.kind ? String(options.kind) : '';
 
   if (model.headerComments && model.headerComments.length > 0) {
     for (const line of model.headerComments) {
@@ -2801,7 +2872,8 @@ function serializeSectionedConfig(model, marker) {
       if (!field.key) {
         continue;
       }
-      lines.push(`${field.key} = ${field.value ?? ''}`);
+      const normalized = normalizeSectionFieldValueForWrite(kind, field.key, field.value ?? '');
+      lines.push(`${field.key} = ${normalized}`);
     }
     if (i !== model.sections.length - 1) {
       lines.push('');
@@ -3170,7 +3242,7 @@ function saveBundle(payload) {
     }
     const protectErr = failIfProtected(targetPath, `${kind} target`);
     if (protectErr) return { ok: false, error: protectErr };
-    const serialized = serializeSectionedConfig(tab.model, spec.sectionMarker);
+    const serialized = serializeSectionedConfig(tab.model, spec.sectionMarker, { kind });
     plannedWrites.push({
       kind,
       path: targetPath,

@@ -58,6 +58,7 @@ const state = {
   biqMapArtCache: {},
   biqMapArtLoading: {},
   previewCache: new Map(),
+  districtRepresentativePreviewPending: new Map(),
   unitAnimationUiByKey: {},
   isLoading: false,
   pendingAutoReload: false,
@@ -90,7 +91,8 @@ const state = {
   },
   techTreeEraSelectionByTab: {},
   settingsPersistTimer: null,
-  startupPerformanceMode: 'high'
+  startupPerformanceMode: 'high',
+  sectionValidationError: ''
 };
 const richTooltip = {
   node: null,
@@ -473,12 +475,20 @@ const SECTION_SCHEMAS = {
       { key: 'display_name', label: 'Display Name', desc: 'Name shown in UI.', type: 'text' },
       { key: 'tooltip', label: 'Tooltip Text', desc: 'Shown on worker command hover.', type: 'text' },
       { key: 'img_paths', label: 'Image Paths', desc: 'List of district PCX files.', type: 'list' },
+      { key: 'custom_width', label: 'Custom Width', desc: 'Optional custom district sprite width.', type: 'number' },
+      { key: 'custom_height', label: 'Custom Height', desc: 'Optional custom district sprite height.', type: 'number' },
+      { key: 'x_offset', label: 'X Offset', desc: 'Horizontal pixel offset for district art.', type: 'number' },
+      { key: 'y_offset', label: 'Y Offset', desc: 'Vertical pixel offset for district art.', type: 'number' },
       { key: 'btn_tile_sheet_row', label: 'Button Tile Row', desc: 'Row index in district button sheet.', type: 'number' },
       { key: 'btn_tile_sheet_column', label: 'Button Tile Column', desc: 'Column index in district button sheet.', type: 'number' },
       { key: 'advance_prereqs', label: 'Tech Prerequisites', desc: 'List of required advances.', type: 'list' },
+      { key: 'obsoleted_by', label: 'Obsoleted By', desc: 'Technology that disables this district.', type: 'list' },
       { key: 'dependent_improvs', label: 'Dependent Improvements', desc: 'List of city improvements this district unlocks.', type: 'list' },
       { key: 'buildable_on', label: 'Buildable Terrain', desc: 'Allowed terrain list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake'] },
       { key: 'buildable_adjacent_to', label: 'Adjacency Requirement', desc: 'Required adjacent terrain/city list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake', 'city'] },
+      { key: 'align_to_coast', label: 'Align To Coast', desc: 'Use coastline-oriented district art variants.', type: 'bool' },
+      { key: 'auto_add_road', label: 'Auto Add Road', desc: 'Automatically add roads when district is placed.', type: 'bool' },
+      { key: 'auto_add_railroad', label: 'Auto Add Railroad', desc: 'Automatically add railroads when district is placed.', type: 'bool' },
       { key: 'buildable_on_overlays', label: 'Buildable Overlays', desc: 'Allowed overlays list.', type: 'list', options: ['irrigation', 'mine', 'fortress', 'barricade', 'outpost', 'radar-tower', 'airfield', 'jungle', 'forest', 'swamp'] },
       { key: 'buildable_without_removal', label: 'Buildable Without Removal', desc: 'Overlays that do not require clearing.', type: 'list', options: ['jungle', 'forest', 'swamp'] },
       { key: 'buildable_adjacent_to_overlays', label: 'Adjacent Overlays', desc: 'Required adjacent overlays.', type: 'list', options: ['irrigation', 'mine', 'fortress', 'barricade', 'outpost', 'radar-tower', 'airfield', 'jungle', 'forest', 'swamp', 'river'] },
@@ -599,6 +609,236 @@ const SECTION_SCHEMAS = {
   }
 };
 
+const SPECIAL_DISTRICT_DEFAULTS = [
+  {
+    name: 'Neighborhood',
+    fields: {
+      name: 'Neighborhood',
+      display_name: 'Neighborhood',
+      tooltip: 'Build Neighborhood',
+      img_paths: 'Neighborhood_AMER.pcx, Neighborhood_EURO.pcx, Neighborhood_ROMAN.pcx, Neighborhood_MIDEAST.pcx, Neighborhood_ASIAN.pcx',
+      buildable_on: 'desert, plains, grassland, tundra, floodplain, hill',
+      allow_multiple: '1',
+      vary_img_by_era: '1',
+      vary_img_by_culture: '1',
+      btn_tile_sheet_row: '0',
+      btn_tile_sheet_column: '0',
+      culture_bonus: '1',
+      science_bonus: '1',
+      gold_bonus: '1',
+      defense_bonus_percent: '25'
+    }
+  },
+  {
+    name: 'Wonder District',
+    fields: {
+      name: 'Wonder District',
+      display_name: 'Wonder District',
+      tooltip: 'Build Wonder District',
+      img_paths: 'WonderDistrict.pcx',
+      buildable_on: 'desert, plains, grassland, tundra, floodplain, hill, coast, mountain',
+      allow_multiple: '1',
+      vary_img_by_era: '1',
+      vary_img_by_culture: '0',
+      btn_tile_sheet_row: '0',
+      btn_tile_sheet_column: '1'
+    }
+  },
+  {
+    name: 'Distribution Hub',
+    fields: {
+      name: 'Distribution Hub',
+      display_name: 'Distribution Hub',
+      tooltip: 'Build Distribution Hub',
+      advance_prereqs: 'Construction',
+      img_paths: 'DistributionHub.pcx',
+      buildable_on: 'desert, plains, grassland, tundra, floodplain, hill',
+      allow_multiple: '1',
+      vary_img_by_era: '1',
+      vary_img_by_culture: '0',
+      btn_tile_sheet_row: '0',
+      btn_tile_sheet_column: '2'
+    }
+  },
+  {
+    name: 'Aerodrome',
+    fields: {
+      name: 'Aerodrome',
+      display_name: 'Aerodrome',
+      tooltip: 'Build Aerodrome',
+      advance_prereqs: 'Flight',
+      img_paths: 'Aerodrome.pcx',
+      dependent_improvs: 'Airport',
+      buildable_on: 'desert, plains, grassland, tundra, floodplain, hill',
+      allow_multiple: '1',
+      vary_img_by_era: '1',
+      vary_img_by_culture: '0',
+      btn_tile_sheet_row: '0',
+      btn_tile_sheet_column: '3'
+    }
+  },
+  {
+    name: 'Port',
+    fields: {
+      name: 'Port',
+      display_name: 'Port',
+      tooltip: 'Build Port',
+      advance_prereqs: 'Map Making',
+      img_paths: 'Port_NW.pcx, Port_NE.pcx, Port_SE.pcx, Port_SW.pcx',
+      dependent_improvs: 'Harbor, Commercial Dock',
+      buildable_on: 'coast',
+      align_to_coast: '1',
+      allow_multiple: '1',
+      vary_img_by_era: '1',
+      vary_img_by_culture: '0',
+      btn_tile_sheet_row: '0',
+      btn_tile_sheet_column: '4'
+    }
+  },
+  {
+    name: 'Central Rail Hub',
+    fields: {
+      name: 'Central Rail Hub',
+      display_name: 'Central Rail Hub',
+      tooltip: 'Build Central Rail Hub',
+      advance_prereqs: 'Steam Power',
+      resource_prereqs: 'Iron, Coal',
+      img_paths: 'CentralRailHub_AMER.pcx, CentralRailHub_EURO.pcx, CentralRailHub_ROMAN.pcx, CentralRailHub_MIDEAST.pcx, CentralRailHub_ASIAN.pcx',
+      buildable_on: 'desert, plains, grassland, tundra, floodplain, hill',
+      auto_add_road: '1',
+      auto_add_railroad: '1',
+      allow_multiple: '1',
+      vary_img_by_era: '1',
+      vary_img_by_culture: '0',
+      btn_tile_sheet_row: '0',
+      btn_tile_sheet_column: '5'
+    }
+  },
+  {
+    name: 'Energy Grid',
+    fields: {
+      name: 'Energy Grid',
+      display_name: 'Energy Grid',
+      tooltip: 'Build Energy Grid',
+      advance_prereqs: 'Industrialization',
+      img_paths: 'EnergyGrid.pcx',
+      dependent_improvs: 'Coal Plant, Hydro Plant, Nuclear Plant, Solar Plant',
+      buildable_on: 'desert, plains, grassland, tundra, floodplain, hill',
+      custom_height: '84',
+      allow_multiple: '1',
+      vary_img_by_era: '1',
+      vary_img_by_culture: '0',
+      btn_tile_sheet_row: '0',
+      btn_tile_sheet_column: '6',
+      shield_bonus: '2'
+    }
+  },
+  {
+    name: 'Bridge',
+    fields: {
+      name: 'Bridge',
+      display_name: 'Bridge',
+      tooltip: 'Build Bridge',
+      advance_prereqs: 'Industrialization',
+      img_paths: 'Bridge.pcx',
+      buildable_on: 'coast',
+      custom_width: '176',
+      custom_height: '112',
+      x_offset: '0',
+      y_offset: '24',
+      auto_add_road: '1',
+      allow_multiple: '1',
+      vary_img_by_era: '1',
+      vary_img_by_culture: '0',
+      btn_tile_sheet_row: '0',
+      btn_tile_sheet_column: '7'
+    }
+  },
+  {
+    name: 'Canal',
+    fields: {
+      name: 'Canal',
+      display_name: 'Canal',
+      tooltip: 'Build Canal',
+      advance_prereqs: 'Industrialization',
+      img_paths: 'Canal.pcx',
+      buildable_on: 'desert, plains, grassland, tundra, floodplain',
+      custom_width: '176',
+      custom_height: '112',
+      x_offset: '0',
+      y_offset: '24',
+      allow_multiple: '1',
+      vary_img_by_era: '1',
+      vary_img_by_culture: '0',
+      btn_tile_sheet_row: '0',
+      btn_tile_sheet_column: '8'
+    }
+  },
+  {
+    name: 'Great Wall',
+    fields: {
+      name: 'Great Wall',
+      display_name: 'Great Wall',
+      tooltip: 'Build Great Wall',
+      obsoleted_by: 'Metallurgy',
+      img_paths: 'GreatWall.pcx',
+      wonder_prereqs: 'The Great Wall',
+      buildable_on: 'desert, plains, grassland, tundra, floodplain, hill, mountain, forest, swamp, jungle, volcano',
+      custom_height: '88',
+      draw_over_resources: '1',
+      allow_multiple: '1',
+      vary_img_by_era: '0',
+      vary_img_by_culture: '0',
+      btn_tile_sheet_row: '0',
+      btn_tile_sheet_column: '9',
+      defense_bonus_percent: '50'
+    }
+  }
+];
+
+function findSpecialDistrictDefaultByName(name) {
+  const target = String(name || '').trim().toLowerCase();
+  if (!target) return null;
+  return SPECIAL_DISTRICT_DEFAULTS.find((entry) => String(entry && entry.name || '').trim().toLowerCase() === target) || null;
+}
+
+function applySpecialDistrictDefaultsToSections(sections) {
+  if (!Array.isArray(sections)) return;
+  const findSectionByName = (needle) => sections.find((section) => {
+    const sectionName = String(getFieldValue(section, 'name') || '').trim().toLowerCase();
+    return sectionName && sectionName === needle;
+  }) || null;
+  SPECIAL_DISTRICT_DEFAULTS.forEach((entry) => {
+    const needle = String(entry && entry.name || '').trim().toLowerCase();
+    if (!needle) return;
+    let section = findSectionByName(needle);
+    if (!section) {
+      section = { marker: '#District', fields: [], comments: [] };
+      sections.push(section);
+    }
+    Object.entries(entry.fields || {}).forEach(([key, value]) => {
+      const existing = section.fields.filter((field) => field && field.key === key);
+      const hasValue = existing.some((field) => String(field.value || '').trim() !== '');
+      if (!hasValue) {
+        section.fields.push({ key, value: String(value || '').trim() });
+      }
+    });
+  });
+}
+
+function getExpectedDistrictImagePathCount(section, parsedPaths = null) {
+  const values = Array.isArray(parsedPaths)
+    ? parsedPaths.map((v) => String(v || '').trim()).filter(Boolean)
+    : tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths')).map((v) => String(v || '').trim()).filter(Boolean);
+  if (getFieldValue(section, 'vary_img_by_culture') === '1') return 5;
+  if (getFieldValue(section, 'align_to_coast') === '1') return 4;
+  const preset = findSpecialDistrictDefaultByName(getFieldValue(section, 'name'));
+  if (preset) {
+    return tokenizeListPreservingQuotes(String(preset.fields && preset.fields.img_paths || '')).map((v) => String(v || '').trim()).filter(Boolean).length || 1;
+  }
+  return values.length > 1 ? values.length : 1;
+}
+
 function setStatus(text, isError = false) {
   if (!el.status) return;
   el.status.textContent = text;
@@ -622,8 +862,12 @@ function withRemoveIcon(button, label) {
 }
 
 function refreshDirtyUi() {
+  state.sectionValidationError = getSectionValidationError();
   if (el.saveBtn) el.saveBtn.classList.toggle('dirty', state.isDirty);
-  if (el.saveBtn) el.saveBtn.disabled = !state.isDirty || state.isLoading;
+  if (el.saveBtn) {
+    el.saveBtn.disabled = !state.isDirty || state.isLoading || !!state.sectionValidationError;
+    el.saveBtn.title = state.sectionValidationError || '';
+  }
   if (el.dirtyIndicator) el.dirtyIndicator.classList.toggle('hidden', !state.isDirty);
   if (el.undoBtn) el.undoBtn.disabled = !state.undoSnapshot || state.isLoading;
 }
@@ -1427,7 +1671,9 @@ function navigateWithHistory(mutateState, renderOptions = { preserveTabScroll: t
   const before = captureViewSnapshot();
   mutateState();
   const after = captureViewSnapshot();
-  renderTabs();
+  if (!before || !after || before.activeTab !== after.activeTab) {
+    renderTabs();
+  }
   renderActiveTab(renderOptions);
   if (!state.isApplyingHistory && before && after && snapshotKey(before) !== snapshotKey(after)) {
     pushNavigationSnapshot(after);
@@ -1809,6 +2055,24 @@ function tokenizeListPreservingQuotes(text) {
   return items;
 }
 
+function normalizeConfigToken(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  return raw.replace(/^"(.*)"$/, '$1').trim();
+}
+
+function parseConfigInteger(value, fallback = 0) {
+  const normalized = normalizeConfigToken(value);
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function quoteConfigToken(value) {
+  const clean = normalizeConfigToken(value);
+  if (!clean) return '';
+  return `"${clean.replace(/"/g, '\\"')}"`;
+}
+
 function parseStructuredEntries(value) {
   let v = String(value || '').trim();
   if (v.startsWith('[') && v.endsWith(']')) {
@@ -1820,6 +2084,14 @@ function parseStructuredEntries(value) {
 
 function serializeStructuredEntries(entries) {
   const cleaned = entries.map((e) => String(e || '').trim()).filter(Boolean);
+  return cleaned.length > 0 ? `[${cleaned.join(', ')}]` : '';
+}
+
+function serializeQuotedStructuredEntries(entries) {
+  const cleaned = (Array.isArray(entries) ? entries : [])
+    .map((e) => normalizeConfigToken(e))
+    .filter(Boolean)
+    .map((token) => quoteConfigToken(token));
   return cleaned.length > 0 ? `[${cleaned.join(', ')}]` : '';
 }
 
@@ -1846,7 +2118,7 @@ function serializeNameAmountItems(items) {
   const entries = items
     .map((it) => ({ name: String(it.name || '').trim(), amount: String(it.amount || '').trim() }))
     .filter((it) => it.name && it.amount)
-    .map((it) => `${it.name.includes(' ') ? `"${it.name}"` : it.name}: ${it.amount}`);
+    .map((it) => `${quoteConfigToken(it.name)}: ${it.amount}`);
   return serializeStructuredEntries(entries);
 }
 
@@ -1867,8 +2139,8 @@ function serializeBuildingPrereqItems(items) {
     .map((it) => ({ building: String(it.building || '').trim(), units: (it.units || []).map((u) => String(u || '').trim()).filter(Boolean) }))
     .filter((it) => it.building && it.units.length > 0)
     .map((it) => {
-      const building = it.building.includes(' ') ? `"${it.building}"` : it.building;
-      const units = it.units.map((u) => (u.includes(' ') ? `"${u}"` : u)).join(' ');
+      const building = quoteConfigToken(it.building);
+      const units = it.units.map((u) => quoteConfigToken(u)).join(' ');
       return `${building}: ${units}`;
     });
   return serializeStructuredEntries(entries);
@@ -1896,8 +2168,8 @@ function serializeBuildingResourceItems(items) {
     }))
     .filter((it) => it.building && it.resource)
     .map((it) => {
-      const b = it.building.includes(' ') ? `"${it.building}"` : it.building;
-      const r = it.resource.includes(' ') ? `"${it.resource}"` : it.resource;
+      const b = quoteConfigToken(it.building);
+      const r = quoteConfigToken(it.resource);
       return `${b}: ${[...it.flags, r].join(' ')}`;
     });
   return serializeStructuredEntries(entries);
@@ -2035,6 +2307,16 @@ function getNamedReferenceOptionsForTab(tabKey) {
     .sort((a, b) => String(a.label).localeCompare(String(b.label), 'en', { sensitivity: 'base' }));
 }
 
+function getFilteredImprovementOptions(filterKinds = []) {
+  const allow = new Set((Array.isArray(filterKinds) ? filterKinds : []).map((k) => String(k || '').trim().toLowerCase()).filter(Boolean));
+  const options = getNamedReferenceOptionsForTab('improvements');
+  if (allow.size === 0) return options;
+  return options.filter((opt) => {
+    const kind = String(opt && opt.entry && opt.entry.improvementKind || '').trim().toLowerCase();
+    return allow.has(kind);
+  });
+}
+
 function getCivilizationNameSuggestions() {
   return getNamedReferenceOptionsForTab('civilizations').map((opt) => String(opt.value || '')).filter(Boolean);
 }
@@ -2093,10 +2375,10 @@ function makeNamedListPickerEditor(config) {
   const cfg = config || {};
   const tabKey = String(cfg.tabKey || '').trim();
   const onValuesChange = typeof cfg.onValuesChange === 'function' ? cfg.onValuesChange : null;
-  const options = getNamedReferenceOptionsForTab(tabKey);
+  const options = Array.isArray(cfg.options) ? cfg.options : getNamedReferenceOptionsForTab(tabKey);
   const wrap = document.createElement('div');
   wrap.className = 'structured-list';
-  let values = Array.isArray(cfg.values) ? cfg.values.map((v) => String(v || '').trim()).filter(Boolean) : [];
+  let values = Array.isArray(cfg.values) ? cfg.values.map((v) => normalizeConfigToken(v)).filter(Boolean) : [];
   if (values.length === 0) values = [''];
   const rerender = () => {
     wrap.innerHTML = '';
@@ -2104,7 +2386,7 @@ function makeNamedListPickerEditor(config) {
       const line = document.createElement('div');
       line.className = 'kv-row compact';
       const opts = options.slice();
-      if (value && !opts.some((opt) => opt.value === value)) {
+      if (value && !opts.some((opt) => normalizeConfigToken(opt.value) === value)) {
         opts.unshift({ value, label: value, entry: null });
       }
       const picker = createReferencePicker({
@@ -2114,7 +2396,7 @@ function makeNamedListPickerEditor(config) {
         searchPlaceholder: `Search ${toFriendlyKey(tabKey).replace(/s$/, '')}...`,
         noneLabel: '(none)',
         onSelect: (next) => {
-          const normalized = String(next || '').trim();
+          const normalized = normalizeConfigToken(next);
           values[idx] = normalized === '-1' ? '' : normalized;
           if (onValuesChange) onValuesChange(values.filter(Boolean));
           rerender();
@@ -2267,7 +2549,7 @@ function makeInputForBaseRow(row, onChange) {
     const editor = makeNamedListPickerEditor({
       tabKey: refTabKey,
       values: initial,
-      onValuesChange: (values) => onChange(serializeStructuredEntries(values))
+      onValuesChange: (values) => onChange(serializeQuotedStructuredEntries(values))
     });
     return editor;
   }
@@ -2494,7 +2776,7 @@ function makeInputForBaseRow(row, onChange) {
     const wrap = document.createElement('div');
     wrap.className = 'segmented-multi-list';
     const options = BASE_MULTI_CHOICE_LIST_OPTIONS[row.key];
-    const selected = new Set(parseStructuredEntries(row.value).map((v) => String(v || '').trim().toLowerCase()).filter(Boolean));
+    const selected = new Set(parseStructuredEntries(row.value).map((v) => normalizeConfigToken(v).toLowerCase()).filter(Boolean));
     options.forEach((opt) => {
       const token = String(opt || '').trim();
       const key = token.toLowerCase();
@@ -3041,8 +3323,8 @@ function getFieldValuesRaw(section, key) {
 }
 
 function getCropDimensions(section, defaults) {
-  const customW = Number.parseInt(getFieldValue(section, 'custom_width') || '', 10);
-  const customH = Number.parseInt(getFieldValue(section, 'custom_height') || '', 10);
+  const customW = parseConfigInteger(getFieldValue(section, 'custom_width'), NaN);
+  const customH = parseConfigInteger(getFieldValue(section, 'custom_height'), NaN);
   return {
     w: Number.isFinite(customW) && customW > 0 ? customW : defaults.w,
     h: Number.isFinite(customH) && customH > 0 ? customH : defaults.h
@@ -3093,7 +3375,14 @@ function renderRgbaPreview(container, preview, title, delayMsProvider, displayWi
   canvas.style.width = `${previewWidth}px`;
   canvas.style.height = 'auto';
   const ctx = canvas.getContext('2d');
-  card.appendChild(canvas);
+  if (options && options.softBlueFrame) {
+    const frame = document.createElement('div');
+    frame.className = 'section-art-soft-frame';
+    frame.appendChild(canvas);
+    card.appendChild(frame);
+  } else {
+    card.appendChild(canvas);
+  }
 
   const meta = document.createElement('div');
   meta.className = 'preview-meta';
@@ -3138,10 +3427,20 @@ function renderRgbaPreview(container, preview, title, delayMsProvider, displayWi
 
 async function loadPreviewsForSection(tabKey, section, previewWrap) {
   const cacheKey = JSON.stringify({ tabKey, fields: section.fields, c3xPath: state.settings.c3xPath });
+  const previewOptions = (tabKey === 'wonders' || tabKey === 'naturalWonders')
+    ? { softBlueFrame: true }
+    : null;
   if (state.previewCache.has(cacheKey)) {
     const cached = state.previewCache.get(cacheKey);
     appendDebugLog('preview:cache-hit', { tabKey, count: cached.length });
-    cached.forEach((p) => renderRgbaPreview(previewWrap, p.preview, p.title, () => getPreviewDelayMs(tabKey, section, p.title), p.displayWidth));
+    cached.forEach((p) => renderRgbaPreview(
+      previewWrap,
+      p.preview,
+      p.title,
+      () => getPreviewDelayMs(tabKey, section, p.title),
+      p.displayWidth,
+      previewOptions
+    ));
     return;
   }
 
@@ -3156,9 +3455,9 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
       });
     });
   } else if (tabKey === 'wonders') {
-    const fileName = getFieldValue(section, 'img_path') || 'Wonders.pcx';
-    const row = parseInt(getFieldValue(section, 'img_row') || '0', 10) || 0;
-    const col = parseInt(getFieldValue(section, 'img_column') || '0', 10) || 0;
+    const fileName = normalizeConfigToken(getFieldValue(section, 'img_path')) || 'Wonders.pcx';
+    const row = parseConfigInteger(getFieldValue(section, 'img_row'), 0);
+    const col = parseConfigInteger(getFieldValue(section, 'img_column'), 0);
     const crop = getCropDimensions(section, { w: 128, h: 64 });
     tasks.push({
       title: 'Completed Wonder',
@@ -3169,8 +3468,8 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
         crop: { row, col, w: crop.w, h: crop.h }
       }
     });
-    const cr = parseInt(getFieldValue(section, 'img_construct_row') || '0', 10) || 0;
-    const cc = parseInt(getFieldValue(section, 'img_construct_column') || '0', 10) || 0;
+    const cr = parseConfigInteger(getFieldValue(section, 'img_construct_row'), 0);
+    const cc = parseConfigInteger(getFieldValue(section, 'img_construct_column'), 0);
     tasks.push({
       title: 'Construction',
       request: {
@@ -3181,9 +3480,9 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
       }
     });
   } else if (tabKey === 'naturalWonders') {
-    const fileName = getFieldValue(section, 'img_path');
-    const row = parseInt(getFieldValue(section, 'img_row') || '0', 10) || 0;
-    const col = parseInt(getFieldValue(section, 'img_column') || '0', 10) || 0;
+    const fileName = normalizeConfigToken(getFieldValue(section, 'img_path'));
+    const row = parseConfigInteger(getFieldValue(section, 'img_row'), 0);
+    const col = parseConfigInteger(getFieldValue(section, 'img_column'), 0);
     const crop = getCropDimensions(section, { w: 128, h: 88 });
     tasks.push({
       title: 'Natural Wonder',
@@ -3216,7 +3515,14 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
       const res = await window.c3xManager.getPreview(task.request);
       if (res && res.ok) {
         appendDebugLog('preview:response:ok', { tabKey, title: task.title, animated: !!res.animated, width: res.width, height: res.height, sourcePath: res.sourcePath, frames: res.framesBase64 ? res.framesBase64.length : 0, debug: res.debug || null });
-        renderRgbaPreview(previewWrap, res, task.title, () => getPreviewDelayMs(tabKey, section, task.title), task.displayWidth);
+        renderRgbaPreview(
+          previewWrap,
+          res,
+          task.title,
+          () => getPreviewDelayMs(tabKey, section, task.title),
+          task.displayWidth,
+          previewOptions
+        );
         resolved.push({ title: task.title, preview: res, displayWidth: task.displayWidth || null });
       } else {
         appendDebugLog('preview:response:err', { tabKey, title: task.title, error: res && res.error });
@@ -3360,9 +3666,15 @@ function drawPreviewFrameToCanvas(preview, canvas) {
   if (!ctx || !preview) return;
   let rgba;
   if (preview.rgbaBase64) {
-    rgba = fromBase64ToUint8(preview.rgbaBase64);
+    if (!preview._cachedRgbaBytes) {
+      preview._cachedRgbaBytes = fromBase64ToUint8(preview.rgbaBase64);
+    }
+    rgba = preview._cachedRgbaBytes;
   } else if (preview.framesBase64 && preview.framesBase64[0]) {
-    rgba = fromBase64ToUint8(preview.framesBase64[0]);
+    if (!preview._cachedFirstFrameBytes) {
+      preview._cachedFirstFrameBytes = fromBase64ToUint8(preview.framesBase64[0]);
+    }
+    rgba = preview._cachedFirstFrameBytes;
   } else {
     return;
   }
@@ -3370,6 +3682,8 @@ function drawPreviewFrameToCanvas(preview, canvas) {
   if (!scratch || !scratch.ctx || !scratch.canvas) return;
   scratch.ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), preview.width, preview.height), 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   const ratio = Math.min(canvas.width / preview.width, canvas.height / preview.height);
   const w = Math.max(1, Math.floor(preview.width * ratio));
   const h = Math.max(1, Math.floor(preview.height * ratio));
@@ -3775,6 +4089,179 @@ function getSectionTitle(section, schema, index) {
     return titleField.value;
   }
   return `${schema.entityName} ${index + 1}`;
+}
+
+function getSectionTabSourceMeta(tab) {
+  const src = String(tab && tab.effectiveSource || '').trim() || 'effective';
+  const writePath = String(tab && tab.targetPath || '').trim();
+  return {
+    source: `C3X ${src}`,
+    readPath: '',
+    writePath
+  };
+}
+
+function getDistrictSectionDisplay(section, index) {
+  const name = normalizeConfigToken(getFieldValue(section, 'name'));
+  const displayName = normalizeConfigToken(getFieldValue(section, 'display_name'));
+  const tooltip = normalizeConfigToken(getFieldValue(section, 'tooltip'));
+  return {
+    primary: displayName || name || `District ${index + 1}`,
+    secondary: displayName && name && displayName !== name ? name : '',
+    tooltip: tooltip || ''
+  };
+}
+
+function getSectionNamesFromTab(tabKey, fieldKey = 'name') {
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+  if (!tab || !tab.model || !Array.isArray(tab.model.sections)) return [];
+  const out = new Set();
+  tab.model.sections.forEach((section) => {
+    const value = normalizeConfigToken(getFieldValue(section, fieldKey));
+    if (value) out.add(value);
+  });
+  return Array.from(out).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+}
+
+function getDynamicSectionFieldOptions(tabKey, schemaField, section) {
+  const key = String(schemaField && schemaField.key || '').trim();
+  if (!key) return [];
+  if (tabKey !== 'districts') return [];
+
+  if (key === 'advance_prereqs' || key === 'obsoleted_by') {
+    return getNamedReferenceOptionsForTab('technologies').map((opt) => String(opt.value || ''));
+  }
+  if (key === 'dependent_improvs' || key === 'wonder_prereqs') {
+    return getNamedReferenceOptionsForTab('improvements').map((opt) => String(opt.value || ''));
+  }
+  if (key === 'resource_prereqs') {
+    return getNamedReferenceOptionsForTab('resources').map((opt) => String(opt.value || ''));
+  }
+  if (key === 'buildable_by_civs') {
+    return getNamedReferenceOptionsForTab('civilizations').map((opt) => String(opt.value || ''));
+  }
+  if (key === 'buildable_by_civ_govs') {
+    return getNamedReferenceOptionsForTab('governments').map((opt) => String(opt.value || ''));
+  }
+  if (key === 'buildable_on_districts' || key === 'buildable_adjacent_to_districts') {
+    const options = getSectionNamesFromTab('districts', 'name');
+    const selfName = getFieldValue(section, 'name');
+    return options.filter((name) => String(name || '') !== selfName);
+  }
+  if (key === 'natural_wonder_prereqs') {
+    return getSectionNamesFromTab('naturalWonders', 'name');
+  }
+  return [];
+}
+
+function getReferenceTabForSectionField(tabKey, fieldKey) {
+  const key = String(fieldKey || '').trim();
+  if (tabKey !== 'districts') return '';
+  if (key === 'advance_prereqs' || key === 'obsoleted_by') return 'technologies';
+  if (key === 'dependent_improvs' || key === 'wonder_prereqs') return 'improvements';
+  if (key === 'resource_prereqs') return 'resources';
+  if (key === 'buildable_by_civs') return 'civilizations';
+  if (key === 'buildable_by_civ_govs') return 'governments';
+  return '';
+}
+
+function getReferenceOptionsForSectionField(tabKey, fieldKey) {
+  const key = String(fieldKey || '').trim();
+  if (tabKey === 'districts' && key === 'wonder_prereqs') {
+    return getFilteredImprovementOptions(['wonder', 'small_wonder']);
+  }
+  const refTabKey = getReferenceTabForSectionField(tabKey, key);
+  return refTabKey ? getNamedReferenceOptionsForTab(refTabKey) : [];
+}
+
+function sanitizeStructuredFieldDescription(text) {
+  return String(text || '')
+    .replace(/comma[-\s]*delimited[^.]*\.?/gi, 'Use structured selections below.')
+    .replace(/\b(1\s*or\s*0|0\s*or\s*1)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getSectionFieldDescription(tabKey, schemaField, fieldDocs) {
+  const rawDoc = (fieldDocs && fieldDocs[schemaField.key]) || '';
+  const doc = sanitizeStructuredFieldDescription(rawDoc);
+  const schemaDesc = sanitizeStructuredFieldDescription(schemaField.desc || '');
+  const isStructured = schemaField.type === 'list' || schemaField.multi;
+  if (isStructured) {
+    const refTab = getReferenceTabForSectionField(tabKey, schemaField.key);
+    if (refTab) return `Select one or more ${toFriendlyKey(refTab).toLowerCase()} entries.`;
+    if (String(schemaField.key || '') === 'img_paths') return 'Select district image PCX files. Browse to add each path.';
+    return schemaDesc || 'Select one or more values.';
+  }
+  if (schemaField.type === 'bool') {
+    const noisyBoolDoc = /\b(1\s*or\s*0|0\s*or\s*1)\b/i;
+    if (noisyBoolDoc.test(doc) || noisyBoolDoc.test(schemaDesc)) return '';
+  }
+  return doc || schemaDesc;
+}
+
+function orderSectionFieldsByDocs(schemaFields, fieldDocs) {
+  const fields = Array.isArray(schemaFields) ? schemaFields.slice() : [];
+  const docs = fieldDocs && typeof fieldDocs === 'object' ? fieldDocs : {};
+  const docOrder = new Map();
+  Object.keys(docs).forEach((key, idx) => docOrder.set(String(key || '').toLowerCase(), idx));
+  return fields.sort((a, b) => {
+    const aKey = String(a && a.key || '').toLowerCase();
+    const bKey = String(b && b.key || '').toLowerCase();
+    const ai = docOrder.has(aKey) ? docOrder.get(aKey) : Number.MAX_SAFE_INTEGER;
+    const bi = docOrder.has(bKey) ? docOrder.get(bKey) : Number.MAX_SAFE_INTEGER;
+    if (ai !== bi) return ai - bi;
+    return 0;
+  });
+}
+
+function validateDistrictSection(section, index) {
+  const paths = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths')).map((p) => String(p || '').trim()).filter(Boolean);
+  const label = getDistrictSectionDisplay(section, index).primary;
+  const expectedCount = getExpectedDistrictImagePathCount(section, paths);
+  if (paths.length !== expectedCount) {
+    if (getFieldValue(section, 'vary_img_by_culture') === '1') {
+      return `${label}: Vary Art By Culture requires exactly 5 image paths (current: ${paths.length}).`;
+    }
+    if (getFieldValue(section, 'align_to_coast') === '1') {
+      return `${label}: Align To Coast requires exactly 4 image paths (NW, NE, SE, SW) (current: ${paths.length}).`;
+    }
+    if (expectedCount === 1) {
+      return `${label}: District requires exactly 1 image path (current: ${paths.length}).`;
+    }
+    return `${label}: District requires exactly ${expectedCount} image paths (current: ${paths.length}).`;
+  }
+  return '';
+}
+
+function getSectionValidationError() {
+  if (!state.bundle || !state.bundle.tabs) return '';
+  const districtTab = state.bundle.tabs.districts;
+  if (!districtTab || !districtTab.model || !Array.isArray(districtTab.model.sections)) return '';
+  for (let i = 0; i < districtTab.model.sections.length; i += 1) {
+    const err = validateDistrictSection(districtTab.model.sections[i], i);
+    if (err) return err;
+  }
+  return '';
+}
+
+function getFilePickerOptionsForSectionField(schemaField, currentValue = '') {
+  const key = String(schemaField && schemaField.key || '').toLowerCase();
+  const normalizedValue = String(currentValue || '').trim();
+  const picker = {};
+  if (normalizedValue) {
+    picker.defaultPath = normalizedValue;
+  } else if (state.settings && state.settings.c3xPath) {
+    picker.defaultPath = String(state.settings.c3xPath);
+  } else if (state.settings && state.settings.civ3Path) {
+    picker.defaultPath = String(state.settings.civ3Path);
+  }
+  if (key.includes('ini')) {
+    picker.filters = [{ name: 'INI Files', extensions: ['ini'] }, { name: 'All Files', extensions: ['*'] }];
+  } else if (key.includes('pcx') || key.includes('img_path') || key.includes('img_paths') || key.includes('path')) {
+    picker.filters = [{ name: 'Art Files', extensions: ['pcx', 'flc', 'ini'] }, { name: 'All Files', extensions: ['*'] }];
+  }
+  return picker;
 }
 
 function formatReferenceList(values) {
@@ -4637,9 +5124,9 @@ function getTechLabelByIndex(index) {
 }
 
 function findOptionByValue(options, value) {
-  const normalized = String(value ?? '').trim();
+  const normalized = normalizeConfigToken(value);
   if (!Array.isArray(options)) return null;
-  return options.find((opt) => String(opt && opt.value) === normalized) || null;
+  return options.find((opt) => normalizeConfigToken(opt && opt.value) === normalized) || null;
 }
 
 function createReferencePicker(config) {
@@ -4657,7 +5144,7 @@ function createReferencePicker(config) {
   normalizedOptions.push({ value: '-1', label: noneLabel, entry: null });
   options.forEach((opt) => {
     if (!opt) return;
-    const value = String(opt.value ?? '');
+    const value = normalizeConfigToken(opt.value);
     if (value === '-1') return;
     normalizedOptions.push({
       value,
@@ -6113,6 +6600,21 @@ function getPreviewRgba(preview) {
   if (preview.rgbaBase64) return fromBase64ToUint8(preview.rgbaBase64);
   if (Array.isArray(preview.framesBase64) && preview.framesBase64[0]) return fromBase64ToUint8(preview.framesBase64[0]);
   return null;
+}
+
+function openArtFocusWithPreview(preview, title = 'Art Preview', metaText = '') {
+  if (!preview || !preview.ok) return;
+  const overlay = ensureArtFocusNode();
+  if (artFocus.title) artFocus.title.textContent = String(title || 'Art Preview');
+  if (artFocus.meta) {
+    const sourceName = String(preview.sourcePath || '').trim();
+    artFocus.meta.textContent = String(metaText || sourceName || '');
+  }
+  artFocus.preview = preview;
+  artFocus.slot = null;
+  artFocus.zoom = 1;
+  renderArtFocusCanvas();
+  overlay.classList.remove('hidden');
 }
 
 function ensureArtFocusNode() {
@@ -9249,7 +9751,8 @@ function createFieldInput(schemaField, value, onChange) {
     wrap.className = 'bool-toggle';
     const check = document.createElement('input');
     check.type = 'checkbox';
-    check.checked = String(value || '').trim() !== '0';
+    const normalized = String(value == null ? '' : value).trim().toLowerCase();
+    check.checked = normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
     check.addEventListener('change', () => onChange(check.checked ? '1' : '0'));
     const text = document.createElement('span');
     text.textContent = check.checked ? 'Enabled' : 'Disabled';
@@ -9267,18 +9770,27 @@ function createFieldInput(schemaField, value, onChange) {
     empty.value = '';
     empty.textContent = '(not set)';
     select.appendChild(empty);
-    (schemaField.options || []).forEach((opt) => {
+    const options = schemaField.options || [];
+    options.forEach((opt) => {
       const o = document.createElement('option');
       o.value = opt;
       o.textContent = opt;
       select.appendChild(o);
     });
+    const hasCurrent = options.some((opt) => String(opt) === String(value || ''));
+    if (!hasCurrent && value) {
+      const current = document.createElement('option');
+      current.value = value;
+      current.textContent = value;
+      select.appendChild(current);
+    }
     select.value = value || '';
     select.addEventListener('change', () => onChange(select.value));
     return select;
   }
 
-  const isPathField = schemaField.key.includes('path');
+  const keyLower = String(schemaField && schemaField.key || '').toLowerCase();
+  const isPathField = keyLower.includes('path') || keyLower.includes('file');
   if (isPathField) {
     const wrap = document.createElement('div');
     wrap.className = 'path-input-with-btn';
@@ -9289,9 +9801,10 @@ function createFieldInput(schemaField, value, onChange) {
     input.addEventListener('input', () => onChange(input.value));
     const browse = document.createElement('button');
     browse.type = 'button';
-    browse.textContent = '...';
+    browse.textContent = 'Browse';
     browse.addEventListener('click', async () => {
-      const filePath = await window.c3xManager.pickFile();
+      const pickerOptions = getFilePickerOptionsForSectionField(schemaField, input.value);
+      const filePath = await window.c3xManager.pickFile(pickerOptions);
       if (!filePath) return;
       input.value = filePath;
       onChange(filePath);
@@ -9309,103 +9822,714 @@ function createFieldInput(schemaField, value, onChange) {
   return input;
 }
 
-function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
-  const row = document.createElement('div');
-  row.className = 'form-row';
+function makeSegmentedMultiValueEditor(options, values, onValuesChange, fieldKey = '', config = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'segmented-multi-list';
+  const showTokenIcon = config.showTokenIcon !== false;
+  const iconRenderer = typeof config.iconRenderer === 'function' ? config.iconRenderer : null;
+  const baseOptions = Array.isArray(options) ? options.map((opt) => String(opt || '').trim()).filter(Boolean) : [];
+  const selectedValues = (Array.isArray(values) ? values : []).map((v) => String(v || '').trim()).filter(Boolean);
+  const optionSet = new Set(baseOptions);
+  selectedValues.forEach((value) => optionSet.add(value));
+  const optionList = Array.from(optionSet);
+  const selected = new Set(selectedValues);
+  optionList.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'segmented-multi-btn';
+    const text = document.createElement('span');
+    text.textContent = opt;
+    if (iconRenderer) {
+      const customIcon = iconRenderer(opt, fieldKey);
+      if (customIcon) btn.appendChild(customIcon);
+    } else if (showTokenIcon) {
+      const icon = document.createElement('span');
+      icon.className = 'segmented-multi-icon';
+      icon.style.background = getTokenColor(opt, fieldKey);
+      btn.appendChild(icon);
+    }
+    btn.appendChild(text);
+    btn.classList.toggle('active', selected.has(opt));
+    btn.addEventListener('click', () => {
+      if (selected.has(opt)) selected.delete(opt);
+      else selected.add(opt);
+      btn.classList.toggle('active', selected.has(opt));
+      if (onValuesChange) onValuesChange(optionList.filter((entry) => selected.has(entry)));
+    });
+    wrap.appendChild(btn);
+  });
+  return wrap;
+}
 
-  const label = document.createElement('label');
-  label.className = 'field-label';
-  label.textContent = schemaField.label + (schemaField.required ? ' *' : '');
-  row.appendChild(label);
-
-  const longDoc = (fieldDocs && fieldDocs[schemaField.key]) || '';
-  const fullDesc = longDoc || schemaField.desc || '';
-  const meta = document.createElement('div');
-  meta.className = 'field-meta-block';
-  const metaText = document.createElement('div');
-  metaText.className = 'field-meta';
-  metaText.textContent = schemaField.key;
-  meta.appendChild(metaText);
-  if (fullDesc) {
-    const desc = document.createElement('div');
-    desc.className = 'field-description';
-    desc.textContent = fullDesc;
-    meta.appendChild(desc);
+function makeDistrictImagePathPreview(pathValue) {
+  const holder = document.createElement('button');
+  holder.type = 'button';
+  holder.className = 'inline-path-preview';
+  holder.title = 'Open preview';
+  const canvas = document.createElement('canvas');
+  canvas.className = 'entry-thumb-canvas';
+  canvas.width = 30;
+  canvas.height = 30;
+  holder.appendChild(canvas);
+  const cleanedPath = String(pathValue || '').trim().replace(/^"|"$/g, '');
+  if (!cleanedPath) {
+    holder.disabled = true;
+    return holder;
   }
-  row.appendChild(meta);
+  window.c3xManager.getPreview({
+    kind: 'district',
+    c3xPath: state.settings && state.settings.c3xPath,
+    fileName: cleanedPath
+  }).then((res) => {
+    if (!res || !res.ok || !holder.isConnected) return;
+    drawPreviewFrameToCanvas(res, canvas);
+    holder.disabled = false;
+    holder.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      openArtFocusWithPreview(res, cleanedPath, res.sourcePath || cleanedPath);
+    });
+  }).catch(() => {
+    holder.disabled = true;
+  });
+  return holder;
+}
 
-  const values = getFieldValues(section, schemaField.key);
+function getTokenColor(token, fieldKey = '') {
+  const seed = `${String(fieldKey || '').toLowerCase()}|${String(token || '').toLowerCase()}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue} 55% 48%)`;
+}
 
-  if (schemaField.multi || schemaField.type === 'list') {
-    const multiWrap = document.createElement('div');
-    multiWrap.className = 'multi-value-group';
+function getDistrictPreviewSpec(section) {
+  const firstPath = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths'))
+    .map((v) => String(v || '').trim().replace(/^"|"$/g, ''))
+    .find(Boolean);
+  if (!firstPath) return null;
+  const customW = Number.parseInt(getFieldValue(section, 'custom_width') || '', 10);
+  const customH = Number.parseInt(getFieldValue(section, 'custom_height') || '', 10);
+  const cellW = Number.isFinite(customW) && customW > 0 ? customW : 128;
+  const cellH = Number.isFinite(customH) && customH > 0 ? customH : 64;
+  const varyByEra = getFieldValue(section, 'vary_img_by_era') === '1';
+  return { fileName: firstPath, cellW, cellH, varyByEra };
+}
 
-    const list = (schemaField.type === 'list' && !schemaField.multi)
+function findLastNonTransparentDistrictRow(preview, spec) {
+  if (!preview || !preview.ok || !preview.rgbaBase64 || !spec) return 0;
+  const rgba = fromBase64ToUint8(preview.rgbaBase64);
+  const width = Number(preview.width) || 0;
+  const height = Number(preview.height) || 0;
+  if (!width || !height) return 0;
+  const maxRowsFromImage = Math.max(1, Math.floor(height / spec.cellH));
+  const rowsToCheck = spec.varyByEra ? Math.min(4, maxRowsFromImage) : maxRowsFromImage;
+  const sampleW = Math.max(1, Math.min(spec.cellW, width));
+  for (let row = rowsToCheck - 1; row >= 0; row -= 1) {
+    const y0 = row * spec.cellH;
+    const y1 = Math.min(y0 + spec.cellH, height);
+    let hasOpaque = false;
+    for (let y = y0; y < y1 && !hasOpaque; y += 1) {
+      const rowOff = y * width * 4;
+      for (let x = 0; x < sampleW; x += 1) {
+        const alpha = rgba[rowOff + x * 4 + 3];
+        if (alpha > 0) {
+          hasOpaque = true;
+          break;
+        }
+      }
+    }
+    if (hasOpaque) return row;
+  }
+  return 0;
+}
+
+function findRightMostNonTransparentDistrictColumn(preview, spec, row) {
+  if (!preview || !preview.ok || !preview.rgbaBase64 || !spec) return 0;
+  const rgba = fromBase64ToUint8(preview.rgbaBase64);
+  const width = Number(preview.width) || 0;
+  const height = Number(preview.height) || 0;
+  if (!width || !height) return 0;
+  const maxColsFromImage = Math.max(1, Math.floor(width / spec.cellW));
+  const rowIndex = Math.max(0, Number(row) || 0);
+  const y0 = rowIndex * spec.cellH;
+  const y1 = Math.min(y0 + spec.cellH, height);
+  for (let col = maxColsFromImage - 1; col >= 0; col -= 1) {
+    const x0 = col * spec.cellW;
+    const x1 = Math.min(x0 + spec.cellW, width);
+    let hasOpaque = false;
+    for (let y = y0; y < y1 && !hasOpaque; y += 1) {
+      const rowOff = y * width * 4;
+      for (let x = x0; x < x1; x += 1) {
+        const alpha = rgba[rowOff + x * 4 + 3];
+        if (alpha > 0) {
+          hasOpaque = true;
+          break;
+        }
+      }
+    }
+    if (hasOpaque) return col;
+  }
+  return 0;
+}
+
+async function fetchDistrictRepresentativePreview(section) {
+  const spec = getDistrictPreviewSpec(section);
+  if (!spec || !state.settings || !state.settings.c3xPath) return null;
+  const autoKey = JSON.stringify({
+    kind: 'district-representative-auto',
+    c3xPath: state.settings.c3xPath,
+    fileName: spec.fileName,
+    w: spec.cellW,
+    h: spec.cellH,
+    varyByEra: !!spec.varyByEra
+  });
+  const cachedAuto = state.previewCache.get(autoKey) || null;
+  if (cachedAuto) return cachedAuto;
+  if (state.districtRepresentativePreviewPending.has(autoKey)) {
+    return state.districtRepresentativePreviewPending.get(autoKey);
+  }
+  const pending = (async () => {
+  const fullKey = JSON.stringify({
+    kind: 'district-full',
+    c3xPath: state.settings.c3xPath,
+    fileName: spec.fileName
+  });
+  let fullPreview = state.previewCache.get(fullKey) || null;
+  if (!fullPreview) {
+    const full = await window.c3xManager.getPreview({
+      kind: 'district',
+      c3xPath: state.settings.c3xPath,
+      fileName: spec.fileName
+    });
+    if (!full || !full.ok) return null;
+    fullPreview = full;
+    setPreviewCache(fullKey, fullPreview);
+  }
+  const row = findLastNonTransparentDistrictRow(fullPreview, spec);
+  const col = findRightMostNonTransparentDistrictColumn(fullPreview, spec, row);
+  const cropKey = JSON.stringify({
+    kind: 'district-representative',
+    c3xPath: state.settings.c3xPath,
+    fileName: spec.fileName,
+    row,
+    col,
+    w: spec.cellW,
+    h: spec.cellH
+  });
+  const cachedCrop = state.previewCache.get(cropKey) || null;
+  if (cachedCrop) return cachedCrop;
+  const cropped = await window.c3xManager.getPreview({
+    kind: 'district',
+    c3xPath: state.settings.c3xPath,
+    fileName: spec.fileName,
+    crop: { row, col, w: spec.cellW, h: spec.cellH }
+  });
+  if (!cropped || !cropped.ok) return null;
+  setPreviewCache(autoKey, cropped);
+  setPreviewCache(cropKey, cropped);
+  return cropped;
+  })();
+  state.districtRepresentativePreviewPending.set(autoKey, pending);
+  try {
+    return await pending;
+  } finally {
+    state.districtRepresentativePreviewPending.delete(autoKey);
+  }
+}
+
+function loadDistrictRepresentativePreview(section, holder, canvasSize = 28, onLoaded = null) {
+  if (!holder) return;
+  holder.innerHTML = '';
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasSize;
+  canvas.height = canvasSize;
+  canvas.className = 'entry-thumb-canvas';
+  holder.appendChild(canvas);
+  fetchDistrictRepresentativePreview(section)
+    .then((preview) => {
+      if (!preview || !holder.isConnected) return;
+      drawPreviewFrameToCanvas(preview, canvas);
+      if (typeof onLoaded === 'function') onLoaded(preview);
+    })
+    .catch(() => {});
+}
+
+function loadWonderCompletedThumbnail(section, holder, canvasSize = 35) {
+  if (!holder) return;
+  holder.innerHTML = '';
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasSize;
+  canvas.height = canvasSize;
+  canvas.className = 'entry-thumb-canvas';
+  holder.appendChild(canvas);
+  if (!state.settings || !state.settings.c3xPath) return;
+  const fileName = normalizeConfigToken(getFieldValue(section, 'img_path') || 'Wonders.pcx');
+  const row = parseConfigInteger(getFieldValue(section, 'img_row'), 0);
+  const col = parseConfigInteger(getFieldValue(section, 'img_column'), 0);
+  const crop = getCropDimensions(section, { w: 128, h: 64 });
+  const cacheKey = JSON.stringify({
+    kind: 'wonder-list-thumb',
+    c3xPath: state.settings.c3xPath,
+    fileName,
+    row,
+    col,
+    w: crop.w,
+    h: crop.h
+  });
+  const paint = (preview) => {
+    if (!preview) return;
+    drawPreviewFrameToCanvas(preview, canvas);
+  };
+  if (state.previewCache.has(cacheKey)) {
+    paint(state.previewCache.get(cacheKey));
+    return;
+  }
+  window.c3xManager.getPreview({
+    kind: 'wonder',
+    c3xPath: state.settings.c3xPath,
+    fileName,
+    crop: { row, col, w: crop.w, h: crop.h }
+  }).then((res) => {
+    if (!res || !res.ok) return;
+    setPreviewCache(cacheKey, res);
+    paint(res);
+  }).catch(() => {});
+}
+
+function loadNaturalWonderThumbnail(section, holder, canvasSize = 35) {
+  if (!holder) return;
+  holder.innerHTML = '';
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasSize;
+  canvas.height = canvasSize;
+  canvas.className = 'entry-thumb-canvas';
+  holder.appendChild(canvas);
+  if (!state.settings || !state.settings.c3xPath) return;
+  const fileName = normalizeConfigToken(getFieldValue(section, 'img_path') || '');
+  if (!fileName) return;
+  const row = parseConfigInteger(getFieldValue(section, 'img_row'), 0);
+  const col = parseConfigInteger(getFieldValue(section, 'img_column'), 0);
+  const crop = getCropDimensions(section, { w: 128, h: 88 });
+  const cacheKey = JSON.stringify({
+    kind: 'natural-wonder-list-thumb',
+    c3xPath: state.settings.c3xPath,
+    fileName,
+    row,
+    col,
+    w: crop.w,
+    h: crop.h
+  });
+  const paint = (preview) => {
+    if (!preview) return;
+    drawPreviewFrameToCanvas(preview, canvas);
+  };
+  if (state.previewCache.has(cacheKey)) {
+    paint(state.previewCache.get(cacheKey));
+    return;
+  }
+  window.c3xManager.getPreview({
+    kind: 'naturalWonder',
+    c3xPath: state.settings.c3xPath,
+    fileName,
+    crop: { row, col, w: crop.w, h: crop.h }
+  }).then((res) => {
+    if (!res || !res.ok) return;
+    setPreviewCache(cacheKey, res);
+    paint(res);
+  }).catch(() => {});
+}
+
+function renderDistrictRepresentativePreviewCard(section, previewWrap, titleForFocus = 'District Art') {
+  if (!previewWrap) return;
+  const card = document.createElement('div');
+  card.className = 'preview-card district-representative-preview-card';
+  const frame = document.createElement('div');
+  frame.className = 'section-art-soft-frame';
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 64;
+  canvas.className = 'preview-canvas';
+  canvas.style.width = `${state.previewSize}px`;
+  canvas.style.height = 'auto';
+  frame.appendChild(canvas);
+  card.appendChild(frame);
+  previewWrap.appendChild(card);
+  let loadedPreview = null;
+  fetchDistrictRepresentativePreview(section)
+    .then((preview) => {
+      if (!preview || !canvas.isConnected) return;
+      loadedPreview = preview;
+      canvas.width = preview.width;
+      canvas.height = preview.height;
+      drawPreviewFrameToCanvas(preview, canvas);
+    })
+    .catch(() => {});
+  card.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    if (!loadedPreview) return;
+    openArtFocusWithPreview(loadedPreview, titleForFocus, loadedPreview.sourcePath || '');
+  });
+}
+
+function normalizeOptionLookupToken(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function findTerrainPreviewEntry(optionName) {
+  const token = normalizeOptionLookupToken(optionName);
+  if (!token) return null;
+  const terrainTab = state.bundle && state.bundle.tabs && state.bundle.tabs.terrain;
+  const pedia = terrainTab && terrainTab.civilopedia;
+  if (!pedia) return null;
+  const pools = [
+    { tabKey: 'terrainPedia', entries: (pedia.terrain && pedia.terrain.entries) || [] },
+    { tabKey: 'workerActions', entries: (pedia.workerActions && pedia.workerActions.entries) || [] }
+  ];
+  for (const pool of pools) {
+    const hit = pool.entries.find((entry) => {
+      const name = normalizeOptionLookupToken(entry && entry.name);
+      const key = normalizeOptionLookupToken(entry && entry.civilopediaKey);
+      return name === token
+        || key === token
+        || (name && (name.includes(token) || token.includes(name)))
+        || (key && (key.includes(token) || token.includes(key)));
+    });
+    if (hit) return { tabKey: pool.tabKey, entry: hit };
+  }
+  return null;
+}
+
+function makeTerrainOptionPreviewIcon(optionName) {
+  const holder = document.createElement('span');
+  holder.className = 'terrain-option-chip-thumb';
+  const found = findTerrainPreviewEntry(optionName);
+  if (!found) return holder;
+  loadReferenceListThumbnail(found.tabKey, found.entry, holder);
+  return holder;
+}
+
+function findDistrictSectionByName(name) {
+  const target = normalizeConfigToken(name).toLowerCase();
+  if (!target) return null;
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.districts;
+  if (!tab || !tab.model || !Array.isArray(tab.model.sections)) return null;
+  return tab.model.sections.find((section, index) => {
+    const internalName = normalizeConfigToken(getFieldValue(section, 'name')).toLowerCase();
+    const displayName = normalizeConfigToken(getDistrictSectionDisplay(section, index).primary).toLowerCase();
+    return internalName === target || displayName === target;
+  }) || null;
+}
+
+function makeDistrictOptionPreviewIcon(optionName) {
+  const holder = document.createElement('span');
+  holder.className = 'terrain-option-chip-thumb district-option-chip-thumb';
+  const section = findDistrictSectionByName(optionName);
+  if (!section) return holder;
+  loadDistrictRepresentativePreview(section, holder, 14);
+  return holder;
+}
+
+function findNaturalWonderSectionByName(name) {
+  const target = normalizeConfigToken(name);
+  if (!target) return null;
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.naturalWonders;
+  if (!tab || !tab.model || !Array.isArray(tab.model.sections)) return null;
+  return tab.model.sections.find((section) => normalizeConfigToken(getFieldValue(section, 'name')) === target) || null;
+}
+
+function buildNaturalWonderChipButton(name, selected, onToggle) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'segmented-multi-btn natural-wonder-chip';
+  btn.classList.toggle('active', !!selected);
+  const thumb = document.createElement('span');
+  thumb.className = 'natural-wonder-chip-thumb';
+  const text = document.createElement('span');
+  text.textContent = name;
+  btn.appendChild(thumb);
+  btn.appendChild(text);
+  btn.addEventListener('click', () => onToggle());
+  const section = findNaturalWonderSectionByName(name);
+  if (!section) return btn;
+  const fileName = normalizeConfigToken(getFieldValue(section, 'img_path'));
+  const row = parseConfigInteger(getFieldValue(section, 'img_row'), 0);
+  const col = parseConfigInteger(getFieldValue(section, 'img_column'), 0);
+  window.c3xManager.getPreview({
+    kind: 'naturalWonder',
+    c3xPath: state.settings && state.settings.c3xPath,
+    fileName,
+    crop: { row, col, w: 128, h: 88 }
+  }).then((res) => {
+    if (!res || !res.ok || !thumb.isConnected) return;
+    const canvas = document.createElement('canvas');
+    canvas.className = 'entry-thumb-canvas';
+    canvas.width = 24;
+    canvas.height = 24;
+    drawPreviewFrameToCanvas(res, canvas);
+    thumb.innerHTML = '';
+    thumb.appendChild(canvas);
+  }).catch(() => {});
+  return btn;
+}
+
+function renderNaturalWonderPrereqEditor(options, values, onValuesChange) {
+  const wrap = document.createElement('div');
+  wrap.className = 'segmented-multi-list';
+  const optionList = Array.isArray(options) ? options.map((opt) => String(opt || '').trim()).filter(Boolean) : [];
+  const selectedValues = (Array.isArray(values) ? values : []).map((v) => String(v || '').trim()).filter(Boolean);
+  const optionSet = new Set(optionList);
+  selectedValues.forEach((value) => optionSet.add(value));
+  const merged = Array.from(optionSet);
+  const selected = new Set(selectedValues);
+  merged.forEach((name) => {
+    const btn = buildNaturalWonderChipButton(name, selected.has(name), () => {
+      if (selected.has(name)) selected.delete(name);
+      else selected.add(name);
+      btn.classList.toggle('active', selected.has(name));
+      if (onValuesChange) onValuesChange(merged.filter((entry) => selected.has(entry)));
+    });
+    wrap.appendChild(btn);
+  });
+  return wrap;
+}
+
+function renderDistrictImagePathsEditor(section, onValueChange) {
+  const wrap = document.createElement('div');
+  wrap.className = 'district-image-paths-wrap';
+  const rawValues = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths')).map((v) => String(v || '').trim());
+  const expectedCount = getExpectedDistrictImagePathCount(section, rawValues);
+  const cultureSlots = ['American', 'European', 'Roman', 'Mideast', 'Asian'];
+  const coastalSlots = ['NW', 'NE', 'SE', 'SW'];
+
+  const commit = (values) => {
+    const cleaned = (Array.isArray(values) ? values : []).map((v) => String(v || '').trim()).filter(Boolean);
+    setSingleFieldValue(section, 'img_paths', cleaned.join(', '));
+    if (onValueChange) onValueChange('img_paths', cleaned.join(', '));
+  };
+
+  if (expectedCount > 1) {
+    const grid = document.createElement('div');
+    grid.className = 'district-image-grid vertical';
+    for (let i = 0; i < expectedCount; i += 1) {
+      const cell = document.createElement('div');
+      cell.className = 'district-image-cell';
+      const title = document.createElement('div');
+      title.className = 'district-image-cell-title';
+      if (expectedCount === 5) title.textContent = cultureSlots[i] || `Path ${i + 1}`;
+      else if (expectedCount === 4) title.textContent = coastalSlots[i] || `Path ${i + 1}`;
+      else title.textContent = `Path ${i + 1}`;
+      const row = document.createElement('div');
+      row.className = 'district-image-row';
+      const current = rawValues[i] || '';
+      const fileName = document.createElement('div');
+      fileName.className = 'district-image-file-name';
+      fileName.textContent = current ? getPathTail(current) : '(not set)';
+      fileName.title = current || '(not set)';
+      const preview = makeDistrictImagePathPreview(current);
+      preview.classList.add('inline-path-preview-inline');
+      const browse = document.createElement('button');
+      browse.type = 'button';
+      browse.textContent = 'Browse';
+      browse.addEventListener('click', async () => {
+        const filePath = await window.c3xManager.pickFile(getFilePickerOptionsForSectionField({ key: 'img_paths' }, current));
+        if (!filePath) return;
+        const next = rawValues.slice(0, expectedCount);
+        while (next.length < expectedCount) next.push('');
+        next[i] = filePath;
+        commit(next);
+        renderActiveTab({ preserveTabScroll: true });
+      });
+      const actions = document.createElement('div');
+      actions.className = 'district-image-actions';
+      actions.appendChild(browse);
+      row.appendChild(preview);
+      row.appendChild(fileName);
+      row.appendChild(actions);
+      cell.appendChild(title);
+      cell.appendChild(row);
+      grid.appendChild(cell);
+    }
+    wrap.appendChild(grid);
+    return wrap;
+  }
+
+  const table = document.createElement('div');
+  table.className = 'district-image-table';
+  const current = rawValues[0] || '';
+  const row = document.createElement('div');
+  row.className = 'district-image-row';
+  const fileName = document.createElement('div');
+  fileName.className = 'district-image-file-name';
+  fileName.textContent = current ? getPathTail(current) : '(not set)';
+  fileName.title = current || '(not set)';
+  const preview = makeDistrictImagePathPreview(current);
+  preview.classList.add('inline-path-preview-inline');
+  const browse = document.createElement('button');
+  browse.type = 'button';
+  browse.textContent = 'Browse';
+  browse.addEventListener('click', async () => {
+    const filePath = await window.c3xManager.pickFile(getFilePickerOptionsForSectionField({ key: 'img_paths' }, current));
+    if (!filePath) return;
+    commit([filePath]);
+    renderActiveTab({ preserveTabScroll: true });
+  });
+  const actions = document.createElement('div');
+  actions.className = 'district-image-actions';
+  actions.appendChild(browse);
+  row.appendChild(preview);
+  row.appendChild(fileName);
+  row.appendChild(actions);
+  table.appendChild(row);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
+  const dynamicOptions = getDynamicSectionFieldOptions(state.activeTab, schemaField, section);
+  const effectiveOptions = dynamicOptions.length > 0 ? dynamicOptions : (schemaField.options || []);
+  const effectiveField = effectiveOptions === schemaField.options
+    ? schemaField
+    : { ...schemaField, options: effectiveOptions };
+  const refTabKey = getReferenceTabForSectionField(state.activeTab, effectiveField.key);
+
+  const row = document.createElement('div');
+  row.className = 'rule-row section-rule-row';
+
+  const labelWrap = document.createElement('div');
+  labelWrap.className = 'section-rule-label';
+  const label = document.createElement('label');
+  label.className = 'field-label section-rule-title';
+  label.textContent = effectiveField.label + (effectiveField.required ? ' *' : '');
+  labelWrap.appendChild(label);
+
+  const tooltipLines = [formatSourceInfo(getSectionTabSourceMeta(state.bundle && state.bundle.tabs[state.activeTab]), 'C3X Config')];
+  tooltipLines.push(`Field: ${effectiveField.label}`);
+  tooltipLines.push(`Key: ${effectiveField.key}`);
+  const fullDesc = getSectionFieldDescription(state.activeTab, effectiveField, fieldDocs);
+  if (fullDesc) tooltipLines.push(`Notes: ${fullDesc}`);
+  const tooltip = withFieldHelp(tooltipLines.join('\n'), { tabKey: state.activeTab, fieldKey: effectiveField.key });
+  attachRichTooltip(labelWrap, tooltip);
+  row.appendChild(labelWrap);
+
+  const controlWrap = document.createElement('div');
+  controlWrap.className = 'rule-control section-rule-control';
+
+  const values = getFieldValues(section, effectiveField.key);
+  const serializeListValues = (nextValues) => {
+    const cleaned = (Array.isArray(nextValues) ? nextValues : []).map((v) => String(v || '').trim()).filter(Boolean);
+    if (effectiveField.type === 'list' && !effectiveField.multi) {
+      setSingleFieldValue(section, effectiveField.key, cleaned.join(', '));
+    } else {
+      setMultiFieldValues(section, effectiveField.key, cleaned);
+    }
+    if (onValueChange) onValueChange(effectiveField.key, cleaned.join(', '));
+  };
+
+  if (effectiveField.multi || effectiveField.type === 'list') {
+    const list = (effectiveField.type === 'list' && !effectiveField.multi)
       ? (values[0] ? tokenizeListPreservingQuotes(values[0]) : [''])
       : (values.length > 0 ? values : ['']);
+
+    if (refTabKey) {
+      const refOptions = getReferenceOptionsForSectionField(state.activeTab, effectiveField.key);
+      const editor = makeNamedListPickerEditor({
+        tabKey: refTabKey,
+        options: refOptions,
+        values: list.filter(Boolean),
+        onValuesChange: (nextValues) => serializeListValues(nextValues)
+      });
+      controlWrap.appendChild(editor);
+      row.appendChild(controlWrap);
+      return row;
+    }
+
+    if (effectiveField.options && effectiveField.options.length > 0) {
+      if (effectiveField.key === 'natural_wonder_prereqs') {
+        const chips = renderNaturalWonderPrereqEditor(effectiveField.options, list.filter(Boolean), (nextValues) => {
+          serializeListValues(nextValues);
+        });
+        controlWrap.appendChild(chips);
+        row.appendChild(controlWrap);
+        return row;
+      }
+      const noColorIconKeys = new Set(['buildable_on_districts', 'buildable_adjacent_to_districts']);
+      const terrainPreviewIconKeys = new Set([
+        'buildable_on',
+        'buildable_on_overlays',
+        'buildable_without_removal',
+        'buildable_adjacent_to',
+        'buildable_adjacent_to_overlays'
+      ]);
+      const districtPreviewIconKeys = new Set(['buildable_on_districts', 'buildable_adjacent_to_districts']);
+      const chips = makeSegmentedMultiValueEditor(effectiveField.options, list.filter(Boolean), (nextValues) => {
+        serializeListValues(nextValues);
+      }, effectiveField.key, {
+        showTokenIcon: !noColorIconKeys.has(effectiveField.key),
+        iconRenderer: terrainPreviewIconKeys.has(effectiveField.key)
+          ? ((optionName) => makeTerrainOptionPreviewIcon(optionName))
+          : (districtPreviewIconKeys.has(effectiveField.key) ? ((optionName) => makeDistrictOptionPreviewIcon(optionName)) : null)
+      });
+      controlWrap.appendChild(chips);
+      row.appendChild(controlWrap);
+      return row;
+    }
+
+    if (state.activeTab === 'districts' && effectiveField.key === 'img_paths') {
+      controlWrap.appendChild(renderDistrictImagePathsEditor(section, onValueChange));
+      row.appendChild(controlWrap);
+      return row;
+    }
+
+    const multiWrap = document.createElement('div');
+    multiWrap.className = 'multi-value-group';
     list.forEach((current, idx) => {
       const line = document.createElement('div');
       line.className = 'kv-row compact';
 
-      let input;
-      if (schemaField.options && schemaField.options.length > 0) {
-        input = document.createElement('select');
-        const empty = document.createElement('option');
-        empty.value = '';
-        empty.textContent = '(not set)';
-        input.appendChild(empty);
-        schemaField.options.forEach((opt) => {
-          const o = document.createElement('option');
-          o.value = opt;
-          o.textContent = opt;
-          input.appendChild(o);
-        });
-        input.value = current || '';
-      } else {
-        input = document.createElement('input');
-        input.type = 'text';
-        input.placeholder = 'item';
-        input.value = current;
-      }
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'item';
+      input.value = current;
       input.addEventListener('input', () => {
         const next = [...list];
         next[idx] = input.value;
-        if (schemaField.type === 'list' && !schemaField.multi)
-          setSingleFieldValue(section, schemaField.key, next.join(', '));
-        else
-          setMultiFieldValues(section, schemaField.key, next);
-        if (onValueChange) onValueChange(schemaField.key, next.join(', '));
+        serializeListValues(next);
       });
+      line.appendChild(input);
 
-      const del = document.createElement('button');
-      withRemoveIcon(del, ' Remove');
-        del.addEventListener('click', () => {
-          const next = [...list];
-          next.splice(idx, 1);
-        if (schemaField.type === 'list' && !schemaField.multi)
-          setSingleFieldValue(section, schemaField.key, next.join(', '));
-        else
-          setMultiFieldValues(section, schemaField.key, next);
-        renderActiveTab();
-      });
-
-      if (schemaField.key.includes('path') && !schemaField.options) {
+      const keyLower = String(effectiveField.key || '').toLowerCase();
+      const isPathLikeMultiField = keyLower.includes('path') || keyLower.includes('file');
+      if (isPathLikeMultiField) {
+        line.classList.add('section-list-line');
+        if (state.activeTab === 'districts' && keyLower === 'img_paths') {
+          line.appendChild(makeDistrictImagePathPreview(current));
+        }
         const browse = document.createElement('button');
-        browse.textContent = '...';
+        browse.textContent = 'Browse';
         browse.type = 'button';
         browse.addEventListener('click', async () => {
-          const filePath = await window.c3xManager.pickFile();
+          const pickerOptions = getFilePickerOptionsForSectionField(effectiveField, input.value);
+          const filePath = await window.c3xManager.pickFile(pickerOptions);
           if (!filePath) return;
           input.value = filePath;
           const next = [...list];
           next[idx] = filePath;
-          setMultiFieldValues(section, schemaField.key, next);
+          serializeListValues(next);
+          renderActiveTab({ preserveTabScroll: true });
         });
-        line.appendChild(input);
         line.appendChild(browse);
-      } else {
-        line.appendChild(input);
       }
+
+      const del = document.createElement('button');
+      withRemoveIcon(del, ' Remove');
+      del.addEventListener('click', () => {
+        const next = [...list];
+        next.splice(idx, 1);
+        serializeListValues(next);
+        renderActiveTab({ preserveTabScroll: true });
+      });
       line.appendChild(del);
       multiWrap.appendChild(line);
     });
@@ -9414,23 +10538,21 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
     add.textContent = 'Add Item';
     add.addEventListener('click', () => {
       const next = [...list, ''];
-      if (schemaField.type === 'list' && !schemaField.multi)
-        setSingleFieldValue(section, schemaField.key, next.join(', '));
-      else
-        setMultiFieldValues(section, schemaField.key, next);
-      renderActiveTab();
+      serializeListValues(next);
+      renderActiveTab({ preserveTabScroll: true });
     });
-
-    row.appendChild(multiWrap);
-    row.appendChild(add);
+    multiWrap.appendChild(add);
+    controlWrap.appendChild(multiWrap);
+    row.appendChild(controlWrap);
     return row;
   }
 
-  const input = createFieldInput(schemaField, values[0] || '', (newValue) => {
-    setSingleFieldValue(section, schemaField.key, String(newValue || '').trim());
-    if (onValueChange) onValueChange(schemaField.key, String(newValue || '').trim());
+  const input = createFieldInput(effectiveField, values[0] || '', (newValue) => {
+    setSingleFieldValue(section, effectiveField.key, String(newValue || '').trim());
+    if (onValueChange) onValueChange(effectiveField.key, String(newValue || '').trim());
   });
-  row.appendChild(input);
+  controlWrap.appendChild(input);
+  row.appendChild(controlWrap);
 
   return row;
 }
@@ -9578,20 +10700,60 @@ function renderSectionTab(tab, tabKey) {
 
   const listPane = document.createElement('div');
   listPane.className = 'entry-list-pane';
-  listPane.scrollTop = state.sectionListScrollTop[tabKey] || 0;
+  const savedListTop = state.sectionListScrollTop[tabKey] || 0;
   listPane.addEventListener('scroll', () => {
     state.sectionListScrollTop[tabKey] = listPane.scrollTop;
   });
   const sectionNeedle = String(state.sectionFilter[tabKey] || '').trim().toLowerCase();
-  tab.model.sections.forEach((section, sectionIndex) => {
-    const sectionTitle = getSectionTitle(section, schema, sectionIndex);
-    if (sectionNeedle && !String(sectionTitle).toLowerCase().includes(sectionNeedle)) return;
+  const sectionEntries = tab.model.sections
+    .map((section, sectionIndex) => {
+      const sectionTitle = getSectionTitle(section, schema, sectionIndex);
+      const districtDisplay = tabKey === 'districts' ? getDistrictSectionDisplay(section, sectionIndex) : null;
+      const sortLabel = tabKey === 'districts'
+        ? String(districtDisplay && districtDisplay.primary || sectionTitle || '').trim()
+        : String(sectionTitle || '').trim();
+      return { section, sectionIndex, sectionTitle, districtDisplay, sortLabel };
+    })
+    .filter(({ sectionTitle, districtDisplay }) => {
+      const districtHay = districtDisplay ? `${districtDisplay.primary} ${districtDisplay.secondary} ${districtDisplay.tooltip}`.toLowerCase() : '';
+      if (!sectionNeedle) return true;
+      return String(sectionTitle).toLowerCase().includes(sectionNeedle)
+        || (districtHay && districtHay.includes(sectionNeedle));
+    })
+    .sort((a, b) => String(a.sortLabel || '').localeCompare(String(b.sortLabel || ''), 'en', { sensitivity: 'base' }));
+  sectionEntries.forEach(({ section, sectionIndex, sectionTitle, districtDisplay }) => {
     const itemBtn = document.createElement('button');
-    itemBtn.className = 'entry-list-item no-thumb';
+    const showSectionThumb = tabKey === 'districts' || tabKey === 'wonders' || tabKey === 'naturalWonders';
+    itemBtn.className = showSectionThumb ? 'entry-list-item district-entry-item' : 'entry-list-item no-thumb';
+    if (tabKey === 'wonders' || tabKey === 'naturalWonders') {
+      itemBtn.classList.add('section-entry-item-large-thumb');
+    }
     itemBtn.dataset.index = String(sectionIndex);
     itemBtn.classList.toggle('active', sectionIndex === selectedIndex);
     itemBtn.type = 'button';
-    itemBtn.innerHTML = `<strong>${sectionTitle}</strong>`;
+    if (tabKey === 'districts') {
+      const thumb = document.createElement('span');
+      thumb.className = 'entry-thumb district-entry-thumb';
+      itemBtn.appendChild(thumb);
+      loadDistrictRepresentativePreview(section, thumb, 35);
+      const primary = document.createElement('strong');
+      primary.className = 'district-entry-primary';
+      primary.textContent = districtDisplay.primary;
+      itemBtn.appendChild(primary);
+      attachRichTooltip(
+        itemBtn,
+        `${formatSourceInfo(getSectionTabSourceMeta(tab), 'C3X Config')}\nDisplay Name: ${districtDisplay.primary}\nInternal Name: ${districtDisplay.secondary || '(same as display)'}\nTooltip: ${districtDisplay.tooltip || '(not set)'}`
+      );
+    } else if (tabKey === 'wonders' || tabKey === 'naturalWonders') {
+      const thumb = document.createElement('span');
+      thumb.className = 'entry-thumb district-entry-thumb section-entry-thumb-large';
+      itemBtn.appendChild(thumb);
+      if (tabKey === 'wonders') loadWonderCompletedThumbnail(section, thumb, 44);
+      else loadNaturalWonderThumbnail(section, thumb, 44);
+      itemBtn.insertAdjacentHTML('beforeend', `<strong>${sectionTitle}</strong>`);
+    } else {
+      itemBtn.innerHTML = `<strong>${sectionTitle}</strong>`;
+    }
     if (isSectionItemDirty(tabKey, sectionIndex, section)) {
       appendDirtyBadge(itemBtn, `${getSectionTitle(section, schema, sectionIndex)} has unsaved edits`);
     }
@@ -9599,6 +10761,8 @@ function renderSectionTab(tab, tabKey) {
       state.tabContentScrollTop = el.tabContent.scrollTop;
     });
     itemBtn.addEventListener('click', () => {
+      listPane.querySelectorAll('.entry-list-item.active').forEach((elNode) => elNode.classList.remove('active'));
+      itemBtn.classList.add('active');
       navigateWithHistory(() => {
         state.tabContentScrollTop = el.tabContent.scrollTop;
         state.sectionListScrollTop[tabKey] = listPane.scrollTop;
@@ -9616,7 +10780,7 @@ function renderSectionTab(tab, tabKey) {
 
   const detailPane = document.createElement('div');
   detailPane.className = 'entry-detail-pane';
-  detailPane.scrollTop = state.sectionDetailScrollTop[tabKey] || 0;
+  const savedDetailTop = state.sectionDetailScrollTop[tabKey] || 0;
   detailPane.addEventListener('scroll', () => {
     state.sectionDetailScrollTop[tabKey] = detailPane.scrollTop;
   });
@@ -9634,11 +10798,28 @@ function renderSectionTab(tab, tabKey) {
     const section = tab.model.sections[selectedIndex];
     const card = document.createElement('div');
     card.className = 'section-card';
+    if (tabKey === 'districts') card.classList.add('district-detail-card');
     card.style.setProperty('--preview-size', `${state.previewSize}px`);
 
+    const districtDisplay = tabKey === 'districts' ? getDistrictSectionDisplay(section, selectedIndex) : null;
     const top = document.createElement('div');
     top.className = 'section-top';
-    top.innerHTML = `<strong>${getSectionTitle(section, schema, selectedIndex)}</strong>`;
+    const topTitle = document.createElement('strong');
+    let topHint = null;
+    topTitle.textContent = tabKey === 'districts'
+      ? districtDisplay.primary
+      : getSectionTitle(section, schema, selectedIndex);
+    top.appendChild(topTitle);
+    if (tabKey === 'districts') {
+      topHint = document.createElement('span');
+      topHint.className = 'hint';
+      topHint.textContent = districtDisplay.secondary || districtDisplay.tooltip || '';
+      if (topHint.textContent) top.appendChild(topHint);
+      attachRichTooltip(
+        top,
+        `${formatSourceInfo(getSectionTabSourceMeta(tab), 'C3X Config')}\nDisplay Name: ${districtDisplay.primary}\nInternal Name: ${districtDisplay.secondary || '(same as display)'}\nTooltip: ${districtDisplay.tooltip || '(not set)'}`
+      );
+    }
 
     const removeSectionBtn = document.createElement('button');
     withRemoveIcon(removeSectionBtn, ` Remove ${schema.entityName}`);
@@ -9651,50 +10832,71 @@ function renderSectionTab(tab, tabKey) {
     });
     top.appendChild(removeSectionBtn);
     card.appendChild(top);
-
-    const previewTools = document.createElement('div');
-    previewTools.className = 'preview-tools';
-    const sizeLabel = document.createElement('label');
-    sizeLabel.className = 'preview-size-label';
-    sizeLabel.textContent = 'Preview Size';
-    const sizeValue = document.createElement('span');
-    sizeValue.className = 'preview-size-value';
-    sizeValue.textContent = `${state.previewSize}px`;
-    const sizeSlider = document.createElement('input');
-    sizeSlider.type = 'range';
-    sizeSlider.min = '120';
-    sizeSlider.max = '420';
-    sizeSlider.step = '10';
-    sizeSlider.value = String(state.previewSize);
-    sizeSlider.addEventListener('input', () => {
-      state.previewSize = Number.parseInt(sizeSlider.value, 10) || 220;
-      sizeValue.textContent = `${state.previewSize}px`;
-      card.style.setProperty('--preview-size', `${state.previewSize}px`);
-      card.querySelectorAll('canvas.preview-canvas').forEach((c) => {
-        c.style.width = `${state.previewSize}px`;
-        c.style.height = 'auto';
-      });
-    });
-    previewTools.appendChild(sizeLabel);
-    previewTools.appendChild(sizeSlider);
-    previewTools.appendChild(sizeValue);
-    card.appendChild(previewTools);
-
-    const previewWrap = document.createElement('div');
-    previewWrap.className = 'preview-wrap';
-    card.appendChild(previewWrap);
-    const refreshPreviews = () => {
-      const scopedKey = JSON.stringify({ tabKey, section: section.fields });
-      for (const key of Array.from(state.previewCache.keys())) {
-        if (key.includes(`\"tabKey\":\"${tabKey}\"`)) {
-          state.previewCache.delete(key);
-        }
+    if (tabKey === 'districts') {
+      const districtValidationError = validateDistrictSection(section, selectedIndex);
+      if (districtValidationError) {
+        const warn = document.createElement('p');
+        warn.className = 'warning';
+        warn.textContent = districtValidationError;
+        card.appendChild(warn);
       }
-      void scopedKey;
-      previewWrap.innerHTML = '';
-      loadPreviewsForSection(tabKey, section, previewWrap);
-    };
-    refreshPreviews();
+    }
+
+    const refreshPreviews = (() => {
+      const previewWrap = document.createElement('div');
+      previewWrap.className = 'preview-wrap';
+      card.appendChild(previewWrap);
+      if (tabKey === 'districts') {
+        const refreshDistrict = () => {
+          previewWrap.innerHTML = '';
+          renderDistrictRepresentativePreviewCard(section, previewWrap, `${districtDisplay.primary} Art`);
+        };
+        refreshDistrict();
+        return refreshDistrict;
+      }
+      if (tabKey === 'animations') {
+        const previewTools = document.createElement('div');
+        previewTools.className = 'preview-tools';
+        const sizeLabel = document.createElement('label');
+        sizeLabel.className = 'preview-size-label';
+        sizeLabel.textContent = 'Preview Size';
+        const sizeValue = document.createElement('span');
+        sizeValue.className = 'preview-size-value';
+        sizeValue.textContent = `${state.previewSize}px`;
+        const sizeSlider = document.createElement('input');
+        sizeSlider.type = 'range';
+        sizeSlider.min = '120';
+        sizeSlider.max = '420';
+        sizeSlider.step = '10';
+        sizeSlider.value = String(state.previewSize);
+        sizeSlider.addEventListener('input', () => {
+          state.previewSize = Number.parseInt(sizeSlider.value, 10) || 220;
+          sizeValue.textContent = `${state.previewSize}px`;
+          card.style.setProperty('--preview-size', `${state.previewSize}px`);
+          card.querySelectorAll('canvas.preview-canvas').forEach((c) => {
+            c.style.width = `${state.previewSize}px`;
+            c.style.height = 'auto';
+          });
+        });
+        previewTools.appendChild(sizeLabel);
+        previewTools.appendChild(sizeSlider);
+        previewTools.appendChild(sizeValue);
+        card.insertBefore(previewTools, previewWrap);
+      }
+      const refresh = () => {
+        const scopedKey = JSON.stringify({ tabKey, section: section.fields });
+        for (const key of Array.from(state.previewCache.keys())) {
+          if (key.includes(`\"tabKey\":\"${tabKey}\"`)) {
+            state.previewCache.delete(key);
+          }
+        }
+        void scopedKey;
+        previewWrap.innerHTML = '';
+        loadPreviewsForSection(tabKey, section, previewWrap);
+      };
+      refresh();
+      return refresh;
+    })();
 
     const previewFieldKeysByTab = {
       districts: new Set(['img_paths', 'custom_width', 'custom_height']),
@@ -9706,7 +10908,9 @@ function renderSectionTab(tab, tabKey) {
 
     const form = document.createElement('div');
     form.className = 'form-grid';
-    schema.fields.forEach((schemaField) => {
+    const orderedSchemaFields = orderSectionFieldsByDocs(schema.fields, tab.fieldDocs);
+    orderedSchemaFields
+      .forEach((schemaField) => {
       form.appendChild(renderKnownField(section, schemaField, tab.fieldDocs, (key, value) => {
         if (key === schema.titleKey) {
           const titleEl = listPane.querySelector(`.entry-list-item[data-index="${selectedIndex}"] strong`);
@@ -9714,19 +10918,60 @@ function renderSectionTab(tab, tabKey) {
             titleEl.textContent = value || `${schema.entityName}`;
           }
         }
+        if (tabKey === 'districts' && (key === 'name' || key === 'display_name' || key === 'tooltip')) {
+          const listItem = listPane.querySelector(`.entry-list-item[data-index="${selectedIndex}"]`);
+          const nextDisplay = getDistrictSectionDisplay(section, selectedIndex);
+          if (listItem) {
+            const primary = listItem.querySelector('.district-entry-primary');
+            if (primary) primary.textContent = nextDisplay.primary;
+          }
+          topTitle.textContent = nextDisplay.primary;
+          if (topHint) {
+            topHint.textContent = nextDisplay.secondary || nextDisplay.tooltip || '';
+            topHint.classList.toggle('hidden', !topHint.textContent);
+          }
+        }
+        if (tabKey === 'districts' && key === 'vary_img_by_culture') {
+          const existing = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths')).map((v) => String(v || '').trim()).filter(Boolean);
+          const expectedCount = getExpectedDistrictImagePathCount(section, existing);
+          const next = existing.slice(0, expectedCount);
+          while (next.length < expectedCount) next.push('');
+          setSingleFieldValue(section, 'img_paths', next.join(', '));
+          renderActiveTab({ preserveTabScroll: true });
+          return;
+        }
+        if (tabKey === 'districts' && key === 'align_to_coast') {
+          const existing = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths')).map((v) => String(v || '').trim()).filter(Boolean);
+          const expectedCount = getExpectedDistrictImagePathCount(section, existing);
+          const next = existing.slice(0, expectedCount);
+          while (next.length < expectedCount) next.push('');
+          setSingleFieldValue(section, 'img_paths', next.join(', '));
+          renderActiveTab({ preserveTabScroll: true });
+          return;
+        }
+        if (tabKey === 'districts' && key === 'vary_img_by_era') {
+          renderActiveTab({ preserveTabScroll: true });
+          return;
+        }
         if (previewFields.has(key)) {
           refreshPreviews();
         }
         setDirty(true);
       }));
-    });
+      });
     card.appendChild(form);
-    card.appendChild(renderAdvancedFields(section, schemaKeys));
+    if (tabKey !== 'districts') {
+      card.appendChild(renderAdvancedFields(section, schemaKeys));
+    }
     detailPane.appendChild(card);
   }
 
   layout.appendChild(detailPane);
   wrap.appendChild(layout);
+  window.requestAnimationFrame(() => {
+    listPane.scrollTop = savedListTop;
+    detailPane.scrollTop = savedDetailTop;
+  });
 
   if (isScenarioMode()) {
     const warning = document.createElement('p');
@@ -9863,6 +11108,9 @@ async function loadBundleAndRender(options = {}) {
       civ3Path: state.settings.civ3Path,
       scenarioPath: state.settings.scenarioPath
     });
+    if (bundle && bundle.tabs && bundle.tabs.districts && bundle.tabs.districts.model && Array.isArray(bundle.tabs.districts.model.sections)) {
+      applySpecialDistrictDefaultsToSections(bundle.tabs.districts.model.sections);
+    }
 
     const previousActiveTab = state.activeTab;
     const shouldUsePersistedView = options && options.usePersistedView === true;
@@ -9932,6 +11180,12 @@ async function loadBundleAndRender(options = {}) {
 async function saveCurrentBundle() {
   if (!state.bundle) {
     setStatus('Load configs before saving.', true);
+    return false;
+  }
+  const validationError = getSectionValidationError();
+  if (validationError) {
+    setStatus(`Save blocked: ${validationError}`, true);
+    refreshDirtyUi();
     return false;
   }
 
