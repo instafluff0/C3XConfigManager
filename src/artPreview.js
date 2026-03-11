@@ -34,7 +34,7 @@ function fileExists(p) {
   }
 }
 
-function decodePcx(filePath) {
+function decodePcx(filePath, options = {}) {
   const b = fs.readFileSync(filePath);
   if (b.length < 128) throw new Error('PCX too small');
   if (b[0] !== 10) throw new Error('Not a PCX file');
@@ -85,14 +85,20 @@ function decodePcx(filePath) {
     }
   }
 
+  const transparentIndexes = Array.isArray(options.transparentIndexes)
+    ? options.transparentIndexes
+      .map((v) => Number.parseInt(v, 10))
+      .filter((v) => Number.isFinite(v) && v >= 0 && v <= 255)
+    : [254, 255];
+  const transparentSet = new Set(transparentIndexes);
   const rgba = new Uint8Array(width * height * 4);
   for (let i = 0; i < indices.length; i += 1) {
     const idx = indices[i];
     rgba[i * 4] = palette[idx * 3];
     rgba[i * 4 + 1] = palette[idx * 3 + 1];
     rgba[i * 4 + 2] = palette[idx * 3 + 2];
-    // Civ3 convention: palette entries 254 (green) and 255 (magenta) are transparent.
-    rgba[i * 4 + 3] = (idx === 254 || idx === 255) ? 0 : 255;
+    // Civ3 convention defaults to 254/255; specific files (e.g. Territory.pcx) use different slots.
+    rgba[i * 4 + 3] = transparentSet.has(idx) ? 0 : 255;
   }
 
   return { width, height, rgba };
@@ -618,7 +624,7 @@ function decodeByPath(filePath, crop, options = {}) {
   const ext = path.extname(filePath).toLowerCase();
   let image;
   if (ext === '.pcx') {
-    image = decodePcx(filePath);
+    image = decodePcx(filePath, options);
   } else if (ext === '.flc') {
     const maxFrames = Number.isFinite(options.maxFrames) ? Number(options.maxFrames) : null;
     image = decodeFlcFrames(filePath, maxFrames, options);
@@ -691,7 +697,7 @@ function getPreview(request) {
   if (kind === 'civilopediaIcon') {
     const iconPath = resolveConquestsAssetPath(civ3Path, request.assetPath, scenarioPath, scenarioPaths);
     if (!iconPath) return { ok: false, error: 'Civilopedia icon not found' };
-    return { ok: true, ...decodeByPath(iconPath) };
+    return { ok: true, ...decodeByPath(iconPath, null, request.options || {}) };
   }
 
   if (kind === 'unitAnimation') {
@@ -754,10 +760,13 @@ function getPreview(request) {
   if (kind === 'unitAnimationPath') {
     const iniPath = String(request.unitIniPath || '').trim();
     const flcRaw = String(request.flcPath || '').trim();
-    if (!iniPath || !flcRaw) return { ok: false, error: 'Missing unitIniPath or flcPath' };
-    const flcPath = path.isAbsolute(flcRaw)
-      ? flcRaw
-      : path.join(path.dirname(iniPath), flcRaw.replace(/\\/g, path.sep).replace(/\//g, path.sep));
+    const flcValue = stripInlineIniComment(flcRaw).replace(/^["']|["']$/g, '').trim();
+    if (!iniPath || !flcValue) return { ok: false, error: 'Missing unitIniPath or flcPath' };
+    const normalizedFlc = flcValue.replace(/\\/g, path.sep).replace(/\//g, path.sep);
+    const isAbs = path.isAbsolute(normalizedFlc) || path.win32.isAbsolute(flcValue);
+    const flcPath = isAbs
+      ? normalizedFlc
+      : path.normalize(path.join(path.dirname(iniPath), normalizedFlc));
     if (!fileExists(flcPath)) return { ok: false, error: 'FLC not found for requested path' };
     return { ok: true, ...decodeByPath(flcPath, null, { civ3UnitPalette: true, maxFrames: 1000 }) };
   }

@@ -55,7 +55,7 @@ const REFERENCE_TAB_SPECS = [
 ];
 
 const BIQ_STRUCTURE_TAB_SPECS = [
-  { key: 'scenarioSettings', title: 'Scenario Settings', sectionCodes: ['GAME'] },
+  { key: 'scenarioSettings', title: 'Scenario', sectionCodes: ['GAME'] },
   { key: 'players', title: 'Players', sectionCodes: ['LEAD'] },
   { key: 'terrain', title: 'Terrain', sectionCodes: ['TERR', 'TFRM'] },
   { key: 'world', title: 'World', sectionCodes: ['WSIZ', 'WCHR', 'ERAS'] },
@@ -440,11 +440,19 @@ function applyFieldLabelOverrides(sectionCode, field) {
       chancetointerceptairmissions: 'Chance To Intercept Air Missions (%)',
       chancetointerceptstealthmissions: 'Chance To Intercept Stealth Missions (%)',
       startingtreasury: 'Starting Treasury',
+      questionmark1: 'Unknown 1',
+      questionmark2: 'Unknown 2',
+      questionmark3: 'Unknown 3',
+      questionmark4: 'Unknown 4',
+      questionmarkone: 'Unknown 1',
+      questionmarktwo: 'Unknown 2',
+      questionmarkthree: 'Unknown 3',
+      questionmarkfour: 'Unknown 4',
       foodconsumptionpercitizen: 'Food Consumption Per Citizen',
       riverdefensivebonus: 'River Defense Bonus (%)',
       turnpenaltyforwhip: 'Whip Turn Penalty',
       scout: 'Scout Unit',
-      slave: 'Slave Unit',
+      slave: 'Captured Unit',
       roadmovementrate: 'Road Movement Rate',
       startunit1: 'Start Unit 1',
       startunit2: 'Start Unit 2',
@@ -802,6 +810,24 @@ function enrichBridgeSections(sections) {
   const tfrmIndex = makeIndex('TFRM');
   const terrIndex = makeIndex('TERR');
   const flavIndex = makeIndex('FLAV');
+  const spaceshipPartByIndex = {};
+  const bldgSection = byCode.get('BLDG');
+  if (bldgSection && Array.isArray(bldgSection.records)) {
+    bldgSection.records.forEach((record, idx) => {
+      const partField = (record.fields || []).find((field) => {
+        const k = String(field && (field.baseKey || field.key) || '').toLowerCase();
+        const canon = k.replace(/[^a-z0-9]/g, '');
+        return canon === 'spaceshippart';
+      });
+      if (!partField) return;
+      const raw = cleanDisplayText(partField.value);
+      const partIdx = Number.parseInt(String(raw || '').replace(/\s*\(.*\)\s*$/, ''), 10);
+      if (!Number.isFinite(partIdx) || partIdx < 0) return;
+      if (spaceshipPartByIndex[partIdx]) return;
+      const name = cleanDisplayText(record.name || bldgIndex[idx] || `Spaceship Part ${partIdx + 1}`);
+      spaceshipPartByIndex[partIdx] = name || `Spaceship Part ${partIdx + 1}`;
+    });
+  }
 
   sections.forEach((section) => {
     const code = section.code;
@@ -993,7 +1019,8 @@ function enrichBridgeSections(sections) {
           const partReqMatch = k.match(/^number_of_parts_(\d+)_required$/);
           if (partReqMatch) {
             const partIdx = Number.parseInt(partReqMatch[1], 10);
-            field.label = `Spaceship Part ${partIdx + 1} Required`;
+            const partName = spaceshipPartByIndex[partIdx] || `Spaceship Part ${partIdx + 1}`;
+            field.label = `${partName} Required`;
           }
         } else if (code === 'GOVT') {
           const vsGovMatch = k.match(/^performance_of_this_government_versus_government_(\d+)$/);
@@ -2236,9 +2263,22 @@ function mapPediaIconsForKey(pediaBlocks, civilopediaKey) {
   const rawPaths = [...usableLines, ...govFallback, ...raceUsable].map((line) => normalizeRelativePath(line));
   const iconPaths = dedupeStrings(rawPaths.filter(Boolean));
 
-  const animKey = `ANIMNAME_${civilopediaKey.toUpperCase()}`;
-  const animBlock = (pediaBlocks[animKey] && pediaBlocks[animKey].value) || [];
-  const animName = animBlock.length > 0 ? String(animBlock[0]).trim() : '';
+  const readAnimationName = (key) => {
+    const block = (pediaBlocks[key] && pediaBlocks[key].value) || [];
+    for (const raw of block) {
+      const cleaned = String(raw || '').replace(/\s*;.*$/, '').trim().replace(/^["']|["']$/g, '').trim();
+      if (cleaned) return cleaned;
+    }
+    return '';
+  };
+  const animKey = `ANIMNAME_${upperKey}`;
+  let animName = readAnimationName(animKey);
+  if (!animName && upperKey.startsWith('PRTO_')) {
+    const eraIdx = upperKey.indexOf('_ERAS_');
+    if (eraIdx > 0) {
+      animName = readAnimationName(`ANIMNAME_${upperKey.slice(0, eraIdx)}`);
+    }
+  }
 
   const raceBlock = (pediaBlocks[civilopediaKey.toUpperCase()] && pediaBlocks[civilopediaKey.toUpperCase()].value) || [];
   const racePaths = raceBlock.map((line) => normalizeRelativePath(line)).filter(Boolean);
@@ -2371,7 +2411,11 @@ function buildReferenceTabs(civ3Path, options = {}) {
           || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, entry.civilopediaKey, layerOrder)
           || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `${entry.civilopediaKey}_LARGE`, layerOrder)
           || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ICON_RACE_${entry.civilopediaKey.replace(/^RACE_/, '')}`, layerOrder);
+        const eraAnimFallbackKey = String(entry.civilopediaKey || '').includes('_ERAS_')
+          ? `ANIMNAME_${String(entry.civilopediaKey || '').split('_ERAS_')[0]}`
+          : '';
         const animSourcePath = findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ANIMNAME_${entry.civilopediaKey}`, layerOrder)
+          || (eraAnimFallbackKey ? findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, eraAnimFallbackKey, layerOrder) : '')
           || iconBlockSourcePath;
         const biqRecord = biqRecordByCivilopediaKey.get(entry.civilopediaKey);
         const biqFields = (biqRecord && Array.isArray(biqRecord.fields))

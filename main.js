@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadBundle, saveBundle, previewFileDiff } = require('./src/configCore');
@@ -22,13 +22,18 @@ function readStartupPerformanceMode() {
     const settingsPath = getSettingsPathUnsafe();
     if (!settingsPath || !fs.existsSync(settingsPath)) return 'high';
     const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    return String((raw && raw.performanceMode) || 'high').toLowerCase() === 'safe' ? 'safe' : 'high';
+    return normalizePerformanceMode(raw && raw.performanceMode);
   } catch (_err) {
     return 'high';
   }
 }
 
+function normalizePerformanceMode(value) {
+  return String(value || 'high').toLowerCase() === 'safe' ? 'safe' : 'high';
+}
+
 const startupPerformanceMode = readStartupPerformanceMode();
+let currentPerformanceMode = startupPerformanceMode;
 // Prevent frequent macOS IOSurface allocation crashes in canvas-heavy screens.
 if (process.platform === 'darwin' && startupPerformanceMode === 'safe' && process.env.C3X_MANAGER_FORCE_GPU !== '1') {
   app.disableHardwareAcceleration();
@@ -195,7 +200,62 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
 }
 
+function sendPerformanceModeSelection(mode) {
+  currentPerformanceMode = normalizePerformanceMode(mode);
+  try {
+    const settingsPath = getSettingsPath();
+    const existing = readJsonIfExists(settingsPath, {});
+    writeJson(settingsPath, {
+      ...(existing || {}),
+      performanceMode: currentPerformanceMode
+    });
+  } catch (_err) {
+    // Best effort: renderer event below still applies mode for active session.
+  }
+  buildAppMenu();
+  const target = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send('manager:performance-mode-selected', currentPerformanceMode);
+}
+
+function buildAppMenu() {
+  const fileMenu = {
+    label: 'File',
+    submenu: [
+      {
+        label: 'Performance',
+        submenu: [
+          {
+            label: 'High',
+            type: 'radio',
+            checked: currentPerformanceMode === 'high',
+            click: () => sendPerformanceModeSelection('high')
+          },
+          {
+            label: 'Safe',
+            type: 'radio',
+            checked: currentPerformanceMode === 'safe',
+            click: () => sendPerformanceModeSelection('safe')
+          }
+        ]
+      },
+      { type: 'separator' },
+      process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' }
+    ]
+  };
+
+  const template = [
+    ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
+    fileMenu,
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' }
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 app.whenReady().then(() => {
+  buildAppMenu();
   createWindow();
 
   app.on('activate', () => {
@@ -223,7 +283,11 @@ ipcMain.handle('manager:get-settings', async () => {
   };
   const saved = readJsonIfExists(getSettingsPath(), defaults);
   const merged = { ...defaults, ...(saved || {}) };
+  merged.performanceMode = normalizePerformanceMode(merged.performanceMode);
   const inferred = inferDefaultPaths(merged);
+  inferred.performanceMode = normalizePerformanceMode(inferred.performanceMode);
+  currentPerformanceMode = inferred.performanceMode;
+  buildAppMenu();
   if (JSON.stringify(merged) !== JSON.stringify(inferred)) {
     writeJson(getSettingsPath(), inferred);
   }
@@ -231,7 +295,15 @@ ipcMain.handle('manager:get-settings', async () => {
 });
 
 ipcMain.handle('manager:set-settings', async (_event, settings) => {
-  writeJson(getSettingsPath(), settings);
+  const normalized = {
+    ...(settings || {}),
+    performanceMode: normalizePerformanceMode(settings && settings.performanceMode)
+  };
+  writeJson(getSettingsPath(), normalized);
+  if (currentPerformanceMode !== normalized.performanceMode) {
+    currentPerformanceMode = normalized.performanceMode;
+    buildAppMenu();
+  }
   return { ok: true };
 });
 

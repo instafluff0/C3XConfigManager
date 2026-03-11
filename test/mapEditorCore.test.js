@@ -19,6 +19,10 @@ function makeTile(index, width) {
   };
 }
 
+function packTerrain(code) {
+  return String(((code & 0x0f) << 4) | (code & 0x0f));
+}
+
 test('computeBrushTileIndexes expands with diameter', () => {
   const width = 8;
   const tileCount = 64;
@@ -35,9 +39,9 @@ test('computeBrushTileIndexes expands with diameter', () => {
 test('applyTerrain writes baserealterrain and c3cbaserealterrain', () => {
   const tiles = [makeTile(0, 4), makeTile(1, 4), makeTile(2, 4)];
   mapCore.applyTerrain(tiles, [0, 2], 7);
-  assert.equal(mapCore.getField(tiles[0], 'baserealterrain').value, '7');
-  assert.equal(mapCore.getField(tiles[0], 'c3cbaserealterrain').value, '7');
-  assert.equal(mapCore.getField(tiles[2], 'baserealterrain').value, '7');
+  assert.equal(mapCore.getField(tiles[0], 'baserealterrain').value, packTerrain(7));
+  assert.equal(mapCore.getField(tiles[0], 'c3cbaserealterrain').value, packTerrain(7));
+  assert.equal(mapCore.getField(tiles[2], 'baserealterrain').value, packTerrain(7));
   assert.equal(mapCore.getField(tiles[1], 'baserealterrain'), null);
 });
 
@@ -172,7 +176,7 @@ test('multi-step map editing flow updates tile data consistently', () => {
 
   brush.forEach((idx) => {
     const tile = tiles[idx];
-    assert.equal(mapCore.getField(tile, 'baserealterrain').value, '5');
+    assert.equal(mapCore.getField(tile, 'baserealterrain').value, packTerrain(5));
     assert.equal(mapCore.getField(tile, 'road').value, 'true');
     assert.equal(mapCore.getField(tile, 'fogofwar').value, '0');
     assert.equal(mapCore.getField(tile, 'district').value, '2,1');

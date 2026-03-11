@@ -72,11 +72,12 @@
   function applyTerrain(records, indexes, terrainCode) {
     var code = Number.parseInt(String(terrainCode), 10);
     if (!Number.isFinite(code) || code < 0) return;
+    var packed = ((code & 0x0f) << 4) | (code & 0x0f);
     indexes.forEach(function (idx) {
       var tile = records[idx];
       if (!tile) return;
-      setField(tile, 'baserealterrain', String(code), 'Base Real Terrain');
-      setField(tile, 'c3cbaserealterrain', String(code), 'C3C Base Real Terrain');
+      setField(tile, 'baserealterrain', String(packed), 'Base Real Terrain');
+      setField(tile, 'c3cbaserealterrain', String(packed), 'C3C Base Real Terrain');
     });
   }
 

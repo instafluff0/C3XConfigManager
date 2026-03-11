@@ -489,6 +489,11 @@ textarea {
   cursor: pointer;
 }
 
+.field-checkbox-list {
+  display: grid;
+  gap: 6px;
+}
+
 .actions {
   display: flex;
   gap: 8px;
@@ -1401,7 +1406,7 @@ button.danger:hover {
   background: rgba(245, 247, 252, 0.78);
   position: sticky;
   top: var(--sticky-search-top);
-  z-index: 2;
+  z-index: 4;
   backdrop-filter: blur(5px);
 }
 
@@ -1414,12 +1419,23 @@ button.danger:hover {
   font-size: 0.75rem;
   line-height: 1.25;
   border-radius: 16px;
+  cursor: pointer;
 }
 
 .biq-subtab-btn.active {
   background: linear-gradient(120deg, #3f74d8, #6f9bf0);
   color: #fff;
   border-color: transparent;
+}
+
+.section-editor.has-biq-subtabs .sticky-search-row {
+  top: calc(var(--sticky-search-top) + var(--biq-subtabs-offset, 0px));
+}
+
+.section-editor.has-biq-subtabs .entry-list-pane,
+.section-editor.has-biq-subtabs .reference-nav-col,
+.section-editor.has-biq-subtabs .reference-sidebar-art {
+  top: calc(var(--sticky-pane-top) + var(--biq-subtabs-offset, 0px));
 }
 
 .biq-map-layout {
@@ -1465,7 +1481,7 @@ button.danger:hover {
 .biq-map-floating-top-left {
   top: 12px;
   left: 12px;
-  right: calc(var(--biq-map-side-panel-width) + 24px);
+  right: 12px;
   display: grid;
   gap: 8px;
 }
@@ -2566,8 +2582,8 @@ button.danger:hover {
 }
 
 .map-editor-modal-panel {
-  width: min(1560px, 98vw);
-  height: min(980px, 97vh);
+  width: min(1560px, calc(100vw - 32px));
+  height: calc(100vh - 32px);
   border-radius: 14px;
   border: 1px solid rgba(78, 96, 136, 0.34);
   background: rgba(255, 255, 255, 0.98);
@@ -2722,6 +2738,98 @@ button.danger:hover {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.alliance-dnd-board {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.alliance-dnd-col {
+  border: 1px solid rgba(73, 69, 98, 0.16);
+  border-radius: 9px;
+  background: rgba(246, 249, 255, 0.82);
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+}
+
+.alliance-dnd-col-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #3f4f80;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(73, 69, 98, 0.12);
+}
+
+.alliance-name-btn {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: text;
+  width: 100%;
+}
+
+.alliance-name-edit-icon {
+  opacity: 0.62;
+  font-size: 0.7rem;
+}
+
+.alliance-name-input {
+  width: 100%;
+  min-height: 24px;
+  font-size: 0.72rem;
+  padding: 2px 6px;
+}
+
+.alliance-dnd-dropzone {
+  flex: 1;
+  padding: 7px;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  border-radius: 0 0 9px 9px;
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.alliance-dnd-dropzone.drag-over {
+  background: rgba(64, 114, 216, 0.12);
+  box-shadow: inset 0 0 0 2px rgba(64, 114, 216, 0.25);
+}
+
+.alliance-dnd-chip {
+  border: 1px solid rgba(73, 69, 98, 0.2);
+  border-radius: 999px;
+  background: #fff;
+  color: #2f3d66;
+  font-size: 0.72rem;
+  line-height: 1.1;
+  padding: 3px 7px 3px 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: grab;
+}
+
+.alliance-dnd-chip:active {
+  cursor: grabbing;
+}
+
+.alliance-dnd-thumb {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
+}
+
+.alliance-dnd-empty {
+  font-size: 0.72rem;
+  color: #6b7698;
 }
 
 .identity-key-row {
@@ -2965,28 +3073,6 @@ button.danger:hover {
 
 .tech-picker-row.hidden {
   display: none;
-}
-
-.performance-mode-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border-radius: 10px;
-  border: 1px solid rgba(73, 69, 98, 0.18);
-  background: rgba(255, 255, 255, 0.86);
-  color: #4b597f;
-  font-size: 0.72rem;
-  font-weight: 700;
-}
-
-.performance-mode-select {
-  border: 1px solid rgba(73, 69, 98, 0.25);
-  border-radius: 8px;
-  background: #fff;
-  color: #2d3a63;
-  font-size: 0.72rem;
-  padding: 4px 7px;
 }
 
 .unit-animation-panel {
@@ -3444,6 +3530,10 @@ button.danger:hover {
   border-radius: 6px;
   padding: 1px 0;
   margin: 0;
+}
+
+.biq-subtab-btn.help-hover-target {
+  cursor: pointer;
 }
 
 .help-hover-target:hover {

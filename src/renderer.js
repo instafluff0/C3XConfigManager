@@ -47,7 +47,7 @@ const state = {
   biqMapLayer: 'terrain',
   biqMapShowGrid: false,
   biqMapShowOverlays: true,
-  biqMapShowCityNames: false,
+  biqMapShowCityNames: true,
   biqMapSelectedTile: -1,
   biqMapScrollLeft: null,
   biqMapScrollTop: null,
@@ -59,6 +59,8 @@ const state = {
   biqMapSuppressClickUntilTs: 0,
   biqMapArtCache: {},
   biqMapArtLoading: {},
+  biqMapTerritoryEdgeCache: new Map(),
+  biqMapNtpColorCache: {},
   previewCache: new Map(),
   districtRepresentativePreviewPending: new Map(),
   unitAnimationUiByKey: {},
@@ -105,6 +107,7 @@ const state = {
     unitType: 0
   },
   settingsPersistTimer: null,
+  performanceMenuUnsubscribe: null,
   startupPerformanceMode: 'high',
   sectionValidationError: '',
   copyDebugFeedbackTimer: null,
@@ -238,7 +241,6 @@ const el = {
   pathsToggle: document.getElementById('paths-toggle'),
   pathsSummary: document.getElementById('paths-summary'),
   globalSearchBtn: document.getElementById('global-search-btn'),
-  performanceMode: document.getElementById('performance-mode'),
   modeStateBadge: document.getElementById('mode-state-badge'),
   modeStateDetail: document.getElementById('mode-state-detail'),
   scenarioTitleChip: document.getElementById('scenario-title-chip'),
@@ -356,6 +358,27 @@ const BIQ_MAP_OVERLAY_ANCHORS = {
   unit: { x: 48, y: 41 },
   city: { x: 46, y: 20 },
   cityName: { x: 84, y: 50 }
+};
+const BIQ_TERRAIN = {
+  DESERT: 0,
+  PLAINS: 1,
+  GRASSLAND: 2,
+  TUNDRA: 3,
+  FLOODPLAIN: 4,
+  HILLS: 5,
+  MOUNTAIN: 6,
+  FOREST: 7,
+  JUNGLE: 8,
+  MARSH: 9,
+  VOLCANO: 10,
+  COAST: 11,
+  SEA: 12,
+  OCEAN: 13
+};
+const BIQ_TILE_BONUS = {
+  SNOW_CAPPED_MOUNTAIN: 0x10,
+  PINE_FOREST: 0x20,
+  LANDMARK: 0x2000
 };
 const BIQ_MAP_ZOOM_MIN = 2;
 const BIQ_MAP_ZOOM_MAX = 18;
@@ -934,6 +957,13 @@ function getPathBaseNameLower(pathValue) {
   return String(parts[parts.length - 1] || '').toLowerCase();
 }
 
+function getPathBaseName(pathValue) {
+  const text = String(pathValue || '').trim();
+  if (!text) return '';
+  const parts = text.split(/[\\/]/).filter(Boolean);
+  return String(parts[parts.length - 1] || '');
+}
+
 function isOpenableFilesReadPath(pathValue) {
   const p = String(pathValue || '').trim().toLowerCase();
   return p.endsWith('.txt') || p.endsWith('.ini');
@@ -1279,7 +1309,7 @@ function getDefaultFilesReadFiltersForMode(mode) {
     locationC3x: true,
     locationExternal: false,
     typeConfigIni: true,
-    typeAnimationIni: false,
+    typeAnimationIni: true,
     typeText: true,
     typeBiq: true,
     statusNew: false,
@@ -2113,14 +2143,28 @@ function applyPerformanceModeRuntime(mode, options = {}) {
   if (state.settings) {
     state.settings.performanceMode = nextMode;
   }
-  if (el.performanceMode && el.performanceMode.value !== nextMode) {
-    el.performanceMode.value = nextMode;
-  }
   if (options.clearCaches !== false) {
     state.previewCache.clear();
   }
   document.body.classList.toggle('perf-safe', nextMode === 'safe');
   document.body.classList.toggle('perf-high', nextMode === 'high');
+}
+
+async function updatePerformanceMode(nextMode) {
+  const normalized = String(nextMode || DEFAULT_PERFORMANCE_MODE).toLowerCase() === 'safe' ? 'safe' : 'high';
+  applyPerformanceModeRuntime(normalized, { clearCaches: true });
+  await window.c3xManager.setSettings(state.settings);
+  const needsRestart = String(state.startupPerformanceMode || '') !== String(normalized);
+  if (needsRestart) {
+    const doRestart = window.confirm('Performance mode changed. Restart now to apply GPU rendering mode?');
+    if (doRestart && window.c3xManager && typeof window.c3xManager.relaunch === 'function') {
+      await window.c3xManager.relaunch();
+      return;
+    }
+  } else {
+    setStatus(`Performance mode set to ${normalized === 'safe' ? 'Safe' : 'High'}.`);
+  }
+  renderActiveTab({ preserveTabScroll: true });
 }
 
 function getScenarioPreviewPaths() {
@@ -2330,7 +2374,6 @@ function setLoadingUi(isLoading, text = 'Loading configs...') {
     el.pickScenario,
     el.pathsToggle,
     el.globalSearchBtn,
-    el.performanceMode,
     el.backBtn,
     el.forwardBtn,
     el.saveBtn,
@@ -2619,6 +2662,23 @@ function getReferenceEntrySearchTerms(tabKey, entry) {
   return terms.join(' ');
 }
 
+function getBiqRecordSearchTerms(sectionCode, record) {
+  const terms = [];
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  fields.forEach((field) => {
+    if (shouldHideBiqStructureField(sectionCode, field)) return;
+    const label = String(field && field.label || '').trim();
+    const baseKey = String(field && (field.baseKey || field.key) || '').trim();
+    const value = String(field && field.value || '').trim();
+    const group = getBiqStructureFieldGroup(sectionCode, field);
+    if (group) terms.push(group);
+    if (label) terms.push(label);
+    if (baseKey) terms.push(baseKey);
+    if (value && value.length <= 80) terms.push(value);
+  });
+  return terms.join(' ');
+}
+
 function collectGlobalSearchItems() {
   const items = [];
   if (!state.bundle || !state.bundle.tabs) return items;
@@ -2668,11 +2728,14 @@ function collectGlobalSearchItems() {
       tab.sections.forEach((section, sectionIndex) => {
         const sectionTitle = getFriendlyBiqSectionTitle(section);
         const sectionAlias = `${sectionTitle} ${section.code || ''}`;
+        const panelSearch = String(section && section.code || '').toUpperCase() === 'GAME'
+          ? GAME_PANEL_DEFINITIONS.map((panel) => `${panel.label} ${(panel.groups || []).join(' ')}`).join(' ')
+          : '';
         items.push({
           kind: 'Section',
           title: `${tabTitle}: ${sectionTitle}`,
           subtitle: String(section.code || ''),
-          search: `${tabTitle} ${sectionAlias}`,
+          search: `${tabTitle} ${sectionAlias} ${panelSearch}`,
           action: () => {
             navigateWithHistory(() => {
               state.activeTab = tabKey;
@@ -2680,14 +2743,32 @@ function collectGlobalSearchItems() {
             }, { preserveTabScroll: false });
           }
         });
+        if (String(section && section.code || '').toUpperCase() === 'GAME') {
+          GAME_PANEL_DEFINITIONS.forEach((panel, panelIdx) => {
+            items.push({
+              kind: 'Panel',
+              title: `${tabTitle}: ${panel.label}`,
+              subtitle: sectionTitle,
+              search: `${tabTitle} ${sectionTitle} ${panel.label} ${(panel.groups || []).join(' ')}`,
+              action: () => {
+                navigateWithHistory(() => {
+                  state.activeTab = tabKey;
+                  state.biqSectionSelectionByTab[tabKey] = sectionIndex;
+                  state.biqSectionSelectionByTab[`${tabKey}:game-panel`] = panelIdx;
+                }, { preserveTabScroll: false });
+              }
+            });
+          });
+        }
         const records = Array.isArray(section.records) ? section.records : [];
         records.forEach((record, recordIndex) => {
-          const recordName = String(record.name || `Record ${recordIndex + 1}`);
+          const recordName = getDisplayBiqRecordName(section.code, record, recordIndex);
+          const recordFieldTerms = getBiqRecordSearchTerms(section.code, record);
           items.push({
             kind: 'Record',
             title: `${sectionTitle}: ${recordName}`,
             subtitle: `${tabTitle} · ${section.code} #${recordIndex + 1}`,
-            search: `${tabTitle} ${sectionAlias} ${recordName}`,
+            search: `${tabTitle} ${sectionAlias} ${panelSearch} ${recordName} ${recordFieldTerms}`,
             action: () => {
               navigateWithHistory(() => {
                 state.activeTab = tabKey;
@@ -2853,9 +2934,6 @@ function syncSettingsFromInputs() {
   state.settings.c3xPath = el.c3xPath.value.trim();
   state.settings.civ3Path = el.civ3Path.value.trim();
   state.settings.scenarioPath = el.scenarioPath.value.trim();
-  if (el.performanceMode) {
-    state.settings.performanceMode = String(el.performanceMode.value || DEFAULT_PERFORMANCE_MODE);
-  }
 }
 
 function fillInputsFromSettings() {
@@ -2866,9 +2944,6 @@ function fillInputsFromSettings() {
   }
   el.civ3Path.value = state.settings.civ3Path || '';
   el.scenarioPath.value = state.settings.scenarioPath || '';
-  if (el.performanceMode) {
-    el.performanceMode.value = String(state.settings.performanceMode || DEFAULT_PERFORMANCE_MODE);
-  }
   updateScenarioSelectValue();
   updatePathsSummary();
 }
@@ -4789,6 +4864,15 @@ function getActiveScenarioDir() {
   return inferred;
 }
 
+function getCiv3InstallRoot() {
+  const raw = toSlashPath(state.settings && state.settings.civ3Path || '').trim().replace(/\/+$/, '');
+  if (!raw) return '';
+  if (/\/conquests$/i.test(raw) || /\/civ3ptw$/i.test(raw)) {
+    return raw.replace(/\/[^/]+$/i, '');
+  }
+  return raw;
+}
+
 function isAnimationIniPath(filePath) {
   const p = toSlashPath(filePath).trim().toLowerCase();
   return p.endsWith('.ini') && p.includes('/art/units/');
@@ -4805,8 +4889,8 @@ function getUnitIniTargetPath(animationName) {
   if (!name) return '';
   const scenarioDir = getActiveScenarioDir();
   if (scenarioDir) return `${scenarioDir.replace(/\/+$/, '')}/Art/Units/${name}/${name}.ini`;
-  const civ3 = toSlashPath(state.settings && state.settings.civ3Path || '').replace(/\/+$/, '');
-  if (civ3) return `${civ3}/Conquests/Art/Units/${name}/${name}.ini`;
+  const civ3Root = getCiv3InstallRoot();
+  if (civ3Root) return `${civ3Root}/Conquests/Art/Units/${name}/${name}.ini`;
   return '';
 }
 
@@ -4815,12 +4899,12 @@ function getUnitIniSourceCandidates(animationName) {
   if (!name) return [];
   const out = [];
   const scenarioDir = getActiveScenarioDir();
-  const civ3 = toSlashPath(state.settings && state.settings.civ3Path || '').replace(/\/+$/, '');
+  const civ3Root = getCiv3InstallRoot();
   if (scenarioDir) out.push(`${scenarioDir.replace(/\/+$/, '')}/Art/Units/${name}/${name}.ini`);
-  if (civ3) {
-    out.push(`${civ3}/Conquests/Art/Units/${name}/${name}.ini`);
-    out.push(`${civ3}/civ3PTW/Art/Units/${name}/${name}.ini`);
-    out.push(`${civ3}/Art/Units/${name}/${name}.ini`);
+  if (civ3Root) {
+    out.push(`${civ3Root}/Conquests/Art/Units/${name}/${name}.ini`);
+    out.push(`${civ3Root}/civ3PTW/Art/Units/${name}/${name}.ini`);
+    out.push(`${civ3Root}/Art/Units/${name}/${name}.ini`);
   }
   return Array.from(new Set(out.filter(Boolean)));
 }
@@ -5070,6 +5154,28 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
     keyInput.textContent = String(entry.animationName || '(none)');
   }
   keyCtrl.appendChild(keyInput);
+  if (editable) {
+    const browseBtn = document.createElement('button');
+    browseBtn.type = 'button';
+    browseBtn.className = 'ghost';
+    browseBtn.textContent = 'Browse';
+    browseBtn.title = 'Pick a unit animation folder and use its name';
+    browseBtn.addEventListener('click', async () => {
+      const dir = await window.c3xManager.pickDirectory();
+      if (!dir) return;
+      const folderName = getPathBaseName(dir);
+      if (!folderName) return;
+      keyInput.value = folderName;
+      withUndo(() => {
+        entry.animationName = folderName;
+        entry.unitIniEditor = null;
+      });
+      model = null;
+      ui.actionKey = '';
+      void loadManifest();
+    });
+    keyCtrl.appendChild(browseBtn);
+  }
   keyRow.appendChild(keyCtrl);
   panel.appendChild(keyRow);
 
@@ -6129,6 +6235,12 @@ const BIQ_FIELD_ENUMS = {
     uniquecolor: Array.from({ length: 32 }, (_v, idx) => ({ value: String(idx), label: `Color ${idx}` }))
   },
   scenarioSettings: {
+    basetimeunit: [
+      { value: '0', label: 'Turns' },
+      { value: '1', label: 'Years' },
+      { value: '2', label: 'Months' },
+      { value: '3', label: 'Weeks' }
+    ],
     startmonth: [
       { value: '1', label: 'January' },
       { value: '2', label: 'February' },
@@ -6149,6 +6261,19 @@ const BIQ_FIELD_ENUMS = {
     ]
   },
   players: {
+    difficulty: [
+      { value: 'Any', label: 'Any' },
+      { value: '0', label: 'Difficulty 1' },
+      { value: '1', label: 'Difficulty 2' },
+      { value: '2', label: 'Difficulty 3' },
+      { value: '3', label: 'Difficulty 4' },
+      { value: '4', label: 'Difficulty 5' },
+      { value: '5', label: 'Difficulty 6' },
+      { value: '6', label: 'Difficulty 7' },
+      { value: '7', label: 'Difficulty 8' },
+      { value: '8', label: 'Difficulty 9' },
+      { value: '9', label: 'Difficulty 10' }
+    ],
     genderofleadername: [
       { value: 'Male', label: 'Male' },
       { value: 'Female', label: 'Female' },
@@ -6342,8 +6467,8 @@ const UNIT_BOTTOM_LIST_HIDDEN_KEYS = new Set([
 
 const BIQ_STRUCTURE_FIELD_HIDDEN = {
   all: new Set(['byte_length', 'data_length', 'datalength', 'note', 'civilopediaentry', 'possible_resources_mask']),
-  GAME: new Set(['playable_civ_ids']),
-  LEAD: new Set(['numberofdifferentstartunits', 'numberofstartingtechnologies']),
+  GAME: new Set(['playable_civ_ids', 'numberofplayablecivs']),
+  LEAD: new Set([]),
   RULE: new Set([]),
   TERR: new Set([]),
   TFRM: new Set([]),
@@ -6384,59 +6509,168 @@ const BIQ_SECTION_FRIENDLY_NAMES = {
   FLAV: 'AI Flavors'
 };
 
+const GAME_PANEL_DEFINITIONS = [
+  {
+    id: 'scenario',
+    label: 'Scenario',
+    groups: ['Scenario', 'Map Options', 'Player Options', 'Game Options', 'Time Options', 'Base Unit of Time', 'Start Date', 'MP Timers', 'Time Scale']
+  },
+  {
+    id: 'victory',
+    label: 'Victory Point Limits',
+    groups: ['Victory Point Winning Conditions', 'Victory Points']
+  },
+  {
+    id: 'alliances',
+    label: 'Locked Alliances',
+    groups: ['No Alliances', 'Alliance 1', 'Alliance 2', 'Alliance 3', 'Alliance 4', 'Victory Type']
+  },
+  {
+    id: 'players',
+    label: 'Players',
+    groups: []
+  },
+  {
+    id: 'disasters',
+    label: 'Disasters',
+    groups: ['Plague Information', 'Volcanos']
+  }
+];
+
 const BIQ_STRUCTURE_RULE_SCHEMAS = {
   GAME: {
     order: [
-      'usedefaultrules', 'defaultvictoryconditions', 'numberofplayablecivs',
-      'usetimelimit', 'startmonth', 'startyear', 'alliancevictorytype',
-      'permitplagues', 'plaguename', 'plagueearlieststart', 'plaguevariation', 'plagueduration', 'plaguestrength',
-      'scenariosearchfolders'
+      'title', 'description', 'scenariosearchfolders',
+      'debugmode',
+      'numberofplayablecivs', 'playable_civ',
+      'defaultvictoryconditions',
+      'dominationenabled', 'spaceraceenabled', 'diplomacticenabled', 'conquestenabled', 'culturalenabled', 'wondervictoryenabled',
+      'culturallylinkedstart', 'restartplayersenabled', 'preserverandomseed', 'acceleratedproduction', 'eliminationenabled', 'regicideenabled', 'massregicideenabled', 'allowculturalconversions',
+      'autoplacekings', 'placecaptureunits', 'autoplacevictorylocations', 'mapvisible', 'retainculture',
+      'usetimelimit', 'turntimelimit', 'minutetimelimit',
+      'basetimeunit',
+      'startyear', 'startmonth', 'startweek',
+      'mpbasetime', 'mpunittime', 'mpcitytime',
+      'turns_in_time_section_0', 'time_per_turn_in_time_section_0',
+      'turns_in_time_section_1', 'time_per_turn_in_time_section_1',
+      'turns_in_time_section_2', 'time_per_turn_in_time_section_2',
+      'turns_in_time_section_3', 'time_per_turn_in_time_section_3',
+      'turns_in_time_section_4', 'time_per_turn_in_time_section_4',
+      'turns_in_time_section_5', 'time_per_turn_in_time_section_5',
+      'turns_in_time_section_6', 'time_per_turn_in_time_section_6',
+      'victorypointlimit', 'cityeliminationcount', 'onecityculturewinlimit', 'allcitiesculturewinlimit', 'dominationterrainpercent', 'dominationpopulationpercent', 'respawnflagunits', 'captureanyflag',
+      'wondervp', 'defeatingopposingunitvp', 'advancementvp', 'cityconquestvp', 'victorypointvp', 'capturespecialunitvp', 'goldforcapture',
+      'alliance0', 'alliance1', 'alliance2', 'alliance3', 'alliance4', 'alliancevictorytype',
+      'permitplagues', 'plaugename', 'plaguename', 'plagueearlieststart', 'plaguevariation', 'plagueduration', 'plaguestrength', 'plaguegraceperiod', 'plaguemaxoccurance',
+      'eruptionperiod'
     ],
     fields: {
-      usedefaultrules: { group: 'Rules', control: 'bool' },
-      defaultvictoryconditions: { group: 'Victory', control: 'bool' },
-      numberofplayablecivs: { group: 'Players', control: 'number', min: 1, max: 32 },
-      use_timelimit: { group: 'Time', control: 'bool' },
-      usetimelimit: { group: 'Time', control: 'bool' },
-      startmonth: { group: 'Time', control: 'select' },
-      startyear: { group: 'Time', control: 'number' },
-      alliancevictorytype: { group: 'Victory', control: 'select' },
-      permitplagues: { group: 'Plague', control: 'bool' },
-      plaguename: { group: 'Plague', control: 'text' },
-      plagueearlieststart: { group: 'Plague', control: 'number' },
-      plaguevariation: { group: 'Plague', control: 'number' },
-      plagueduration: { group: 'Plague', control: 'number' },
-      plaguestrength: { group: 'Plague', control: 'number' },
-      scenariosearchfolders: { group: 'Scenario', control: 'text' }
+      title: { group: 'Scenario', control: 'text' },
+      description: { group: 'Scenario', control: 'text' },
+      scenariosearchfolders: { group: 'Scenario', control: 'text', label: 'Scenario Search Folders' },
+      debugmode: { group: 'Map Options', control: 'bool' },
+      numberofplayablecivs: { group: 'Player Options', control: 'number', min: 1, max: 32, label: 'Number of Players' },
+      playable_civ: { group: 'Player Options', control: 'reference', label: 'Playable Civilization' },
+      defaultvictoryconditions: { group: 'Game Options', control: 'bool' },
+      dominationenabled: { group: 'Game Options', control: 'bool' },
+      spaceraceenabled: { group: 'Game Options', control: 'bool' },
+      diplomacticenabled: { group: 'Game Options', control: 'bool' },
+      conquestenabled: { group: 'Game Options', control: 'bool' },
+      culturalenabled: { group: 'Game Options', control: 'bool' },
+      wondervictoryenabled: { group: 'Game Options', control: 'bool' },
+      culturallylinkedstart: { group: 'Game Options', control: 'bool' },
+      restartplayersenabled: { group: 'Game Options', control: 'bool' },
+      preserverandomseed: { group: 'Game Options', control: 'bool' },
+      acceleratedproduction: { group: 'Game Options', control: 'bool' },
+      eliminationenabled: { group: 'Game Options', control: 'bool' },
+      regicideenabled: { group: 'Game Options', control: 'bool' },
+      massregicideenabled: { group: 'Game Options', control: 'bool' },
+      allowculturalconversions: { group: 'Game Options', control: 'bool' },
+      autoplacekings: { group: 'Game Options', control: 'bool' },
+      placecaptureunits: { group: 'Game Options', control: 'bool' },
+      autoplacevictorylocations: { group: 'Game Options', control: 'bool' },
+      mapvisible: { group: 'Game Options', control: 'bool' },
+      retainculture: { group: 'Game Options', control: 'bool' },
+      usetimelimit: { group: 'Time Options', control: 'bool' },
+      turntimelimit: { group: 'Time Options', control: 'number', min: 0, label: 'Turns' },
+      minutetimelimit: { group: 'Time Options', control: 'number', min: 0, label: 'Minutes' },
+      basetimeunit: { group: 'Base Unit of Time', control: 'number' },
+      startyear: { group: 'Start Date', control: 'number' },
+      startmonth: { group: 'Start Date', control: 'select' },
+      startweek: { group: 'Start Date', control: 'number', min: 0 },
+      mpbasetime: { group: 'MP Timers', control: 'number', min: 0 },
+      mpunittime: { group: 'MP Timers', control: 'number', min: 0 },
+      mpcitytime: { group: 'MP Timers', control: 'number', min: 0 },
+      victorypointlimit: { group: 'Victory Point Winning Conditions', control: 'number', min: 0 },
+      cityeliminationcount: { group: 'Victory Point Winning Conditions', control: 'number', min: 0 },
+      onecityculturewinlimit: { group: 'Victory Point Winning Conditions', control: 'number', min: 0, label: 'Culture Value for 1 City' },
+      allcitiesculturewinlimit: { group: 'Victory Point Winning Conditions', control: 'number', min: 0, label: 'Culture Value for Civilization' },
+      dominationterrainpercent: { group: 'Victory Point Winning Conditions', control: 'number', min: 0, max: 100, label: '% Terrain for Domination' },
+      dominationpopulationpercent: { group: 'Victory Point Winning Conditions', control: 'number', min: 0, max: 100, label: '% Population for Domination' },
+      respawnflagunits: { group: 'Victory Point Winning Conditions', control: 'bool' },
+      captureanyflag: { group: 'Victory Point Winning Conditions', control: 'bool' },
+      wondervp: { group: 'Victory Points', control: 'number', min: 0 },
+      defeatingopposingunitvp: { group: 'Victory Points', control: 'number', min: 0 },
+      advancementvp: { group: 'Victory Points', control: 'number', min: 0 },
+      cityconquestvp: { group: 'Victory Points', control: 'number', min: 0 },
+      victorypointvp: { group: 'Victory Points', control: 'number', min: 0 },
+      capturespecialunitvp: { group: 'Victory Points', control: 'number', min: 0 },
+      goldforcapture: { group: 'Victory Points', control: 'number', min: 0 },
+      alliance0: { group: 'Alliance 1', control: 'text', label: 'Alliance Name' },
+      alliance1: { group: 'Alliance 2', control: 'text', label: 'Alliance Name' },
+      alliance2: { group: 'Alliance 3', control: 'text', label: 'Alliance Name' },
+      alliance3: { group: 'Alliance 4', control: 'text', label: 'Alliance Name' },
+      alliance4: { group: 'No Alliances', control: 'text', label: 'No Alliances' },
+      alliancevictorytype: { group: 'Victory Type', control: 'select' },
+      permitplagues: { group: 'Plague Information', control: 'bool' },
+      plaugename: { group: 'Plague Information', control: 'text' },
+      plaguename: { group: 'Plague Information', control: 'text' },
+      plagueearlieststart: { group: 'Plague Information', control: 'number', min: 0 },
+      plaguevariation: { group: 'Plague Information', control: 'number', min: 0 },
+      plagueduration: { group: 'Plague Information', control: 'number', min: 0 },
+      plaguestrength: { group: 'Plague Information', control: 'number', min: 0 },
+      plaguegraceperiod: { group: 'Plague Information', control: 'number', min: 0 },
+      plaguemaxoccurance: { group: 'Plague Information', control: 'number', min: 0 },
+      eruptionperiod: { group: 'Volcanos', control: 'number', min: 0 }
     }
   },
   LEAD: {
     order: [
-      'civ', 'leadername', 'genderofleadername', 'government', 'color', 'initialera', 'startcash',
-      'humanplayer', 'customcivdata', 'startembassies', 'skipfirstturn'
+      'civ', 'leadername', 'genderofleadername', 'color',
+      'startcash', 'government', 'initialera', 'difficulty', 'humanplayer', 'customcivdata', 'skipfirstturn', 'startembassies',
+      'numberofdifferentstartunits',
+      'starting_units_of_type_settler', 'starting_units_of_type_worker',
+      'numberofstartingtechnologies'
     ],
     fields: {
-      civ: { group: 'Identity', control: 'reference' },
-      leadername: { group: 'Identity', control: 'text' },
-      genderofleadername: { group: 'Identity', control: 'select' },
-      government: { group: 'Identity', control: 'reference' },
-      color: { group: 'Identity', control: 'number', min: 0, max: 31 },
-      initialera: { group: 'Identity', control: 'reference' },
-      startcash: { group: 'Start', control: 'number', min: 0 },
-      humanplayer: { group: 'Start', control: 'bool' },
-      customcivdata: { group: 'Start', control: 'bool' },
-      startembassies: { group: 'Start', control: 'bool' },
-      skipfirstturn: { group: 'Start', control: 'bool' }
+      civ: { group: 'Player', control: 'reference', label: 'Civilization' },
+      leadername: { group: 'Civilization Details', control: 'text', label: 'Leader Name' },
+      genderofleadername: { group: 'Civilization Details', control: 'select', label: 'Gender' },
+      color: { group: 'Civilization Details', control: 'number', min: 0, max: 31, label: 'Team Color' },
+      startcash: { group: 'Player', control: 'number', min: 0, label: 'Starting Treasury' },
+      government: { group: 'Player', control: 'reference', label: 'Government' },
+      initialera: { group: 'Player', control: 'reference', label: 'Initial Era' },
+      difficulty: { group: 'Player', control: 'select', label: 'Difficulty Level' },
+      humanplayer: { group: 'Player', control: 'bool', label: 'Human Player' },
+      customcivdata: { group: 'Player', control: 'bool', label: 'Civilization Defaults' },
+      skipfirstturn: { group: 'Player', control: 'bool', label: 'Skip 1st Turn' },
+      startembassies: { group: 'Player', control: 'bool', label: 'Starts with Embassies' },
+      numberofdifferentstartunits: { group: 'Starting Units', control: 'number', min: 0, label: 'How Many Types' },
+      numberofstartingtechnologies: { group: 'Free Techs', control: 'number', min: 0, label: 'How Many' }
     }
   },
   RULE: {
     order: [
-      'slave', 'startunit1', 'startunit2', 'scout', 'battlecreatedunit', 'basicbarbarian', 'advancedbarbarian', 'barbarianseaunit',
-      'defaultdifficultylevel', 'defaultmoneyresource',
+      'slave', 'startunit1', 'startunit2', 'scout', 'battlecreatedunit', 'buildarmyunit', 'basicbarbarian', 'advancedbarbarian', 'barbarianseaunit', 'flagunit',
       'townname', 'cityname', 'metropolisname', 'maxcity1size', 'maxcity2size',
-      'minimumresearchtime', 'maximumresearchtime', 'futuretechcost',
-      'startingtreasury', 'foodconsumptionpercitizen', 'roadmovementrate', 'upgradecost',
-      'town_defence_bonus', 'citydefencebonus', 'metropolisdefencebonus', 'fortressdefencebonus', 'fortificationsdefencebonus'
+      'futuretechcost', 'minimumresearchtime', 'maximumresearchtime',
+      'wltkdminimumpop', 'citizensaffectedbyhappyface', 'turnpenaltyforwhip', 'draftturnpenalty', 'chanceofrioting',
+      'chancetointerceptairmissions', 'chancetointerceptstealthmissions', 'citiesforarmy',
+      'citizenvalueinshields', 'shieldcostingold', 'basecapitalizationrate', 'forestvalueinshields', 'shieldvalueingold',
+      'towndefencebonus', 'citydefencebonus', 'metropolisdefencebonus', 'fortressdefencebonus', 'riverdefensivebonus', 'fortificationsdefencebonus', 'citizendefensivebonus', 'buildingdefensivebonus',
+      'numspaceshipparts',
+      'roadmovementrate', 'upgradecost', 'foodconsumptionpercitizen', 'startingtreasury', 'goldenageduration', 'defaultdifficultylevel', 'defaultmoneyresource',
+      'questionmark1', 'questionmark2', 'questionmark3', 'questionmark4'
     ],
     fields: {
       slave: { group: 'Default Units', control: 'reference' },
@@ -6444,29 +6678,72 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       startunit2: { group: 'Default Units', control: 'reference' },
       scout: { group: 'Default Units', control: 'reference' },
       battlecreatedunit: { group: 'Default Units', control: 'reference' },
+      buildarmyunit: { group: 'Default Units', control: 'reference' },
       basicbarbarian: { group: 'Default Units', control: 'reference' },
       advancedbarbarian: { group: 'Default Units', control: 'reference' },
       barbarianseaunit: { group: 'Default Units', control: 'reference' },
-      defaultdifficultylevel: { group: 'Defaults', control: 'reference' },
-      defaultmoneyresource: { group: 'Defaults', control: 'reference' },
-      townname: { group: 'Cities', control: 'text' },
-      cityname: { group: 'Cities', control: 'text' },
-      metropolisname: { group: 'Cities', control: 'text' },
-      maxcity1size: { group: 'Cities', control: 'number' },
-      maxcity2size: { group: 'Cities', control: 'number' },
-      minimumresearchtime: { group: 'Research', control: 'number' },
-      maximumresearchtime: { group: 'Research', control: 'number' },
-      futuretechcost: { group: 'Research', control: 'number' },
-      startingtreasury: { group: 'Economy', control: 'number' },
-      foodconsumptionpercitizen: { group: 'Economy', control: 'number' },
-      roadmovementrate: { group: 'Economy', control: 'number' },
-      upgradecost: { group: 'Economy', control: 'number' },
-      town_defence_bonus: { group: 'Defense', control: 'number' },
-      towndefencebonus: { group: 'Defense', control: 'number' },
-      citydefencebonus: { group: 'Defense', control: 'number' },
-      metropolisdefencebonus: { group: 'Defense', control: 'number' },
-      fortressdefencebonus: { group: 'Defense', control: 'number' },
-      fortificationsdefencebonus: { group: 'Defense', control: 'number' }
+      flagunit: { group: 'Default Units', control: 'reference' },
+      townname: { group: 'City Size Limits', control: 'text' },
+      cityname: { group: 'City Size Limits', control: 'text' },
+      metropolisname: { group: 'City Size Limits', control: 'text' },
+      maxcity1size: { group: 'City Size Limits', control: 'number' },
+      maxcity2size: { group: 'City Size Limits', control: 'number' },
+      futuretechcost: { group: 'Technology', control: 'number' },
+      minimumresearchtime: { group: 'Technology', control: 'number' },
+      maximumresearchtime: { group: 'Technology', control: 'number' },
+      wltkdminimumpop: { group: 'Citizen Mood', control: 'number' },
+      citizensaffectedbyhappyface: { group: 'Citizen Mood', control: 'number' },
+      turnpenaltyforwhip: { group: 'Citizen Mood', control: 'number' },
+      draftturnpenalty: { group: 'Citizen Mood', control: 'number' },
+      chanceofrioting: { group: 'Citizen Mood', control: 'number' },
+      chancetointerceptairmissions: { group: 'Various Unit Abilities', control: 'number' },
+      chancetointerceptstealthmissions: { group: 'Various Unit Abilities', control: 'number' },
+      citiesforarmy: { group: 'Various Unit Abilities', control: 'number' },
+      citizenvalueinshields: { group: 'Hurry Production/Wealth', control: 'number' },
+      shieldcostingold: { group: 'Hurry Production/Wealth', control: 'number' },
+      basecapitalizationrate: { group: 'Hurry Production/Wealth', control: 'number' },
+      forestvalueinshields: { group: 'Hurry Production/Wealth', control: 'number' },
+      shieldvalueingold: { group: 'Hurry Production/Wealth', control: 'number' },
+      town_defence_bonus: { group: 'Defensive Bonuses', control: 'number' },
+      towndefencebonus: { group: 'Defensive Bonuses', control: 'number' },
+      city_defence_bonus: { group: 'Defensive Bonuses', control: 'number' },
+      citydefencebonus: { group: 'Defensive Bonuses', control: 'number' },
+      metropolis_defence_bonus: { group: 'Defensive Bonuses', control: 'number' },
+      metropolisdefencebonus: { group: 'Defensive Bonuses', control: 'number' },
+      fortress_defence_bonus: { group: 'Defensive Bonuses', control: 'number' },
+      fortressdefencebonus: { group: 'Defensive Bonuses', control: 'number' },
+      river_defensive_bonus: { group: 'Defensive Bonuses', control: 'number' },
+      riverdefensivebonus: { group: 'Defensive Bonuses', control: 'number' },
+      riverdefencebonus: { group: 'Defensive Bonuses', control: 'number' },
+      fortifications_defence_bonus: { group: 'Defensive Bonuses', control: 'number' },
+      fortificationsdefencebonus: { group: 'Defensive Bonuses', control: 'number' },
+      citizendefensivebonus: { group: 'Defensive Bonuses', control: 'number' },
+      buildingdefensivebonus: { group: 'Defensive Bonuses', control: 'number' },
+      numspaceshipparts: { group: 'Spaceship Parts', control: 'number' },
+      roadmovementrate: { group: 'Other', control: 'number' },
+      upgradecost: { group: 'Other', control: 'number' },
+      foodconsumptionpercitizen: { group: 'Other', control: 'number' },
+      startingtreasury: { group: 'Other', control: 'number' },
+      goldenageduration: { group: 'Other', control: 'number' },
+      defaultdifficultylevel: { group: 'Other', control: 'reference' },
+      defaultmoneyresource: { group: 'Other', control: 'reference' },
+      questionmark1: { group: 'Unknowns', control: 'number' },
+      questionmark2: { group: 'Unknowns', control: 'number' },
+      questionmark3: { group: 'Unknowns', control: 'number' },
+      questionmark4: { group: 'Unknowns', control: 'number' },
+      questionmarkone: { group: 'Unknowns', control: 'number' },
+      questionmarktwo: { group: 'Unknowns', control: 'number' },
+      questionmarkthree: { group: 'Unknowns', control: 'number' },
+      questionmarkfour: { group: 'Unknowns', control: 'number' }
+    }
+  },
+  ESPN: {
+    order: ['civilopediaentry', 'description', 'missionperformedby', 'basecost'],
+    fields: {
+      civilopediaentry: { group: 'General', control: 'text', label: 'Civilopedia Entry' },
+      description: { group: 'General', control: 'text', label: 'Description' },
+      missionperformedby: { group: 'General', control: 'mission_performed_by', label: 'Mission Performed By' },
+      basecost: { group: 'General', control: 'number', min: 0, label: 'Base Cost' }
     }
   },
   TERR: {
@@ -6556,11 +6833,18 @@ function makeBiqSectionIndexOptions(sectionCode, oneBased = false) {
     const biqIndex = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
     entryByIndex.set(biqIndex, entry);
   });
-  return section.records.map((rec, idx) => ({
-    value: String(oneBased ? (idx + 1) : idx),
-    label: String(rec.name || `${code} ${idx + 1}`),
-    entry: entryByIndex.get(idx) || null
-  }));
+  return section.records.map((rec, idx) => {
+    const recIndex = Number.isFinite(rec && rec.index) ? Number(rec.index) : idx;
+    const entry = entryByIndex.get(recIndex) || null;
+    const liveName = String(entry && entry.name || '').trim();
+    const fallbackName = String(rec && rec.name || '').trim();
+    const label = liveName || fallbackName || `${code} ${recIndex + 1}`;
+    return {
+      value: String(oneBased ? (recIndex + 1) : recIndex),
+      label,
+      entry
+    };
+  });
 }
 
 function getBiqStructureRefSpec(sectionCode, baseKey) {
@@ -6574,6 +6858,7 @@ function getBiqStructureRefSpec(sectionCode, baseKey) {
   if (code === 'LEAD' && base === 'civ') return { section: 'RACE', oneBased: false };
   if (code === 'LEAD' && base === 'government') return { section: 'GOVT', oneBased: false };
   if (code === 'LEAD' && base === 'initialera') return { section: 'ERAS', oneBased: false };
+  if (code === 'LEAD' && base === 'difficulty') return { section: 'DIFF', oneBased: false };
   if (code === 'TERR' && base === 'workerjob') return { section: 'TFRM', oneBased: false };
   if (code === 'TERR' && base === 'pollutioneffect') return { section: 'TERR', oneBased: false };
   if (code === 'CTZN' && base === 'prerequisite') return { section: 'TECH', oneBased: false };
@@ -6585,10 +6870,53 @@ function getBiqStructureFieldSpec(sectionCode, field) {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
   const schema = BIQ_STRUCTURE_RULE_SCHEMAS[code] || null;
   if (!schema || !schema.fields) return null;
-  return schema.fields[base] || null;
+  if (schema.fields[base]) return schema.fields[base];
+  const canon = base.replace(/[^a-z0-9]/g, '');
+  if (!canon) return null;
+  const keys = Object.keys(schema.fields);
+  for (let i = 0; i < keys.length; i += 1) {
+    const key = String(keys[i] || '');
+    if (key.replace(/[^a-z0-9]/g, '') === canon) return schema.fields[key];
+  }
+  return null;
 }
 
 function getBiqStructureFieldGroup(sectionCode, field) {
+  const code = String(sectionCode || '').toUpperCase();
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const canon = base.replace(/[^a-z0-9]/g, '');
+  if (code === 'GAME') {
+    if (/^playable_civ$/.test(base)) return 'Player Options';
+    if (/^turns_in_time_section_\d+$/.test(base) || /^time_per_turn_in_time_section_\d+$/.test(base)) return 'Time Scale';
+    const allianceName = base.match(/^alliance(\d+)$/);
+    if (allianceName) {
+      const idx = Number.parseInt(allianceName[1], 10);
+      if (Number.isFinite(idx) && idx >= 0 && idx <= 3) return `Alliance ${idx + 1}`;
+      if (idx === 4) return 'No Alliances';
+      return 'Locked Alliances';
+    }
+    const allianceMember = base.match(/^alliance(\d+)_member_\d+$/);
+    if (allianceMember) {
+      const idx = Number.parseInt(allianceMember[1], 10);
+      if (Number.isFinite(idx) && idx >= 0 && idx <= 3) return `Alliance ${idx + 1}`;
+      if (idx === 4) return 'No Alliances';
+      return 'Locked Alliances';
+    }
+    const allianceWar = base.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_\d+$/);
+    if (allianceWar) {
+      const idx = Number.parseInt(allianceWar[1], 10);
+      if (Number.isFinite(idx) && idx >= 0 && idx <= 3) return `Alliance ${idx + 1}`;
+      return 'Locked Alliances';
+    }
+  }
+  if (code === 'LEAD') {
+    if (/^starting_units_of_type_/.test(base)) return 'Starting Units';
+    if (/^starting_technolog/.test(base)) return 'Free Techs';
+  }
+  if (code === 'RULE') {
+    if (/^number_of_parts_\d+_required$/.test(base)) return 'Spaceship Parts';
+    if (/^questionmark(?:\d+|one|two|three|four)?$/.test(canon)) return 'Unknowns';
+  }
   const spec = getBiqStructureFieldSpec(sectionCode, field);
   if (spec && spec.group) return spec.group;
   return 'Other';
@@ -6598,9 +6926,70 @@ function getBiqStructureFieldOrder(sectionCode, field) {
   const code = String(sectionCode || '').toUpperCase();
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
   const schema = BIQ_STRUCTURE_RULE_SCHEMAS[code] || null;
+  if (code === 'GAME') {
+    if (/^playable_civ$/.test(base)) return 60;
+    const turnsMatch = base.match(/^turns_in_time_section_(\d+)$/);
+    if (turnsMatch) return 260 + Number.parseInt(turnsMatch[1], 10) * 2;
+    const perMatch = base.match(/^time_per_turn_in_time_section_(\d+)$/);
+    if (perMatch) return 261 + Number.parseInt(perMatch[1], 10) * 2;
+    const allianceMemberMatch = base.match(/^alliance(\d+)_member_(\d+)$/);
+    if (allianceMemberMatch) {
+      const allianceIdx = Number.parseInt(allianceMemberMatch[1], 10);
+      const memberIdx = Number.parseInt(allianceMemberMatch[2], 10);
+      return 430 + allianceIdx * 20 + memberIdx;
+    }
+    const allianceWarMatch = base.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_\d+$/);
+    if (allianceWarMatch) {
+      const allianceIdx = Number.parseInt(allianceWarMatch[1], 10);
+      const enemyIdx = Number.parseInt(allianceWarMatch[2], 10);
+      return 520 + allianceIdx * 10 + enemyIdx;
+    }
+  }
+  if (code === 'LEAD') {
+    if (/^starting_units_of_type_/.test(base)) return 200;
+    const techMatch = base.match(/^starting_technology_(\d+)$/);
+    if (techMatch) return 300 + Number.parseInt(techMatch[1], 10);
+  }
+  if (code === 'RULE') {
+    const partReqMatch = base.match(/^number_of_parts_(\d+)_required$/);
+    if (partReqMatch) {
+      const partIdx = Number.parseInt(partReqMatch[1], 10);
+      if (Number.isFinite(partIdx)) return 300 + partIdx;
+      return 300;
+    }
+  }
   if (!schema || !Array.isArray(schema.order)) return Number.MAX_SAFE_INTEGER;
   const idx = schema.order.indexOf(base);
-  return idx >= 0 ? idx : Number.MAX_SAFE_INTEGER;
+  if (idx >= 0) return idx;
+  const canon = base.replace(/[^a-z0-9]/g, '');
+  if (!canon) return Number.MAX_SAFE_INTEGER;
+  const canonIdx = schema.order.findIndex((key) => String(key || '').replace(/[^a-z0-9]/g, '') === canon);
+  return canonIdx >= 0 ? canonIdx : Number.MAX_SAFE_INTEGER;
+}
+
+function parseEspionageMissionPerformedBy(value) {
+  const parsed = parseIntFromDisplayValue(value);
+  const raw = Number.isFinite(parsed) ? parsed : Number.parseInt(String(value || '').trim(), 10);
+  if (!Number.isFinite(raw)) {
+    const text = String(value || '').toLowerCase();
+    return {
+      diplomats: text.includes('diplomat'),
+      spies: text.includes('spy')
+    };
+  }
+  const mask = Math.max(0, Math.min(3, raw));
+  return {
+    diplomats: (mask & 1) !== 0,
+    spies: (mask & 2) !== 0
+  };
+}
+
+function formatEspionageMissionPerformedBy(value) {
+  const stateValue = parseEspionageMissionPerformedBy(value);
+  if (stateValue.diplomats && stateValue.spies) return 'Diplomats + Spies';
+  if (stateValue.spies) return 'Spies';
+  if (stateValue.diplomats) return 'Diplomats';
+  return '(none)';
 }
 
 function shouldHideBiqStructureField(sectionCode, field) {
@@ -7184,7 +7573,16 @@ function getBiqFlavorNames() {
   const sections = biq && Array.isArray(biq.sections) ? biq.sections : [];
   const flavSection = sections.find((section) => String(section && section.code || '').toUpperCase() === 'FLAV');
   const records = flavSection && Array.isArray(flavSection.records) ? flavSection.records : [];
-  return records.map((record, idx) => String(record && record.name || '').trim() || `Flavor ${idx + 1}`);
+  return records.map((record, idx) => {
+    const fromRecord = String(record && record.name || '').trim();
+    const fields = Array.isArray(record && record.fields) ? record.fields : [];
+    const nameField = fields.find((field) => {
+      const base = String(field && (field.baseKey || field.key) || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      return base === 'name' || base === 'description';
+    });
+    const fromField = String(nameField && nameField.value || '').trim();
+    return fromField || fromRecord || `Flavor ${idx + 1}`;
+  });
 }
 
 function getRuleFieldDisplayLabel(tabKey, field, spec) {
@@ -10367,6 +10765,157 @@ function ensureBiqStructureRecordOps(tab) {
   return tab.recordOps;
 }
 
+function getBiqTabByKey(tabKey) {
+  const key = String(tabKey || '').trim();
+  const tabs = state.bundle && state.bundle.tabs;
+  if (!tabs || !key) return null;
+  return tabs[key] || null;
+}
+
+function hasCustomPlayerData(bundle = state.bundle) {
+  const tabs = bundle && bundle.tabs;
+  if (!tabs) return false;
+  const playersTab = tabs.players;
+  const leadSection = getBiqSectionFromTab(playersTab, 'LEAD');
+  return !!(leadSection && Array.isArray(leadSection.records) && leadSection.records.length > 0);
+}
+
+function getDisplayBiqRecordName(sectionCode, record, idxFallback = 0) {
+  const code = String(sectionCode || '').toUpperCase();
+  const idx = Number.isFinite(record && record.index) ? Number(record.index) : Number(idxFallback) || 0;
+  const raw = String(record && record.name || '').trim();
+  if (code === 'LEAD') {
+    if (!raw) return `Player ${idx + 1}`;
+    if (/^lead\b/i.test(raw) || /^lead\s*\d+$/i.test(raw)) return `Player ${idx + 1}`;
+    return raw;
+  }
+  return raw || `${code} ${idx + 1}`;
+}
+
+function getLeadRecordCivEntry(record) {
+  const civField = getFieldByBaseKey(record, 'civ');
+  const civIdx = parseIntFromDisplayValue(civField && civField.value);
+  if (!Number.isFinite(civIdx) || civIdx < 0) return null;
+  const options = makeBiqSectionIndexOptions('RACE', false);
+  const match = options.find((opt) => Number.parseInt(String(opt && opt.value || ''), 10) === civIdx);
+  return match && match.entry ? match.entry : null;
+}
+
+function getBiqSectionFromTab(tab, code) {
+  const sectionCode = String(code || '').trim().toUpperCase();
+  if (!tab || !sectionCode || !Array.isArray(tab.sections)) return null;
+  return tab.sections.find((section) => String(section && section.code || '').trim().toUpperCase() === sectionCode) || null;
+}
+
+function makeBlankBiqStructureRecord({ section, newRecordRef, displayName }) {
+  const records = Array.isArray(section && section.records) ? section.records : [];
+  const template = records[records.length - 1] || records[0] || { fields: [] };
+  const maxIndex = records.reduce((max, rec) => {
+    const idx = Number(rec && rec.index);
+    return Number.isFinite(idx) ? Math.max(max, idx) : max;
+  }, -1);
+  const clonedFields = (Array.isArray(template.fields) ? template.fields : []).map((field) => {
+    const value = makeDefaultBiqStructureFieldValue(field);
+    return {
+      ...field,
+      value,
+      originalValue: ''
+    };
+  });
+  return {
+    index: maxIndex + 1,
+    name: String(displayName || `Record ${maxIndex + 2}`),
+    newRecordRef: String(newRecordRef || '').trim().toUpperCase(),
+    fields: clonedFields
+  };
+}
+
+function syncLeadRecordCountToTarget(targetCountRaw) {
+  const playersTab = getBiqTabByKey('players');
+  const leadSection = getBiqSectionFromTab(playersTab, 'LEAD');
+  if (!playersTab || !leadSection || !Array.isArray(leadSection.records)) return false;
+  const parsed = Number.parseInt(String(targetCountRaw || '').trim(), 10);
+  if (!Number.isFinite(parsed)) return false;
+  const targetCount = Math.max(1, Math.min(32, parsed));
+  const current = leadSection.records.length;
+  if (current === targetCount) return false;
+  const ops = ensureBiqStructureRecordOps(playersTab);
+  if (targetCount > current) {
+    for (let i = current; i < targetCount; i += 1) {
+      const newRef = makeUniqueBiqStructureRecordRef(playersTab, 'LEAD');
+      const newRecord = makeBlankBiqStructureRecord({
+        section: leadSection,
+        newRecordRef: newRef,
+        displayName: `Player ${i + 1}`
+      });
+      leadSection.records.push(newRecord);
+      ops.push({ op: 'add', sectionCode: 'LEAD', newRecordRef: newRef });
+    }
+    return true;
+  }
+  while (leadSection.records.length > targetCount) {
+    const removed = leadSection.records.pop();
+    const targetRef = getBiqStructureRecordRef(removed);
+    if (!targetRef) continue;
+    const target = String(targetRef).trim().toUpperCase();
+    const hadCreate = ops.some((op) => String(op && op.newRecordRef || '').trim().toUpperCase() === target);
+    playersTab.recordOps = ops.filter((op) => {
+      const rec = String(op && op.recordRef || '').trim().toUpperCase();
+      const src = String(op && op.sourceRef || '').trim().toUpperCase();
+      const next = String(op && op.newRecordRef || '').trim().toUpperCase();
+      return rec !== target && src !== target && next !== target;
+    });
+    if (!hadCreate) {
+      ensureBiqStructureRecordOps(playersTab).push({ op: 'delete', sectionCode: 'LEAD', recordRef: target });
+    }
+  }
+  return true;
+}
+
+function ensureCustomPlayerDataEnabled({ preferredCount } = {}) {
+  const playersTab = getBiqTabByKey('players');
+  const leadSection = getBiqSectionFromTab(playersTab, 'LEAD');
+  if (!playersTab || !leadSection || !Array.isArray(leadSection.records)) return false;
+  const current = leadSection.records.length;
+  if (current > 0) return false;
+  const parsed = Number.parseInt(String(preferredCount || '').trim(), 10);
+  const target = Number.isFinite(parsed) ? Math.max(1, Math.min(32, parsed)) : 1;
+  return syncLeadRecordCountToTarget(target);
+}
+
+function getPlayableCivilizationIdSet() {
+  const scenarioTab = getBiqTabByKey('scenarioSettings');
+  const gameSection = getBiqSectionFromTab(scenarioTab, 'GAME');
+  const record = gameSection && Array.isArray(gameSection.records) ? gameSection.records[0] : null;
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  const out = new Set();
+  fields.forEach((field) => {
+    const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+    if (base !== 'playable_civ') return;
+    const parsed = parseIntFromDisplayValue(field.value);
+    if (Number.isFinite(parsed) && parsed >= 0) out.add(parsed);
+  });
+  return out;
+}
+
+function getGamePlayableCivFields(record) {
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  return fields.filter((field) => String(field && (field.baseKey || field.key) || '').toLowerCase() === 'playable_civ');
+}
+
+function getGamePlayableCivCountField(record) {
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  return fields.find((field) => String(field && (field.baseKey || field.key) || '').toLowerCase() === 'numberofplayablecivs') || null;
+}
+
+function syncNumberOfPlayableCivsField(record) {
+  const playable = getGamePlayableCivFields(record);
+  const countField = getGamePlayableCivCountField(record);
+  const count = playable.length;
+  if (countField) countField.value = String(count);
+  return count;
+}
+
 function getBiqRecordCivilopediaKey(record) {
   const fields = Array.isArray(record && record.fields) ? record.fields : [];
   const field = fields.find((f) => canonicalBiqFieldKey(f) === 'civilopediaentry');
@@ -10905,6 +11454,45 @@ async function promptReferenceDeleteAction({ tab, selectedEntry }) {
   if (el.entityModalTitle) el.entityModalTitle.textContent = `Delete ${String((tab && tab.title) || 'Entry').replace(/s$/, '')}`;
   if (el.entityModalBody) {
     el.entityModalBody.textContent = `Delete "${selectedEntry.name || selectedEntry.civilopediaKey}"? Related BIQ references will be relinked on save when supported by the BIQ format.`;
+  }
+  if (el.entityModalConfirm) {
+    el.entityModalConfirm.textContent = 'Delete';
+    el.entityModalConfirm.disabled = false;
+  }
+  if (el.entityModalContent) el.entityModalContent.innerHTML = '';
+  state.entityModal.open = true;
+  el.entityModalOverlay.classList.remove('hidden');
+  el.entityModalOverlay.setAttribute('aria-hidden', 'false');
+  if (el.entityModalConfirm) el.entityModalConfirm.classList.add('danger');
+  if (el.entityModalCancel) el.entityModalCancel.focus({ preventScroll: true });
+  return new Promise((resolve) => {
+    state.entityModal.resolve = resolve;
+    const cleanup = () => {
+      if (el.entityModalConfirm) el.entityModalConfirm.classList.remove('danger');
+    };
+    if (el.entityModalConfirm) {
+      el.entityModalConfirm.onclick = () => {
+        cleanup();
+        resolveEntityModal(true);
+      };
+    }
+    if (el.entityModalCancel) {
+      el.entityModalCancel.onclick = () => {
+        cleanup();
+        resolveEntityModal(false);
+      };
+    }
+  });
+}
+
+async function promptBiqStructureDeleteAction({ sectionCode, sectionTitle, recordName }) {
+  if (!el.entityModalOverlay) return false;
+  const code = String(sectionCode || '').toUpperCase();
+  const title = String(sectionTitle || code || 'Record');
+  const name = String(recordName || '').trim() || '(unnamed)';
+  if (el.entityModalTitle) el.entityModalTitle.textContent = `Delete ${title} Record`;
+  if (el.entityModalBody) {
+    el.entityModalBody.textContent = `Delete "${name}" from ${title}? This removes the record from this scenario when you save.`;
   }
   if (el.entityModalConfirm) {
     el.entityModalConfirm.textContent = 'Delete';
@@ -11843,6 +12431,39 @@ function parseCsvNumberLikeList(raw) {
   return text.split(',').map((part) => String(part || '').trim());
 }
 
+function parseFiniteNumber(value) {
+  const num = Number.parseFloat(String(value == null ? '' : value).trim());
+  return Number.isFinite(num) ? num : null;
+}
+
+function formatScenarioYearLabel(value) {
+  if (!Number.isFinite(value)) return '(unknown)';
+  const rounded = Math.round(value * 100) / 100;
+  const absVal = Math.abs(rounded);
+  const display = Number.isInteger(absVal) ? String(absVal) : String(absVal);
+  return rounded <= 0 ? `${display} BC` : `${display} AD`;
+}
+
+function getTimeProgressionYearRanges(rows, startYearRaw) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const startYear = parseFiniteNumber(startYearRaw);
+  if (!Number.isFinite(startYear)) {
+    return safeRows.map(() => '(unknown)');
+  }
+  let cursor = startYear;
+  return safeRows.map((timeRow) => {
+    const row = timeRow || {};
+    const turns = parseFiniteNumber(row.turnsValue);
+    const perTurn = parseFiniteNumber(row.perTurnValue);
+    const delta = Number.isFinite(turns) && Number.isFinite(perTurn) ? (turns * perTurn) : 0;
+    const startLabel = formatScenarioYearLabel(cursor);
+    const endValue = cursor + delta;
+    const endLabel = formatScenarioYearLabel(endValue);
+    cursor = endValue;
+    return `${startLabel} to ${endLabel}`;
+  });
+}
+
 function extractTimeProgressionModel(groupFields) {
   const fields = Array.isArray(groupFields) ? groupFields : [];
   if (fields.length === 0) return null;
@@ -11959,7 +12580,27 @@ function renderBiqTab(tab) {
   const currentIndex = Number(state.biqSectionSelectionByTab[selectionKey] || 0);
   const selectedSectionIndex = Math.max(0, Math.min(currentIndex, sections.length - 1));
   state.biqSectionSelectionByTab[selectionKey] = selectedSectionIndex;
-  const selected = sections[selectedSectionIndex];
+  const selectedBase = sections[selectedSectionIndex];
+  const selectedBaseCode = String(selectedBase && selectedBase.code || '').toUpperCase();
+  const gamePanelStateKey = `${selectionKey}:game-panel`;
+  const gamePanelDefinitions = selectedBaseCode === 'GAME' ? GAME_PANEL_DEFINITIONS : [];
+  const gamePanelIndex = Math.max(0, Math.min(Number(state.biqSectionSelectionByTab[gamePanelStateKey] || 0), Math.max(0, gamePanelDefinitions.length - 1)));
+  state.biqSectionSelectionByTab[gamePanelStateKey] = gamePanelIndex;
+  const activeGamePanel = gamePanelDefinitions[gamePanelIndex] || null;
+  let selected = selectedBase;
+  let selectedCode = selectedBaseCode;
+  let selectedSectionTab = tab;
+  if (selectedBaseCode === 'GAME' && activeGamePanel && activeGamePanel.id === 'players') {
+    const playersTab = getBiqTabByKey('players');
+    const leadSection = getBiqSectionFromTab(playersTab, 'LEAD');
+    if (playersTab && leadSection) {
+      selected = leadSection;
+      selectedCode = 'LEAD';
+      selectedSectionTab = playersTab;
+    }
+  }
+  const hideRecordList = selectedCode === 'RULE' || selectedCode === 'GAME';
+  let stickySubtabRows = 0;
 
   if (sections.length > 1) {
     const subtabRow = document.createElement('div');
@@ -11980,6 +12621,31 @@ function renderBiqTab(tab) {
       subtabRow.appendChild(btn);
     });
     wrap.appendChild(subtabRow);
+    stickySubtabRows += 1;
+  }
+  if (selectedBaseCode === 'GAME' && gamePanelDefinitions.length > 1) {
+    const panelRow = document.createElement('div');
+    panelRow.className = 'biq-subtabs';
+    gamePanelDefinitions.forEach((panel, idx) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'biq-subtab-btn';
+      btn.classList.toggle('active', idx === gamePanelIndex);
+      btn.textContent = panel.label;
+      btn.addEventListener('click', () => {
+        navigateWithHistory(() => {
+          state.tabContentScrollTop = el.tabContent.scrollTop;
+          state.biqSectionSelectionByTab[gamePanelStateKey] = idx;
+        }, { preserveTabScroll: true });
+      });
+      panelRow.appendChild(btn);
+    });
+    wrap.appendChild(panelRow);
+    stickySubtabRows += 1;
+  }
+  if (stickySubtabRows > 0) {
+    wrap.classList.add('has-biq-subtabs');
+    wrap.style.setProperty('--biq-subtabs-offset', `${stickySubtabRows * 52}px`);
   }
 
   const recordFilterRow = document.createElement('div');
@@ -11994,7 +12660,7 @@ function renderBiqTab(tab) {
   const controlsRight = document.createElement('div');
   controlsRight.className = 'reference-filter-right';
   recordFilterRow.appendChild(controlsRight);
-  wrap.appendChild(recordFilterRow);
+  if (!hideRecordList) wrap.appendChild(recordFilterRow);
 
   const records = Array.isArray(selected.records) ? selected.records : [];
 
@@ -12031,7 +12697,7 @@ function renderBiqTab(tab) {
   state.biqRecordSelection[selected.id] = selectedRecordIndex;
   const selectedRecord = records[selectedRecordIndex] || null;
 
-  const structureMutable = !tab.readOnly && (selected.code === 'TERR' || selected.code === 'TFRM');
+  const structureMutable = !tab.readOnly && (selected.code === 'TERR' || selected.code === 'TFRM' || (selected.code === 'LEAD' && selectionKey === 'players'));
   if (structureMutable) {
     const actionRow = document.createElement('div');
     actionRow.className = 'reference-entity-actions';
@@ -12060,23 +12726,33 @@ function renderBiqTab(tab) {
 
     addBtn.addEventListener('click', () => {
       const newRef = makeUniqueBiqStructureRecordRef(tab, selected.code);
-      const newRecord = buildBiqStructureRecordFromSource({
-        section: selected,
-        sourceRecord: selectedRecord || records[0] || null,
-        mode: 'blank',
-        newRecordRef: newRef
-      });
+      const newRecord = selected.code === 'LEAD'
+        ? makeBlankBiqStructureRecord({
+          section: selected,
+          newRecordRef: newRef,
+          displayName: `Player ${selected.records.length + 1}`
+        })
+        : buildBiqStructureRecordFromSource({
+          section: selected,
+          sourceRecord: selectedRecord || records[0] || null,
+          mode: 'blank',
+          newRecordRef: newRef
+        });
       const ops = ensureBiqStructureRecordOps(tab);
       rememberUndoSnapshot();
-      selected.records.unshift(newRecord);
+      if (selected.code === 'LEAD') selected.records.push(newRecord);
+      else selected.records.unshift(newRecord);
       ops.push({ op: 'add', sectionCode: selected.code, newRecordRef: newRef });
-      state.biqRecordSelection[selected.id] = 0;
+      state.biqRecordSelection[selected.id] = selected.code === 'LEAD'
+        ? Math.max(0, selected.records.length - 1)
+        : 0;
       setDirty(true);
       setStatus(`Added new ${selected.code} record.`);
       renderActiveTab({ preserveTabScroll: true });
     });
 
     copyBtn.addEventListener('click', () => {
+      if (selected.code === 'LEAD') return;
       if (!selectedRecord) return;
       const sourceRef = getBiqStructureRecordRef(selectedRecord);
       if (!sourceRef) {
@@ -12094,13 +12770,19 @@ function renderBiqTab(tab) {
       rememberUndoSnapshot();
       selected.records.unshift(newRecord);
       ops.push({ op: 'copy', sectionCode: selected.code, sourceRef, newRecordRef: newRef });
-      state.biqRecordSelection[selected.id] = 0;
+      state.biqRecordSelection[selected.id] = Math.max(0, Math.min(
+        Number(state.biqRecordSelection[selected.id] || 0),
+        Math.max(0, selected.records.length - 1)
+      ));
       setDirty(true);
       setStatus(`Copied ${selected.code} record.`);
       renderActiveTab({ preserveTabScroll: true });
     });
 
     importBtn.addEventListener('click', async () => {
+      if (selected.code === 'LEAD') {
+        return;
+      }
       const importPath = await window.c3xManager.pickFile({
         filters: [{ name: 'BIQ Scenario Files', extensions: ['biq'] }]
       });
@@ -12142,8 +12824,17 @@ function renderBiqTab(tab) {
       }
     });
 
-    deleteBtn.addEventListener('click', () => {
+    deleteBtn.addEventListener('click', async () => {
       if (!selectedRecord) return;
+      const needsTerrainDeleteConfirm = selectionKey === 'terrain' && (selected.code === 'TERR' || selected.code === 'TFRM');
+      if (needsTerrainDeleteConfirm) {
+        const confirmed = await promptBiqStructureDeleteAction({
+          sectionCode: selected.code,
+          sectionTitle: getFriendlyBiqSectionTitle(selected),
+          recordName: getDisplayBiqRecordName(selected.code, selectedRecord, selectedRecordIndex)
+        });
+        if (!confirmed) return;
+      }
       const targetRef = getBiqStructureRecordRef(selectedRecord);
       if (!targetRef) {
         setStatus('Could not resolve record for delete.', true);
@@ -12170,8 +12861,10 @@ function renderBiqTab(tab) {
     });
 
     actionRow.appendChild(addBtn);
-    actionRow.appendChild(copyBtn);
-    actionRow.appendChild(importBtn);
+    if (selected.code !== 'LEAD') {
+      actionRow.appendChild(copyBtn);
+      actionRow.appendChild(importBtn);
+    }
     actionRow.appendChild(deleteBtn);
     controlsRight.appendChild(actionRow);
   }
@@ -12185,43 +12878,54 @@ function renderBiqTab(tab) {
 
   const layout = document.createElement('div');
   layout.className = 'entry-layout';
+  if (hideRecordList) layout.style.gridTemplateColumns = '1fr';
 
   const listPane = document.createElement('div');
   listPane.className = 'entry-list-pane';
-  const showTerrainThumbs = (selected.code === 'TERR' || selected.code === 'TFRM') && !!(tab && tab.civilopedia);
-  const terrainThumbTabKey = selected.code === 'TFRM' ? 'workerActions' : 'terrainPedia';
-  const recordNeedle = String(state.biqRecordFilter[recordFilterKey] || '').trim().toLowerCase();
-  records.forEach((record, idx) => {
-    const recordTitle = String(record.name || `Record ${record.index + 1}`);
-    if (recordNeedle && !recordTitle.toLowerCase().includes(recordNeedle)) return;
-    const itemBtn = document.createElement('button');
-    itemBtn.className = `entry-list-item${showTerrainThumbs ? '' : ' no-thumb'}`;
-    itemBtn.type = 'button';
-    itemBtn.classList.toggle('active', idx === selectedRecordIndex);
-    const title = document.createElement('strong');
-    title.textContent = recordTitle;
-    if (showTerrainThumbs) {
-      const thumb = document.createElement('span');
-      thumb.className = 'entry-thumb';
-      itemBtn.appendChild(thumb);
-      const pediaEntry = getTerrainCivilopediaEntryForRecord(tab, selected.code, record);
-      if (pediaEntry) {
-        loadReferenceListThumbnail(terrainThumbTabKey, pediaEntry, thumb);
+  if (!hideRecordList) {
+    const showTerrainThumbs = (selected.code === 'TERR' || selected.code === 'TFRM') && !!(tab && tab.civilopedia);
+    const showLeadThumbs = selected.code === 'LEAD';
+    const terrainThumbTabKey = selected.code === 'TFRM' ? 'workerActions' : 'terrainPedia';
+    const recordNeedle = String(state.biqRecordFilter[recordFilterKey] || '').trim().toLowerCase();
+    records.forEach((record, idx) => {
+      const recordTitle = getDisplayBiqRecordName(selected.code, record, idx);
+      if (recordNeedle && !recordTitle.toLowerCase().includes(recordNeedle)) return;
+      const itemBtn = document.createElement('button');
+      itemBtn.className = `entry-list-item${(showTerrainThumbs || showLeadThumbs) ? '' : ' no-thumb'}`;
+      itemBtn.type = 'button';
+      itemBtn.dataset.index = String(idx);
+      itemBtn.classList.toggle('active', idx === selectedRecordIndex);
+      const title = document.createElement('strong');
+      title.textContent = recordTitle;
+      if (showTerrainThumbs) {
+        const thumb = document.createElement('span');
+        thumb.className = 'entry-thumb';
+        itemBtn.appendChild(thumb);
+        const pediaEntry = getTerrainCivilopediaEntryForRecord(tab, selected.code, record);
+        if (pediaEntry) {
+          loadReferenceListThumbnail(terrainThumbTabKey, pediaEntry, thumb);
+        }
+      } else if (showLeadThumbs) {
+        const thumb = document.createElement('span');
+        thumb.className = 'entry-thumb';
+        itemBtn.appendChild(thumb);
+        const civEntry = getLeadRecordCivEntry(record);
+        if (civEntry) loadReferenceListThumbnail('civilizations', civEntry, thumb);
       }
-    }
-    itemBtn.appendChild(title);
-    itemBtn.addEventListener('click', () => {
-      navigateWithHistory(() => {
-        state.biqRecordSelection[selected.id] = idx;
-      }, { preserveTabScroll: true });
+      itemBtn.appendChild(title);
+      itemBtn.addEventListener('click', () => {
+        navigateWithHistory(() => {
+          state.biqRecordSelection[selected.id] = idx;
+        }, { preserveTabScroll: true });
+      });
+      listPane.appendChild(itemBtn);
     });
-    listPane.appendChild(itemBtn);
-  });
-  recordSearch.addEventListener('input', () => {
-    state.biqRecordFilter[recordFilterKey] = recordSearch.value;
-    renderActiveTab({ preserveTabScroll: true });
-  });
-  layout.appendChild(listPane);
+    recordSearch.addEventListener('input', () => {
+      state.biqRecordFilter[recordFilterKey] = recordSearch.value;
+      renderActiveTab({ preserveTabScroll: true });
+    });
+    layout.appendChild(listPane);
+  }
 
   const detailPane = document.createElement('div');
   detailPane.className = 'entry-detail-pane';
@@ -12232,12 +12936,45 @@ function renderBiqTab(tab) {
     detailPane.appendChild(empty);
   } else {
     const record = records[selectedRecordIndex];
+    if (selected.code === 'GAME') {
+      syncNumberOfPlayableCivsField(record);
+    }
     const terrainPediaEntry = (selected.code === 'TERR' || selected.code === 'TFRM')
       ? getTerrainCivilopediaEntryForRecord(tab, selected.code, record)
       : null;
+    const recordDisplayName = getDisplayBiqRecordName(selected.code, record, selectedRecordIndex);
     const card = document.createElement('div');
     card.className = 'section-card';
-    card.innerHTML = `<div class="section-top"><strong>${record.name || `Record ${record.index + 1}`}</strong><span class="hint">${selected.code} | #${record.index + 1}</span></div>`;
+    if (selected.code === 'GAME') {
+      card.innerHTML = `<div class="section-top"><strong>${tab.title || 'Scenario'}</strong></div>`;
+    } else {
+      card.innerHTML = `<div class="section-top"><strong>${recordDisplayName}</strong><span class="hint">${selected.code} | #${record.index + 1}</span></div>`;
+    }
+    const fallbackRecordName = selected.code === 'LEAD'
+      ? `Player ${selectedRecordIndex + 1}`
+      : `Record ${record.index + 1}`;
+    const syncDisplayedRecordName = (nextNameRaw) => {
+      const nextName = String(nextNameRaw || '').trim() || fallbackRecordName;
+      record.name = nextName;
+      const listTitle = listPane.querySelector(`.entry-list-item[data-index="${selectedRecordIndex}"] strong`);
+      if (listTitle) listTitle.textContent = nextName;
+      const detailTitle = card.querySelector('.section-top strong');
+      if (detailTitle) detailTitle.textContent = nextName;
+    };
+    const maybeSyncRecordNameFromField = (field, nextValue) => {
+      const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+      const canon = base.replace(/[^a-z0-9]/g, '');
+      const label = String(field && field.label || '').trim().toLowerCase();
+      const isFlavorNameField = String(selected && selected.code || '').toUpperCase() === 'FLAV' && canon === 'description';
+      if (isFlavorNameField) {
+        syncDisplayedRecordName(nextValue);
+        return;
+      }
+      const isNameLike = canon === 'name' || canon.endsWith('name') || label === 'name' || label.endsWith(' name');
+      const codeUpper = String(selected && selected.code || '').toUpperCase();
+      const usesDescriptionAsName = canon === 'description' && ['FLAV', 'ESPN', 'CTZN', 'CULT', 'EXPR'].includes(codeUpper);
+      if (isNameLike || usesDescriptionAsName) syncDisplayedRecordName(nextValue);
+    };
     const detailLayout = document.createElement('div');
     detailLayout.className = 'reference-detail-layout';
     const textCol = document.createElement('div');
@@ -12359,7 +13096,334 @@ function renderBiqTab(tab) {
         grouped.get(group).push(field);
       });
       const activeTabKey = String(state.activeTab || '').trim();
-      for (const [groupName, groupFields] of grouped.entries()) {
+      const isAlliancePanel = selected.code === 'GAME' && activeGamePanel && activeGamePanel.id === 'alliances';
+      const consumedPinnedFields = new Set();
+      let groupedEntries = Array.from(grouped.entries()).filter(([groupName]) => {
+        if (selected.code !== 'GAME' || !activeGamePanel || !Array.isArray(activeGamePanel.groups)) return true;
+        if (!activeGamePanel.groups.includes(groupName)) return false;
+        if (isAlliancePanel && (groupName === 'No Alliances' || /^Alliance \d+$/.test(groupName))) return false;
+        return true;
+      });
+      if (selected.code === 'GAME') {
+        const startDateIdx = groupedEntries.findIndex(([groupName]) => groupName === 'Start Date');
+        const timeScaleIdx = groupedEntries.findIndex(([groupName]) => groupName === 'Time Scale');
+        if (startDateIdx >= 0 && timeScaleIdx >= 0 && timeScaleIdx !== startDateIdx + 1) {
+          const [timeScaleEntry] = groupedEntries.splice(timeScaleIdx, 1);
+          const insertAt = Math.min(startDateIdx + 1, groupedEntries.length);
+          groupedEntries.splice(insertAt, 0, timeScaleEntry);
+        }
+      }
+      if (selected.code === 'GAME' && activeGamePanel && activeGamePanel.id === 'scenario') {
+        const titleField = getFieldByBaseKey(record, 'title');
+        const descriptionField = getFieldByBaseKey(record, 'description');
+        const pinnedFields = [titleField, descriptionField].filter(Boolean);
+        if (pinnedFields.length > 0) {
+          const topCard = document.createElement('div');
+          topCard.className = 'rule-group-card';
+          const topTitle = document.createElement('div');
+          topTitle.className = 'rule-group-title';
+          topTitle.textContent = 'Scenario Metadata';
+          topCard.appendChild(topTitle);
+          const editable = !tab.readOnly;
+          pinnedFields.forEach((field) => {
+            consumedPinnedFields.add(field);
+            const row = document.createElement('div');
+            row.className = 'rule-row';
+            const label = document.createElement('label');
+            label.className = 'field-meta';
+            const baseKey = String(field.baseKey || field.key || '').toLowerCase();
+            label.textContent = baseKey === 'title' ? 'Scenario Title' : 'Scenario Description';
+            attachRichTooltip(
+              label,
+              withFieldHelp(
+                `Source: BIQ\nFile: ${compactPathFromCiv3Root(tab.sourcePath || '') || '(not available)'}\nSection: ${selected.title || selected.code}\nSection Code: ${selected.code}\nField: ${String(field.baseKey || field.key || '')}\nRecord: ${record.index + 1}`,
+                { sectionCode: selected.code, fieldKey: String(field.baseKey || field.key || '') }
+              )
+            );
+            row.appendChild(label);
+            const controlWrap = document.createElement('div');
+            controlWrap.className = 'rule-control';
+            if (editable) {
+              const input = document.createElement(baseKey === 'description' ? 'textarea' : 'input');
+              if (input.tagName === 'INPUT') input.type = 'text';
+              input.value = String(field.value || '');
+              input.addEventListener('input', () => {
+                rememberUndoSnapshot();
+                field.value = input.value;
+                setDirty(true);
+              });
+              controlWrap.appendChild(input);
+            } else {
+              const text = document.createElement('div');
+              text.className = 'field-meta';
+              text.textContent = String(field.value || '(none)');
+              controlWrap.appendChild(text);
+            }
+            row.appendChild(controlWrap);
+            topCard.appendChild(row);
+          });
+          rows.appendChild(topCard);
+        }
+      }
+      const allianceNameByIndex = {};
+      const playableCivIdSet = selected.code === 'GAME' ? getPlayableCivilizationIdSet() : new Set();
+      if (selected.code === 'GAME') {
+        fields.forEach((field) => {
+          const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+          const m = base.match(/^alliance(\d+)$/);
+          if (!m) return;
+          const idx = Number.parseInt(m[1], 10);
+          if (!Number.isFinite(idx)) return;
+          const fallback = idx === 4 ? 'No Alliances' : `Alliance ${idx + 1}`;
+          const value = String(field.value || '').trim();
+          allianceNameByIndex[idx] = value || fallback;
+        });
+      }
+      if (isAlliancePanel) {
+        const boardCard = document.createElement('div');
+        boardCard.className = 'rule-group-card';
+        const memberFieldsByAllianceAndCiv = new Map();
+        fields.forEach((field) => {
+          const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+          const m = base.match(/^alliance(\d+)_member_(\d+)$/);
+          if (!m) return;
+          const allianceIdx = Number.parseInt(m[1], 10);
+          const civIdx = Number.parseInt(m[2], 10);
+          if (!Number.isFinite(allianceIdx) || !Number.isFinite(civIdx)) return;
+          memberFieldsByAllianceAndCiv.set(`${allianceIdx}:${civIdx}`, field);
+        });
+        const findAllianceNameField = (idx) => {
+          const target = `alliance${idx}`;
+          return (Array.isArray(record.fields) ? record.fields : []).find((f) => String(f && (f.baseKey || f.key) || '').toLowerCase() === target) || null;
+        };
+        const civOptionsAll = makeBiqSectionIndexOptions('RACE', false);
+        const civOptions = playableCivIdSet.size > 0
+          ? civOptionsAll.filter((opt) => {
+            const idx = Number.parseInt(String(opt && opt.value || ''), 10);
+            return Number.isFinite(idx) && playableCivIdSet.has(idx);
+          })
+          : civOptionsAll;
+        const boolish = (value) => {
+          const raw = String(value || '').trim().toLowerCase();
+          return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+        };
+        const civToAlliance = new Map();
+        civOptions.forEach((opt) => {
+          const civIdx = Number.parseInt(String(opt.value || ''), 10);
+          if (!Number.isFinite(civIdx)) return;
+          let assigned = -1;
+          for (let allianceIdx = 0; allianceIdx < 4; allianceIdx += 1) {
+            const field = memberFieldsByAllianceAndCiv.get(`${allianceIdx}:${civIdx}`);
+            if (field && boolish(field.value)) {
+              assigned = allianceIdx;
+              break;
+            }
+          }
+          civToAlliance.set(civIdx, assigned);
+        });
+        const board = document.createElement('div');
+        board.className = 'alliance-dnd-board';
+        const ensureAllianceMemberField = (allianceIdx, civIdx) => {
+          const key = `${allianceIdx}:${civIdx}`;
+          const existing = memberFieldsByAllianceAndCiv.get(key);
+          if (existing) return existing;
+          if (!Array.isArray(record.fields)) record.fields = [];
+          const baseKey = `alliance${allianceIdx}_member_${civIdx}`;
+          const created = {
+            key: baseKey,
+            baseKey,
+            label: `Alliance ${allianceIdx + 1} Member ${civIdx + 1}`,
+            value: 'false',
+            originalValue: ''
+          };
+          record.fields.push(created);
+          memberFieldsByAllianceAndCiv.set(key, created);
+          return created;
+        };
+        const moveCivToAlliance = (civIdx, targetAllianceIdx) => {
+          rememberUndoSnapshot();
+          if (targetAllianceIdx >= 0) ensureAllianceMemberField(targetAllianceIdx, civIdx);
+          for (let allianceIdx = 0; allianceIdx < 4; allianceIdx += 1) {
+            const memberField = memberFieldsByAllianceAndCiv.get(`${allianceIdx}:${civIdx}`);
+            if (!memberField) continue;
+            memberField.value = (targetAllianceIdx === allianceIdx) ? 'true' : 'false';
+          }
+          setDirty(true);
+          renderActiveTab({ preserveTabScroll: true });
+        };
+        const makeColumn = (title, targetAllianceIdx) => {
+          const col = document.createElement('div');
+          col.className = 'alliance-dnd-col';
+          const head = document.createElement('div');
+          head.className = 'alliance-dnd-col-title';
+          if (targetAllianceIdx >= 0 && !tab.readOnly) {
+            const nameBtn = document.createElement('button');
+            nameBtn.type = 'button';
+            nameBtn.className = 'alliance-name-btn';
+            const nameText = document.createElement('span');
+            nameText.textContent = title;
+            const editIcon = document.createElement('span');
+            editIcon.className = 'alliance-name-edit-icon';
+            editIcon.textContent = '✎';
+            nameBtn.appendChild(nameText);
+            nameBtn.appendChild(editIcon);
+            nameBtn.addEventListener('click', () => {
+              const input = document.createElement('input');
+              input.type = 'text';
+              input.className = 'alliance-name-input';
+              input.value = title;
+              const commit = () => {
+                const next = String(input.value || '').trim() || `Alliance ${targetAllianceIdx + 1}`;
+                const field = findAllianceNameField(targetAllianceIdx);
+                if (field && String(field.value || '') !== next) {
+                  rememberUndoSnapshot();
+                  field.value = next;
+                  setDirty(true);
+                }
+                renderActiveTab({ preserveTabScroll: true });
+              };
+              input.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Enter') commit();
+                if (ev.key === 'Escape') renderActiveTab({ preserveTabScroll: true });
+              });
+              input.addEventListener('blur', commit);
+              head.innerHTML = '';
+              head.appendChild(input);
+              window.requestAnimationFrame(() => {
+                input.focus();
+                input.select();
+              });
+            });
+            head.appendChild(nameBtn);
+          } else {
+            head.textContent = title;
+          }
+          col.appendChild(head);
+          const body = document.createElement('div');
+          body.className = 'alliance-dnd-dropzone';
+          if (!tab.readOnly) {
+            body.addEventListener('dragover', (ev) => {
+              ev.preventDefault();
+              body.classList.add('drag-over');
+            });
+            body.addEventListener('dragleave', () => body.classList.remove('drag-over'));
+            body.addEventListener('drop', (ev) => {
+              ev.preventDefault();
+              body.classList.remove('drag-over');
+              const civRaw = String(ev.dataTransfer && ev.dataTransfer.getData('text/plain') || '');
+              const civIdx = Number.parseInt(civRaw, 10);
+              if (!Number.isFinite(civIdx)) return;
+              moveCivToAlliance(civIdx, targetAllianceIdx);
+            });
+          }
+          const civs = civOptions.filter((opt) => {
+            const civIdx = Number.parseInt(String(opt.value || ''), 10);
+            if (!Number.isFinite(civIdx)) return false;
+            const assigned = civToAlliance.get(civIdx);
+            return (targetAllianceIdx < 0 && assigned < 0) || assigned === targetAllianceIdx;
+          });
+          if (civs.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'alliance-dnd-empty';
+            empty.textContent = '(none)';
+            body.appendChild(empty);
+          } else {
+            civs.forEach((opt) => {
+              const chip = document.createElement('button');
+              chip.type = 'button';
+              chip.className = 'alliance-dnd-chip';
+              const thumb = document.createElement('span');
+              thumb.className = 'entry-thumb alliance-dnd-thumb';
+              chip.appendChild(thumb);
+              if (opt && opt.entry) loadReferenceListThumbnail('civilizations', opt.entry, thumb);
+              const text = document.createElement('span');
+              text.textContent = String(opt.label || opt.value);
+              chip.appendChild(text);
+              const civIdx = Number.parseInt(String(opt.value || ''), 10);
+              if (!tab.readOnly) {
+                chip.draggable = true;
+                chip.addEventListener('dragstart', (ev) => {
+                  if (!ev.dataTransfer) return;
+                  ev.dataTransfer.effectAllowed = 'move';
+                  ev.dataTransfer.setData('text/plain', String(civIdx));
+                });
+              } else {
+                chip.disabled = true;
+              }
+              body.appendChild(chip);
+            });
+          }
+          col.appendChild(body);
+          return col;
+        };
+        board.appendChild(makeColumn('No Alliances', -1));
+        for (let allianceIdx = 0; allianceIdx < 4; allianceIdx += 1) {
+          const label = allianceNameByIndex[allianceIdx] || `Alliance ${allianceIdx + 1}`;
+          board.appendChild(makeColumn(label, allianceIdx));
+        }
+        boardCard.appendChild(board);
+        for (let allianceIdx = 0; allianceIdx < 4; allianceIdx += 1) {
+          const warFields = fields.filter((field) => {
+            const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+            return new RegExp(`^alliance${allianceIdx}_is_at_war_with_alliance\\d+_\\d+$`).test(base);
+          });
+          if (warFields.length === 0) continue;
+          const warRow = document.createElement('div');
+          warRow.className = 'rule-row';
+          const label = document.createElement('label');
+          label.className = 'field-meta';
+          label.textContent = `${allianceNameByIndex[allianceIdx] || `Alliance ${allianceIdx + 1}`} At War With`;
+          warRow.appendChild(label);
+          const controlWrap = document.createElement('div');
+          controlWrap.className = 'rule-control';
+          const options = [];
+          const selectedVals = [];
+          warFields.forEach((f) => {
+            const base = String(f.baseKey || f.key || '').toLowerCase();
+            const m = base.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_\d+$/);
+            if (!m) return;
+            const enemyIdx = Number.parseInt(m[2], 10);
+            if (!Number.isFinite(enemyIdx) || enemyIdx === allianceIdx) return;
+            options.push({
+              value: String(enemyIdx),
+              label: allianceNameByIndex[enemyIdx] || `Alliance ${enemyIdx + 1}`
+            });
+            if (boolish(f.value)) selectedVals.push(String(enemyIdx));
+          });
+          if (!tab.readOnly) {
+            const editor = makeNamedListPickerEditor({
+              tabKey: 'scenarioSettings',
+              options,
+              values: selectedVals,
+              onValuesChange: (nextValues) => {
+                rememberUndoSnapshot();
+                const nextSet = new Set((Array.isArray(nextValues) ? nextValues : []).map((v) => String(v)));
+                warFields.forEach((f) => {
+                  const base = String(f.baseKey || f.key || '').toLowerCase();
+                  const m = base.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_\d+$/);
+                  if (!m) return;
+                  const enemyIdx = String(Number.parseInt(m[2], 10));
+                  f.value = nextSet.has(enemyIdx) ? 'true' : 'false';
+                });
+                setDirty(true);
+              }
+            });
+            controlWrap.appendChild(editor);
+          } else {
+            const labels = options
+              .filter((opt) => selectedVals.includes(String(opt.value)))
+              .map((opt) => String(opt.label || opt.value));
+            const text = document.createElement('div');
+            text.className = 'field-meta';
+            text.textContent = labels.length ? labels.join(', ') : '(none)';
+            controlWrap.appendChild(text);
+          }
+          warRow.appendChild(controlWrap);
+          boardCard.appendChild(warRow);
+        }
+        rows.appendChild(boardCard);
+      }
+      for (const [groupName, groupFields] of groupedEntries) {
         const groupCard = document.createElement('div');
         groupCard.className = 'rule-group-card';
         const groupTitle = document.createElement('div');
@@ -12372,6 +13436,174 @@ function renderBiqTab(tab) {
         const consumedTimeFields = timeProgressionModel && timeProgressionModel.consumedFields
           ? timeProgressionModel.consumedFields
           : new Set();
+        let refreshTimeProgressionYearRanges = null;
+        const consumedSpecialFields = new Set();
+        if (selected.code === 'GAME') {
+          groupFields.forEach((field) => {
+            const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+            if (/^alliance\d+$/.test(base)) consumedSpecialFields.add(field);
+          });
+        }
+
+        if (selected.code === 'GAME' && groupName === 'Player Options') {
+          const actionsRow = document.createElement('div');
+          actionsRow.className = 'rule-row';
+          const actionsLabel = document.createElement('label');
+          actionsLabel.className = 'field-meta';
+          actionsLabel.textContent = 'Playable Civilizations';
+          actionsRow.appendChild(actionsLabel);
+          const actionsWrap = document.createElement('div');
+          actionsWrap.className = 'rule-control';
+          const playableFields = getGamePlayableCivFields(record);
+          const countBadge = document.createElement('div');
+          countBadge.className = 'field-meta';
+          countBadge.textContent = `${playableFields.length} slots`;
+          actionsWrap.appendChild(countBadge);
+          if (!tab.readOnly) {
+            const actionBtns = document.createElement('div');
+            actionBtns.className = 'reference-entity-actions';
+            const addBtn = document.createElement('button');
+            addBtn.type = 'button';
+            addBtn.className = 'ghost action-add';
+            addBtn.textContent = '＋ Add Slot';
+            addBtn.addEventListener('click', () => {
+              rememberUndoSnapshot();
+              const allFields = Array.isArray(record.fields) ? record.fields : [];
+              const currentPlayable = getGamePlayableCivFields(record);
+              const lastPlayable = currentPlayable[currentPlayable.length - 1] || null;
+              const newField = lastPlayable
+                ? { ...lastPlayable, value: String(lastPlayable.value || '0'), originalValue: String(lastPlayable.originalValue || '') }
+                : {
+                  key: 'playable_civ',
+                  baseKey: 'playable_civ',
+                  label: 'Playable Civ',
+                  value: '0',
+                  originalValue: ''
+                };
+              const raceOptions = makeBiqSectionIndexOptions('RACE', false);
+              const used = new Set(currentPlayable
+                .map((f) => parseIntFromDisplayValue(f.value))
+                .filter((n) => Number.isFinite(n)));
+              const nextOpt = raceOptions.find((opt) => {
+                const idx = Number.parseInt(String(opt && opt.value || ''), 10);
+                return Number.isFinite(idx) && !used.has(idx);
+              });
+              if (nextOpt) newField.value = String(nextOpt.value);
+              allFields.push(newField);
+              record.fields = allFields;
+              const count = syncNumberOfPlayableCivsField(record);
+              syncLeadRecordCountToTarget(count);
+              setDirty(true);
+              setStatus('Added playable civilization slot.');
+              renderActiveTab({ preserveTabScroll: true });
+            });
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'ghost action-delete';
+            removeBtn.textContent = '🗑 Remove Slot';
+            removeBtn.disabled = playableFields.length <= 1;
+            removeBtn.addEventListener('click', () => {
+              const allFields = Array.isArray(record.fields) ? record.fields : [];
+              let lastIdx = -1;
+              for (let i = allFields.length - 1; i >= 0; i -= 1) {
+                const base = String(allFields[i] && (allFields[i].baseKey || allFields[i].key) || '').toLowerCase();
+                if (base === 'playable_civ') {
+                  lastIdx = i;
+                  break;
+                }
+              }
+              if (lastIdx < 0) return;
+              rememberUndoSnapshot();
+              allFields.splice(lastIdx, 1);
+              const count = syncNumberOfPlayableCivsField(record);
+              syncLeadRecordCountToTarget(count);
+              setDirty(true);
+              setStatus('Removed playable civilization slot.');
+              renderActiveTab({ preserveTabScroll: true });
+            });
+            actionBtns.appendChild(addBtn);
+            actionBtns.appendChild(removeBtn);
+            actionsWrap.appendChild(actionBtns);
+          }
+          actionsRow.appendChild(actionsWrap);
+          groupCard.appendChild(actionsRow);
+        }
+
+        if (selected.code === 'GAME' && /^Alliance \d+$/.test(groupName)) {
+          const allianceNum = Number.parseInt(groupName.replace('Alliance ', ''), 10);
+          const allianceIdx = Number.isFinite(allianceNum) ? allianceNum - 1 : -1;
+          if (allianceIdx >= 0) {
+            const memberFields = groupFields.filter((field) => {
+              const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+              return new RegExp(`^alliance${allianceIdx}_member_\\d+$`).test(base);
+            });
+            const warFields = groupFields.filter((field) => {
+              const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+              return new RegExp(`^alliance${allianceIdx}_is_at_war_with_alliance\\d+_\\d+$`).test(base);
+            });
+            const boolish = (value) => {
+              const raw = String(value || '').trim().toLowerCase();
+              return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+            };
+            memberFields.forEach((f) => consumedSpecialFields.add(f));
+
+            if (warFields.length > 0) {
+              const row = document.createElement('div');
+              row.className = 'rule-row';
+              const label = document.createElement('label');
+              label.className = 'field-meta';
+              label.textContent = 'At war with';
+              row.appendChild(label);
+              const controlWrap = document.createElement('div');
+              controlWrap.className = 'rule-control';
+              const options = [];
+              const selectedVals = [];
+              warFields.forEach((f) => {
+                const base = String(f.baseKey || f.key || '').toLowerCase();
+                const m = base.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_\d+$/);
+                if (!m) return;
+                const enemyIdx = Number.parseInt(m[2], 10);
+                if (!Number.isFinite(enemyIdx) || enemyIdx === allianceIdx) return;
+                options.push({
+                  value: String(enemyIdx),
+                  label: allianceNameByIndex[enemyIdx] || `Alliance ${enemyIdx + 1}`
+                });
+                if (boolish(f.value)) selectedVals.push(String(enemyIdx));
+              });
+              if (!tab.readOnly) {
+                const editor = makeNamedListPickerEditor({
+                  tabKey: 'scenarioSettings',
+                  options,
+                  values: selectedVals,
+                  onValuesChange: (nextValues) => {
+                    rememberUndoSnapshot();
+                    const nextSet = new Set((Array.isArray(nextValues) ? nextValues : []).map((v) => String(v)));
+                    warFields.forEach((f) => {
+                      const base = String(f.baseKey || f.key || '').toLowerCase();
+                      const m = base.match(/^alliance(\d+)_is_at_war_with_alliance(\d+)_\d+$/);
+                      if (!m) return;
+                      const enemyIdx = String(Number.parseInt(m[2], 10));
+                      f.value = nextSet.has(enemyIdx) ? 'true' : 'false';
+                    });
+                    setDirty(true);
+                  }
+                });
+                controlWrap.appendChild(editor);
+              } else {
+                const labels = options
+                  .filter((opt) => selectedVals.includes(String(opt.value)))
+                  .map((opt) => String(opt.label || opt.value));
+                const text = document.createElement('div');
+                text.className = 'field-meta';
+                text.textContent = labels.length ? labels.join(', ') : '(none)';
+                controlWrap.appendChild(text);
+              }
+              row.appendChild(controlWrap);
+              groupCard.appendChild(row);
+              warFields.forEach((f) => consumedSpecialFields.add(f));
+            }
+          }
+        }
         if (timeProgressionModel && Array.isArray(timeProgressionModel.rows) && timeProgressionModel.rows.length > 0) {
           const tableRow = document.createElement('div');
           tableRow.className = 'rule-row';
@@ -12390,7 +13622,7 @@ function renderBiqTab(tab) {
           table.className = 'time-progression-table';
           const thead = document.createElement('thead');
           const headRow = document.createElement('tr');
-          ['Section', 'Turns', 'Time / Turn'].forEach((title) => {
+          ['Section', 'Turns', 'Time / Turn', 'Year Range'].forEach((title) => {
             const th = document.createElement('th');
             th.textContent = title;
             headRow.appendChild(th);
@@ -12399,13 +13631,24 @@ function renderBiqTab(tab) {
           table.appendChild(thead);
           const tbody = document.createElement('tbody');
           const editable = !tab.readOnly;
+          const rangeCells = [];
+          const refreshYearRangeCells = () => {
+            const ranges = getTimeProgressionYearRanges(timeProgressionModel.rows, getBiqRecordFieldValueByBaseKey(record, 'startyear'));
+            rangeCells.forEach((cell, rowIdx) => {
+              cell.textContent = String(ranges[rowIdx] || '(unknown)');
+            });
+          };
+          refreshTimeProgressionYearRanges = refreshYearRangeCells;
           timeProgressionModel.rows.forEach((timeRow, idx) => {
             const tr = document.createElement('tr');
             const secTd = document.createElement('td');
-            secTd.textContent = String(timeRow.section);
+            secTd.textContent = 'Next';
             tr.appendChild(secTd);
             const turnsTd = document.createElement('td');
             const perTurnTd = document.createElement('td');
+            const rangeTd = document.createElement('td');
+            rangeTd.className = 'field-meta';
+            rangeCells.push(rangeTd);
             if (editable) {
               const turnsInput = document.createElement('input');
               turnsInput.type = 'number';
@@ -12419,6 +13662,7 @@ function renderBiqTab(tab) {
                   timeProgressionModel.turnsCsvField.value = serializeTimeProgressionList(timeProgressionModel.rows, 'turnsValue');
                 }
                 setDirty(true);
+                refreshYearRangeCells();
               });
               turnsTd.appendChild(turnsInput);
 
@@ -12434,6 +13678,7 @@ function renderBiqTab(tab) {
                   timeProgressionModel.perTurnCsvField.value = serializeTimeProgressionList(timeProgressionModel.rows, 'perTurnValue');
                 }
                 setDirty(true);
+                refreshYearRangeCells();
               });
               perTurnTd.appendChild(perInput);
             } else {
@@ -12442,20 +13687,42 @@ function renderBiqTab(tab) {
             }
             tr.appendChild(turnsTd);
             tr.appendChild(perTurnTd);
+            tr.appendChild(rangeTd);
             tbody.appendChild(tr);
           });
+          refreshYearRangeCells();
           table.appendChild(tbody);
           tableWrap.appendChild(table);
           tableRow.appendChild(tableWrap);
           groupCard.appendChild(tableRow);
         }
-        groupFields.forEach((field) => {
+        groupFields.forEach((field, fieldIdx) => {
+          if (consumedPinnedFields.has(field)) return;
           if (consumedTimeFields.has(field)) return;
+          if (consumedSpecialFields.has(field)) return;
           const row = document.createElement('div');
           row.className = 'rule-row';
           const label = document.createElement('label');
           label.className = 'field-meta';
-          label.textContent = String(field.label || field.key);
+          const baseKeyRaw = String(field.baseKey || field.key || '').toLowerCase();
+          let displayLabel = String(field.label || field.key);
+          if (selected.code === 'GAME' && baseKeyRaw === 'playable_civ') {
+            const playableIdx = groupFields
+              .slice(0, fieldIdx + 1)
+              .filter((f) => String(f.baseKey || f.key || '').toLowerCase() === 'playable_civ')
+              .length;
+            displayLabel = `Playable Civilization ${playableIdx}`;
+          } else if (selected.code === 'LEAD' && /^starting_units_of_type_/.test(baseKeyRaw)) {
+            const unitName = baseKeyRaw
+              .replace(/^starting_units_of_type_/, '')
+              .replace(/_/g, ' ')
+              .replace(/\b\w/g, (m) => m.toUpperCase());
+            displayLabel = unitName ? `${unitName} Units` : displayLabel;
+          } else if (selected.code === 'LEAD' && /^starting_technology_\d+$/.test(baseKeyRaw)) {
+            const techIdx = Number.parseInt(baseKeyRaw.replace(/^starting_technology_/, ''), 10);
+            if (Number.isFinite(techIdx)) displayLabel = `Free Technology ${techIdx + 1}`;
+          }
+          label.textContent = displayLabel;
           const biqFieldKey = String(field.baseKey || field.key || '');
           attachRichTooltip(
             label,
@@ -12519,7 +13786,16 @@ function renderBiqTab(tab) {
             return;
           }
           const refSpec = getBiqStructureRefSpec(selected.code, baseKey);
-          const refOptions = refSpec ? makeBiqSectionIndexOptions(refSpec.section, !!refSpec.oneBased) : [];
+          let refOptions = refSpec ? makeBiqSectionIndexOptions(refSpec.section, !!refSpec.oneBased) : [];
+          if (selected.code === 'LEAD' && baseKey === 'civ') {
+            const playable = getPlayableCivilizationIdSet();
+            if (playable.size > 0) {
+              refOptions = refOptions.filter((opt) => {
+                const idx = Number.parseInt(String(opt && opt.value || ''), 10);
+                return Number.isFinite(idx) && playable.has(idx);
+              });
+            }
+          }
           const refTargetTabKey = refSpec ? (BIQ_SECTION_TO_REFERENCE_TAB[String(refSpec.section || '').toUpperCase()] || '') : '';
           const parsed = parseIntFromDisplayValue(field.value);
           const rawText = String(field.value || '').trim();
@@ -12553,6 +13829,15 @@ function renderBiqTab(tab) {
                 onSelect: (value) => {
                   rememberUndoSnapshot();
                   field.value = String(value);
+                  if (selected.code === 'LEAD' && baseKey === 'civ') {
+                    const listItem = listPane.querySelector(`.entry-list-item[data-index="${selectedRecordIndex}"]`);
+                    const thumbHost = listItem ? listItem.querySelector('.entry-thumb') : null;
+                    if (thumbHost) {
+                      thumbHost.innerHTML = '';
+                      const civEntry = getLeadRecordCivEntry(record);
+                      if (civEntry) loadReferenceListThumbnail('civilizations', civEntry, thumbHost);
+                    }
+                  }
                   setDirty(true);
                 }
               });
@@ -12580,6 +13865,39 @@ function renderBiqTab(tab) {
                 setDirty(true);
               });
               controlWrap.appendChild(select);
+            } else if (desiredControl === 'mission_performed_by') {
+              const parsedMission = parseEspionageMissionPerformedBy(field.value);
+              const missionWrap = document.createElement('div');
+              missionWrap.className = 'field-checkbox-list';
+              const diplomatLabel = document.createElement('label');
+              diplomatLabel.className = 'bool-toggle';
+              const diplomatCheck = document.createElement('input');
+              diplomatCheck.type = 'checkbox';
+              diplomatCheck.checked = parsedMission.diplomats;
+              const diplomatText = document.createElement('span');
+              diplomatText.textContent = 'Diplomat';
+              diplomatLabel.appendChild(diplomatCheck);
+              diplomatLabel.appendChild(diplomatText);
+              missionWrap.appendChild(diplomatLabel);
+              const spyLabel = document.createElement('label');
+              spyLabel.className = 'bool-toggle';
+              const spyCheck = document.createElement('input');
+              spyCheck.type = 'checkbox';
+              spyCheck.checked = parsedMission.spies;
+              const spyText = document.createElement('span');
+              spyText.textContent = 'Spy';
+              spyLabel.appendChild(spyCheck);
+              spyLabel.appendChild(spyText);
+              missionWrap.appendChild(spyLabel);
+              const persistMissionValue = () => {
+                rememberUndoSnapshot();
+                const nextMask = (diplomatCheck.checked ? 1 : 0) + (spyCheck.checked ? 2 : 0);
+                field.value = String(nextMask);
+                setDirty(true);
+              };
+              diplomatCheck.addEventListener('change', persistMissionValue);
+              spyCheck.addEventListener('change', persistMissionValue);
+              controlWrap.appendChild(missionWrap);
             } else if (desiredControl === 'bool' || looksBoolean) {
               const toggle = document.createElement('label');
               toggle.className = 'bool-toggle';
@@ -12608,7 +13926,20 @@ function renderBiqTab(tab) {
                 rememberUndoSnapshot();
                 field.value = input.value;
                 setDirty(true);
+                if (selected.code === 'GAME' && baseKey === 'startyear' && typeof refreshTimeProgressionYearRanges === 'function') {
+                  refreshTimeProgressionYearRanges();
+                }
               });
+              if (selected.code === 'GAME' && baseKey === 'numberofplayablecivs') {
+                input.addEventListener('change', () => {
+                  rememberUndoSnapshot();
+                  const changed = syncLeadRecordCountToTarget(input.value);
+                  if (changed) {
+                    setDirty(true);
+                    setStatus('Player list count synced to Number of Players.');
+                  }
+                });
+              }
               controlWrap.appendChild(input);
             } else {
               const input = document.createElement('input');
@@ -12617,6 +13948,7 @@ function renderBiqTab(tab) {
               input.addEventListener('input', () => {
                 rememberUndoSnapshot();
                 field.value = input.value;
+                maybeSyncRecordNameFromField(field, input.value);
                 setDirty(true);
               });
               controlWrap.appendChild(input);
@@ -12624,7 +13956,8 @@ function renderBiqTab(tab) {
           } else {
             const text = document.createElement('div');
             text.className = 'field-meta';
-            text.textContent = String(field.value || '(none)');
+            if (desiredControl === 'mission_performed_by') text.textContent = formatEspionageMissionPerformedBy(field.value);
+            else text.textContent = String(field.value || '(none)');
             controlWrap.appendChild(text);
           }
 
@@ -12709,8 +14042,14 @@ function renderMapTab(tab) {
 
 function getFieldByBaseKey(record, baseKey) {
   if (!record || !Array.isArray(record.fields)) return null;
-  const target = String(baseKey || '').toLowerCase();
-  return record.fields.find((f) => String(f.key || '').toLowerCase() === target) || null;
+  const toCanonical = (v) => String(v || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const targetRaw = String(baseKey || '').trim().toLowerCase();
+  const targetCanon = toCanonical(baseKey);
+  return record.fields.find((f) => {
+    const keyRaw = String(f && (f.baseKey || f.key) || '').trim().toLowerCase();
+    if (keyRaw === targetRaw) return true;
+    return toCanonical(keyRaw) === targetCanon;
+  }) || null;
 }
 
 function parseIntLoose(value, fallback = 0) {
@@ -12768,6 +14107,26 @@ function colorFromNumber(value) {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
+function colorFromCivSlot(slot, fallback = null) {
+  const idx = ((Number(slot) % 32) + 32) % 32;
+  const cached = state.biqMapNtpColorCache && state.biqMapNtpColorCache[idx];
+  if (cached) return cached;
+  const canvas = state.biqMapArtCache && state.biqMapArtCache[`ntp-${idx}`];
+  if (canvas && typeof canvas.getContext === 'function') {
+    try {
+      const ctx = canvas.getContext('2d');
+      const px = ctx.getImageData(0, 0, 1, 1).data;
+      const css = `rgb(${px[0]}, ${px[1]}, ${px[2]})`;
+      state.biqMapNtpColorCache[idx] = css;
+      return css;
+    } catch (_err) {
+      // fall back below
+    }
+  }
+  if (fallback) return fallback;
+  return colorFromNumber(idx);
+}
+
 function decodeRgbaBase64(preview) {
   if (!preview || !preview.rgbaBase64 || !preview.width || !preview.height) return null;
   const bin = atob(preview.rgbaBase64);
@@ -12788,7 +14147,7 @@ function rgbaToCanvas(preview) {
   return canvas;
 }
 
-function requestBiqMapArtAsset(assetKey, assetPath) {
+function requestBiqMapArtAsset(assetKey, assetPath, previewOptions = null) {
   if (!state.settings || !state.settings.civ3Path) return;
   if (state.biqMapArtCache[assetKey] || state.biqMapArtLoading[assetKey]) return;
   state.biqMapArtLoading[assetKey] = true;
@@ -12798,7 +14157,8 @@ function requestBiqMapArtAsset(assetKey, assetPath) {
     civ3Path: state.settings.civ3Path,
     scenarioPath: state.settings.scenarioPath,
     scenarioPaths: getScenarioPreviewPaths(),
-    assetPath
+    assetPath,
+    options: previewOptions || undefined
   }).then((res) => {
     if (res && res.ok && !res.animated) {
       const canvas = rgbaToCanvas(res);
@@ -13390,10 +14750,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     floatingTopLeft.className = 'biq-map-floating-panel biq-map-floating-top-left';
     floatingTopLeft.appendChild(controls);
     floatingTopLeft.appendChild(toolRow);
-    floatingRight = document.createElement('div');
-    floatingRight.className = 'biq-map-floating-panel biq-map-floating-right';
     mapFrame.appendChild(floatingTopLeft);
-    mapFrame.appendChild(floatingRight);
   }
   const mapPane = document.createElement('div');
   mapPane.className = 'biq-map-canvas-wrap';
@@ -13777,6 +15134,24 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   requestBiqMapArtAsset('irrigationPlains', 'Art/Terrain/irrigation PLAINS.pcx');
   requestBiqMapArtAsset('irrigationDesert', 'Art/Terrain/irrigation DESETT.pcx');
   requestBiqMapArtAsset('irrigationTundra', 'Art/Terrain/irrigation TUNDRA.pcx');
+  requestBiqMapArtAsset('grasslandForests', 'Art/Terrain/grassland forests.pcx');
+  requestBiqMapArtAsset('plainsForests', 'Art/Terrain/plains forests.pcx');
+  requestBiqMapArtAsset('tundraForests', 'Art/Terrain/tundra forests.pcx');
+  requestBiqMapArtAsset('territory', 'Art/Terrain/Territory.pcx', { transparentIndexes: [1, 255] });
+  requestBiqMapArtAsset('hills', 'Art/Terrain/xhills.pcx');
+  requestBiqMapArtAsset('lmHills', 'Art/Terrain/LMHills.pcx');
+  requestBiqMapArtAsset('forestHills', 'Art/Terrain/hill forests.pcx');
+  requestBiqMapArtAsset('jungleHills', 'Art/Terrain/hill jungle.pcx');
+  requestBiqMapArtAsset('mountains', 'Art/Terrain/Mountains.pcx');
+  requestBiqMapArtAsset('snowMountains', 'Art/Terrain/Mountains-snow.pcx');
+  requestBiqMapArtAsset('lmMountains', 'Art/Terrain/LMMountains.pcx');
+  requestBiqMapArtAsset('forestMountains', 'Art/Terrain/mountain forests.pcx');
+  requestBiqMapArtAsset('jungleMountains', 'Art/Terrain/mountain jungles.pcx');
+  requestBiqMapArtAsset('volcanos', 'Art/Terrain/Volcanos.pcx');
+  requestBiqMapArtAsset('forestVolcanos', 'Art/Terrain/Volcanos forests.pcx');
+  requestBiqMapArtAsset('jungleVolcanos', 'Art/Terrain/Volcanos jungles.pcx');
+  requestBiqMapArtAsset('mtnRivers', 'Art/Terrain/mtnRivers.pcx');
+  requestBiqMapArtAsset('deltaRivers', 'Art/Terrain/deltaRivers.pcx');
   requestBiqMapArtAsset('cityAmerc', 'Art/Cities/rAMER.pcx');
   requestBiqMapArtAsset('cityEuro', 'Art/Cities/rEURO.pcx');
   requestBiqMapArtAsset('cityRoman', 'Art/Cities/rROMAN.pcx');
@@ -13787,6 +15162,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   requestBiqMapArtAsset('cityRomanWall', 'Art/Cities/ROMANWALL.pcx');
   requestBiqMapArtAsset('cityMidEastWall', 'Art/Cities/MIDEASTWALL.pcx');
   requestBiqMapArtAsset('cityAsianWall', 'Art/Cities/ASIANWALL.pcx');
+  for (let i = 0; i < 32; i += 1) {
+    const key = `ntp-${i}`;
+    const file = `Art/Units/Palettes/ntp${String(i).padStart(2, '0')}.pcx`;
+    requestBiqMapArtAsset(key, file);
+  }
 
   const goodSection = (tab.sections || []).find((s) => s.code === 'GOOD');
   const goodIconById = {};
@@ -13828,22 +15208,304 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   });
   const raceSection = (tab.sections || []).find((s) => s.code === 'RACE');
   const raceCultureById = {};
+  const raceDefaultColorById = {};
+  const raceIdByName = {};
+  const getFieldRawValue = (record, baseKey) => {
+    const field = getFieldByBaseKey(record, baseKey);
+    if (!field) return '';
+    const raw = String(field.originalValue == null ? '' : field.originalValue).trim();
+    if (raw) return raw;
+    return String(field.value == null ? '' : field.value).trim();
+  };
+  const getFieldDisplayValue = (record, baseKey) => {
+    const field = getFieldByBaseKey(record, baseKey);
+    if (!field) return '';
+    return String(field.value == null ? '' : field.value).trim();
+  };
+  const parseFieldInt = (record, baseKey, fallback = NaN) => {
+    const raw = getFieldRawValue(record, baseKey);
+    const n = parseIntLoose(raw, NaN);
+    if (Number.isFinite(n)) return n;
+    const display = getFieldDisplayValue(record, baseKey);
+    const m = parseIntLoose(display, NaN);
+    return Number.isFinite(m) ? m : fallback;
+  };
+  const parseCultureGroup = (raw) => {
+    const text = String(raw || '').trim();
+    const lower = text.toLowerCase();
+    const n = parseIntLoose(text, NaN);
+    if (Number.isFinite(n)) return n;
+    if (lower.includes('none')) return -1;
+    if (lower.includes('american')) return 0;
+    if (lower.includes('europe')) return 1;
+    if (lower.includes('roman') || lower.includes('mediter')) return 2;
+    if (lower.includes('middle')) return 3;
+    if (lower.includes('asian')) return 4;
+    return 0;
+  };
   (raceSection?.records || []).forEach((record, idx) => {
-    raceCultureById[idx] = parseIntLoose(getFieldByBaseKey(record, 'culturegroup')?.value, 0);
+    const raceName = String(record && record.name || '').trim();
+    if (raceName) raceIdByName[raceName.toLowerCase()] = idx;
+    const cultureRaw = parseFieldInt(record, 'culturegroup', NaN);
+    raceCultureById[idx] = Number.isFinite(cultureRaw)
+      ? cultureRaw
+      : parseCultureGroup(getFieldDisplayValue(record, 'culturegroup'));
+    raceDefaultColorById[idx] = parseFieldInt(record, 'defaultcolor', NaN);
   });
   const leadSection = (tab.sections || []).find((s) => s.code === 'LEAD');
+  const erasSection = (tab.sections || []).find((s) => s.code === 'ERAS');
+  const eraIdByName = {};
+  (erasSection?.records || []).forEach((record, idx) => {
+    const eraName = String(record && record.name || '').trim();
+    if (eraName) eraIdByName[eraName.toLowerCase()] = idx;
+  });
+  const ruleSection = (tab.sections || []).find((s) => s.code === 'RULE');
+  const ruleRecord = ruleSection && Array.isArray(ruleSection.records) ? (ruleSection.records[0] || null) : null;
+  const maxCity1Size = parseIntLoose(getFieldByBaseKey(ruleRecord, 'maxcity1size')?.value, 6);
+  const maxCity2Size = parseIntLoose(getFieldByBaseKey(ruleRecord, 'maxcity2size')?.value, 12);
   const playerCivById = {};
   const playerEraById = {};
+  const playerIdByName = {};
   const civEraById = {};
+  const parseOwnerType = (raw) => {
+    const text = String(raw || '').trim().toLowerCase();
+    if (!text) return NaN;
+    if (text.includes('barbar')) return 1;
+    if (text.includes('player')) return 3;
+    if (text.includes('civ')) return 2;
+    if (text === 'none' || text === 'no owner') return 0;
+    return parseIntLoose(raw, NaN);
+  };
+  const parseEraIndex = (raw) => {
+    const text = String(raw || '').trim();
+    if (!text) return 0;
+    let era = parseIntLoose(text, NaN);
+    if (!Number.isFinite(era)) era = eraIdByName[text.toLowerCase()];
+    if (!Number.isFinite(era)) era = 0;
+    return Math.max(0, Math.min(3, era === 4 ? 3 : era));
+  };
+  const parseIndexedRef = (raw) => {
+    const text = String(raw || '').trim();
+    if (!text) return NaN;
+    const parenLike = text.match(/\((\d+)\)\s*$/);
+    if (parenLike) return Number.parseInt(parenLike[1], 10);
+    return parseIntLoose(raw, NaN);
+  };
+  const parseLeadRef = (raw) => {
+    const text = String(raw || '').trim();
+    if (!text) return NaN;
+    const leadLike = text.match(/lead\s+(\d+)/i);
+    if (!leadLike) return NaN;
+    return Number.parseInt(leadLike[1], 10) - 1;
+  };
+  const parseIndexCandidates = (raw) => {
+    const out = [];
+    const seen = new Set();
+    const push = (n) => {
+      if (!Number.isFinite(n)) return;
+      const v = Number(n) | 0;
+      if (seen.has(v)) return;
+      seen.add(v);
+      out.push(v);
+    };
+    const leadRef = parseLeadRef(raw);
+    const parsed = parseIndexedRef(raw);
+    push(leadRef);
+    push(parsed);
+    if (Number.isFinite(parsed)) push(parsed - 1);
+    return out;
+  };
+  const stripRefSuffix = (raw) => String(raw || '')
+    .replace(/\s*\(\d+\)\s*$/, '')
+    .replace(/\blead\s+\d+\b/ig, '')
+    .trim()
+    .toLowerCase();
+  const firstValidIndex = (candidates, upperBoundExclusive) => {
+    for (let i = 0; i < candidates.length; i += 1) {
+      const v = candidates[i];
+      if (!Number.isFinite(v)) continue;
+      if (v < 0) continue;
+      if (Number.isFinite(upperBoundExclusive) && v >= upperBoundExclusive) continue;
+      return v;
+    }
+    return NaN;
+  };
+  const resolvePlayerIdFromOwnerRaw = (ownerRaw) => {
+    const text = String(ownerRaw || '').trim().toLowerCase();
+    const stripped = stripRefSuffix(ownerRaw);
+    if (stripped && Number.isFinite(playerIdByName[stripped])) return playerIdByName[stripped];
+    if (text && Number.isFinite(playerIdByName[text])) return playerIdByName[text];
+    const candidates = parseIndexCandidates(ownerRaw);
+    // Parenthetical refs in our UI are often one-based.
+    if (/\(\d+\)\s*$/.test(String(ownerRaw || ''))) {
+      const oneBased = [];
+      for (let i = 0; i < candidates.length; i += 1) {
+        const c = candidates[i];
+        if (!Number.isFinite(c)) continue;
+        oneBased.push(c - 1);
+      }
+      oneBased.forEach((v) => candidates.push(v));
+    }
+    for (let i = 0; i < candidates.length; i += 1) {
+      const playerId = candidates[i];
+      if (playerId < 0) continue;
+      if (playerId >= (leadSection?.records || []).length) continue;
+      if (Number.isFinite(parseIntLoose(playerCivById[playerId], NaN))) return playerId;
+    }
+    return firstValidIndex(candidates, (leadSection?.records || []).length);
+  };
+  const resolveCivIdFromRaw = (ownerRaw) => {
+    const text = String(ownerRaw || '').trim();
+    const stripped = stripRefSuffix(ownerRaw);
+    const byRaceName = raceIdByName[stripped] ?? raceIdByName[text.toLowerCase()];
+    if (Number.isFinite(byRaceName)) return byRaceName;
+    const parsed = parseIndexedRef(ownerRaw);
+    const candidates = [];
+    const seen = new Set();
+    const push = (n) => {
+      if (!Number.isFinite(n)) return;
+      const v = Number(n) | 0;
+      if (seen.has(v)) return;
+      seen.add(v);
+      candidates.push(v);
+    };
+    // For OWNER_CIV, prioritize the explicit numeric reference, not LEAD textual prefixes.
+    push(parsed);
+    if (Number.isFinite(parsed)) push(parsed - 1);
+    for (let i = 0; i < candidates.length; i += 1) {
+      const civId = candidates[i];
+      if (civId < 0) continue;
+      if (civId >= (raceSection?.records || []).length) continue;
+      if (Number.isFinite(parseIntLoose(raceCultureById[civId], NaN)) || Number.isFinite(parseIntLoose(raceDefaultColorById[civId], NaN))) return civId;
+    }
+    const byLeadName = playerIdByName[stripped];
+    if (Number.isFinite(byLeadName) && Number.isFinite(parseIntLoose(playerCivById[byLeadName], NaN))) {
+      return parseIntLoose(playerCivById[byLeadName], -1);
+    }
+    return firstValidIndex(candidates, (raceSection?.records || []).length);
+  };
   (leadSection?.records || []).forEach((record, idx) => {
-    const civId = parseIntLoose(getFieldByBaseKey(record, 'civ')?.value, -1);
-    const era = parseIntLoose(getFieldByBaseKey(record, 'initialera')?.value, 0);
+    const playerName = String(record && record.name || '').trim();
+    if (playerName) playerIdByName[playerName.toLowerCase()] = idx;
+    const civRaw = String(getFieldRawValue(record, 'civ') || getFieldDisplayValue(record, 'civ') || '').trim();
+    let civId = parseIntLoose(civRaw, NaN);
+    if (!Number.isFinite(civId)) civId = raceIdByName[civRaw.toLowerCase()];
+    if (!Number.isFinite(civId)) {
+      const leadRef = parseIndexedRef(civRaw);
+      if (Number.isFinite(leadRef) && Number.isFinite(raceDefaultColorById[leadRef])) civId = leadRef;
+    }
+    if (!Number.isFinite(civId)) civId = -1;
+    const era = parseEraIndex(getFieldRawValue(record, 'initialera') || getFieldDisplayValue(record, 'initialera'));
     playerCivById[idx] = civId;
     playerEraById[idx] = era;
     if (civId >= 0 && !Number.isFinite(civEraById[civId])) {
       civEraById[civId] = era;
     }
   });
+  const resolveCivIdFromOwnership = (ownerTypeRaw, ownerRaw) => {
+    const ownerType = parseOwnerType(ownerTypeRaw);
+    const ownerText = String(ownerRaw || '').trim();
+    if (ownerType === 2) {
+      const civId = resolveCivIdFromRaw(ownerRaw);
+      if (Number.isFinite(civId) && civId >= 0) return civId;
+      const playerId = resolvePlayerIdFromOwnerRaw(ownerRaw);
+      if (Number.isFinite(playerId)) return parseIntLoose(playerCivById[playerId], -1);
+      return -1;
+    }
+    if (ownerType === 3) {
+      let playerId = resolvePlayerIdFromOwnerRaw(ownerRaw);
+      if (!Number.isFinite(playerId)) playerId = playerIdByName[ownerText.toLowerCase()];
+      if (!Number.isFinite(playerId)) return -1;
+      return parseIntLoose(playerCivById[playerId], -1);
+    }
+    return -1;
+  };
+  const resolveTileOwnerInfo = (tileRecord) => {
+    const ownerRaw = String(getFieldRawValue(tileRecord, 'owner') || getFieldDisplayValue(tileRecord, 'owner') || '').trim();
+    const ownerTypeRaw = String(getFieldRawValue(tileRecord, 'ownertype') || getFieldDisplayValue(tileRecord, 'ownertype') || '').trim();
+    if (!ownerRaw || ownerRaw.toLowerCase() === 'none') return { hasOwner: false, ownerKey: '', civId: -1, ownerType: 0, ownerId: -1 };
+    let ownerType = parseOwnerType(ownerTypeRaw);
+    let ownerId = NaN;
+    const ownerName = ownerRaw.toLowerCase();
+    if (!Number.isFinite(ownerType)) {
+      if (Number.isFinite(raceIdByName[ownerName])) ownerType = 2;
+      else if (Number.isFinite(playerIdByName[ownerName]) || /^lead\s+\d+/i.test(ownerRaw)) ownerType = 3;
+      else ownerType = 2;
+    }
+    if (ownerType === 2) ownerId = resolveCivIdFromRaw(ownerRaw);
+    else if (ownerType === 3) ownerId = resolvePlayerIdFromOwnerRaw(ownerRaw);
+    if (!Number.isFinite(ownerId)) ownerId = ownerType === 2 ? raceIdByName[ownerName] : playerIdByName[ownerName];
+    const civId = resolveCivIdFromOwnership(ownerTypeRaw || ownerType, ownerRaw);
+    const ownerKey = Number.isFinite(ownerId) ? `${ownerType}:${ownerId}` : `${ownerType}:${ownerName}`;
+    return {
+      hasOwner: ownerKey !== '',
+      ownerKey,
+      civId: Number.isFinite(civId) ? civId : -1,
+      ownerType: Number.isFinite(ownerType) ? ownerType : 0,
+      ownerId: Number.isFinite(ownerId) ? ownerId : -1
+    };
+  };
+  const cityCivIdByRef = {};
+  const cityRefByName = {};
+  Object.keys(cityRecordById).forEach((refKey) => {
+    const cityRecord = cityRecordById[refKey];
+    if (!cityRecord) return;
+    const ownerTypeRaw = String(getFieldRawValue(cityRecord, 'ownertype') || getFieldDisplayValue(cityRecord, 'ownertype') || '');
+    const ownerRaw = String(getFieldRawValue(cityRecord, 'owner') || getFieldDisplayValue(cityRecord, 'owner') || '');
+    cityCivIdByRef[refKey] = resolveCivIdFromOwnership(ownerTypeRaw, ownerRaw);
+    const cityName = String(getFieldByBaseKey(cityRecord, 'name')?.value || cityRecord.name || '').trim().toLowerCase();
+    if (cityName) cityRefByName[cityName] = refKey;
+  });
+  const borderTagToCivVotes = {};
+  const bumpBorderVote = (borderTag, civId) => {
+    if (!Number.isFinite(borderTag) || borderTag <= 0 || !Number.isFinite(civId) || civId < 0) return;
+    const key = String(borderTag);
+    if (!borderTagToCivVotes[key]) borderTagToCivVotes[key] = {};
+    borderTagToCivVotes[key][civId] = (borderTagToCivVotes[key][civId] || 0) + 1;
+  };
+  tiles.forEach((tileRecord) => {
+    if (!tileRecord) return;
+    const borderTag = parseFieldInt(tileRecord, 'border', 0);
+    if (!Number.isFinite(borderTag) || borderTag <= 0) return;
+    const cityRefText = String(getFieldRawValue(tileRecord, 'city') || getFieldDisplayValue(tileRecord, 'city') || '').trim();
+    let cityRef = parseIndexedRef(cityRefText);
+    if (!Number.isFinite(cityRef) || cityRef < 0) {
+      const cityName = cityRefText.replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+      const fromName = cityRefByName[cityName];
+      if (String(fromName || '').trim()) cityRef = parseIntLoose(fromName, NaN);
+    }
+    if (!Number.isFinite(cityRef) || cityRef < 0) return;
+    const civId = parseIntLoose(cityCivIdByRef[String(cityRef)], -1);
+    bumpBorderVote(borderTag, civId);
+  });
+  const borderTagToCivId = {};
+  Object.keys(borderTagToCivVotes).forEach((borderTag) => {
+    const votes = borderTagToCivVotes[borderTag] || {};
+    let bestCiv = -1;
+    let bestCount = -1;
+    Object.keys(votes).forEach((civKey) => {
+      const civId = parseIntLoose(civKey, -1);
+      const count = parseIntLoose(votes[civKey], 0);
+      if (count > bestCount) {
+        bestCount = count;
+        bestCiv = civId;
+      }
+    });
+    if (bestCiv >= 0) borderTagToCivId[borderTag] = bestCiv;
+  });
+  const resolveTileTerritoryInfo = (tileRecord) => {
+    const ownerInfo = resolveTileOwnerInfo(tileRecord);
+    const borderTag = parseFieldInt(tileRecord, 'border', 0);
+    if (ownerInfo.hasOwner) return { ...ownerInfo, borderTag };
+    if (!Number.isFinite(borderTag) || borderTag <= 0) return { hasOwner: false, ownerKey: '', civId: -1, borderTag: 0 };
+    const civId = parseIntLoose(borderTagToCivId[String(borderTag)], -1);
+    return {
+      hasOwner: true,
+      ownerKey: `border:${borderTag}`,
+      civId: Number.isFinite(civId) ? civId : -1,
+      borderTag
+    };
+  };
   const tileRecordByCoord = new Map();
   for (let i = 0; i < tileGeom.length; i += 1) {
     const geom = tileGeom[i];
@@ -13987,12 +15649,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (indices.length === 0) return false;
     if (mode === 'terrain') {
       const terrainCode = parseIntLoose(state.mapEditorTool && state.mapEditorTool.terrainCode, 0);
+      const packedTerrain = ((terrainCode & 0x0f) << 4) | (terrainCode & 0x0f);
       if (mapCore && typeof mapCore.applyTerrain === 'function') {
         mapCore.applyTerrain(tiles, indices, terrainCode);
       } else {
         indices.forEach((idx) => {
-          setMapFieldValue(tiles[idx], 'baserealterrain', String(terrainCode), 'Base Real Terrain');
-          setMapFieldValue(tiles[idx], 'c3cbaserealterrain', String(terrainCode), 'C3C Base Real Terrain');
+          setMapFieldValue(tiles[idx], 'baserealterrain', String(packedTerrain), 'Base Real Terrain');
+          setMapFieldValue(tiles[idx], 'c3cbaserealterrain', String(packedTerrain), 'C3C Base Real Terrain');
         });
       }
       return true;
@@ -14083,7 +15746,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return false;
   };
 
-  const drawTerrainSprite = (record, sx, sy) => {
+  const drawTerrainSprite = (record, _geom, sx, sy) => {
     const fileIdx = parseIntLoose(getFieldByBaseKey(record, 'file')?.value, -1);
     const imageIdx = parseIntLoose(getFieldByBaseKey(record, 'image')?.value, -1);
     const atlas = state.biqMapArtCache[`terrain-${fileIdx}`];
@@ -14113,7 +15776,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     let x = Number(xPos);
     const y = Number(yPos);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-    if (xWrap && width > 0) {
+    // Quint's calculateTileIndex always wraps X regardless of map x-wrap flag.
+    // Keep neighbor lookup behavior aligned for hills/roads/irrigation/rivers/borders.
+    if (width > 0) {
       x = ((x % width) + width) % width;
     }
     return tileRecordByCoord.get(`${x},${y}`) || null;
@@ -14124,6 +15789,37 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const c3cOverlays = parseIntLoose(getFieldByBaseKey(record, 'c3coverlays')?.value, 0) >>> 0;
     return (c3cOverlays & mask) === mask;
   };
+
+  const decodePackedTerrain = (rawValue) => {
+    const parsed = parseIntLoose(rawValue, NaN);
+    if (!Number.isFinite(parsed)) return { baseTerrain: BIQ_TERRAIN.GRASSLAND, realTerrain: BIQ_TERRAIN.GRASSLAND };
+    const packed = parsed & 0xff;
+    if (packed >= 0 && packed <= 0x0f) return { baseTerrain: packed, realTerrain: packed };
+    return {
+      baseTerrain: packed & 0x0f,
+      realTerrain: (packed >>> 4) & 0x0f
+    };
+  };
+
+  const terrainInfo = (record) => {
+    const c3cPacked = getFieldByBaseKey(record, 'c3cbaserealterrain')?.value;
+    const legacyPacked = getFieldByBaseKey(record, 'baserealterrain')?.value;
+    if (String(c3cPacked || '').trim()) return decodePackedTerrain(c3cPacked);
+    if (String(legacyPacked || '').trim()) return decodePackedTerrain(legacyPacked);
+    return { baseTerrain: BIQ_TERRAIN.GRASSLAND, realTerrain: BIQ_TERRAIN.GRASSLAND };
+  };
+
+  const isHillyTerrain = (terrainCode) => (
+    terrainCode === BIQ_TERRAIN.HILLS
+    || terrainCode === BIQ_TERRAIN.MOUNTAIN
+    || terrainCode === BIQ_TERRAIN.VOLCANO
+  );
+
+  const isWaterTerrain = (terrainCode) => (
+    terrainCode === BIQ_TERRAIN.COAST
+    || terrainCode === BIQ_TERRAIN.SEA
+    || terrainCode === BIQ_TERRAIN.OCEAN
+  );
 
   const calculateRoadImageIndex = (geom, mask) => {
     let idx = 0;
@@ -14158,6 +15854,17 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return true;
   };
 
+  const drawSheetSpriteScaled = (sheet, cols, rows, index, dx, dy, drawW, drawH) => {
+    if (!sheet || !Number.isFinite(index) || index < 0) return false;
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    if (row >= rows) return false;
+    const srcW = Math.max(1, Math.floor(sheet.width / cols));
+    const srcH = Math.max(1, Math.floor(sheet.height / rows));
+    ctx.drawImage(sheet, col * srcW, row * srcH, srcW, srcH, dx, dy, drawW, drawH);
+    return true;
+  };
+
   const drawResourceOverlay = (record, sx, sy) => {
     const atlas = state.biqMapArtCache.resources;
     if (!atlas) return;
@@ -14165,15 +15872,17 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (resourceId < 0) return;
     const iconIdx = goodIconById[resourceId];
     if (!Number.isFinite(iconIdx) || iconIdx < 0) return;
-    const cols = 10;
-    const cellW = Math.floor(atlas.width / cols);
-    const cellH = Math.floor(atlas.height / cols);
+    // Quint slices resources.pcx as fixed 50x50 cells in 6 columns.
+    const cols = 6;
+    const cellW = 50;
+    const cellH = 50;
     const col = iconIdx % cols;
     const row = Math.floor(iconIdx / cols);
+    if ((col * cellW + cellW) > atlas.width || (row * cellH + cellH) > atlas.height) return;
     const tileScale = tileW / 128;
-    const size = Math.max(8, Math.round(50 * tileScale));
+    const size = Math.max(8, Math.round(44 * tileScale));
     const dx = sx + Math.round(40 * tileScale);
-    const dy = sy + Math.round(9 * tileScale);
+    const dy = sy + Math.round(10 * tileScale);
     ctx.drawImage(atlas, col * cellW, row * cellH, cellW, cellH, dx, dy, size, size);
   };
 
@@ -14206,10 +15915,50 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const srcY = row * step;
     if (srcX + cellW > atlas.width || srcY + cellH > atlas.height) return;
     const tileScale = tileW / 128;
-    const size = Math.max(10, Math.round(32 * tileScale));
+    const size = Math.max(12, Math.round(40 * tileScale));
     const dx = screenX + Math.round(48 * tileScale);
-    const dy = screenY + Math.round(9 * tileScale);
-    ctx.drawImage(atlas, srcX, srcY, cellW, cellH, dx, dy, size, size);
+    const dy = screenY + Math.round(7 * tileScale);
+
+    let ownerTypeRaw = '';
+    let ownerRaw = '';
+    if (stack.length > 0) {
+      ownerTypeRaw = String(getFieldRawValue(stack[0], 'ownertype') || getFieldDisplayValue(stack[0], 'ownertype') || '');
+      ownerRaw = String(getFieldRawValue(stack[0], 'owner') || getFieldDisplayValue(stack[0], 'owner') || '');
+    }
+    if (!ownerTypeRaw.trim()) ownerTypeRaw = String(getFieldRawValue(record, 'ownertype') || getFieldDisplayValue(record, 'ownertype') || '');
+    if (!ownerRaw.trim()) ownerRaw = String(getFieldRawValue(record, 'owner') || getFieldDisplayValue(record, 'owner') || '');
+    const owner = parseIndexedRef(ownerRaw);
+    const civId = resolveCivIdFromOwnership(ownerTypeRaw, ownerRaw);
+    const civColorIdx = Number.isFinite(raceDefaultColorById[civId]) ? raceDefaultColorById[civId] : NaN;
+    const tileBorderColorIdx = parseFieldInt(record, 'bordercolor', NaN);
+    const ownerSlot = Number.isFinite(civColorIdx) ? civColorIdx : (Number.isFinite(tileBorderColorIdx) ? tileBorderColorIdx : (Number.isFinite(owner) ? owner : 0));
+    const ownerColor = colorFromCivSlot(ownerSlot);
+    const rgbMatch = String(ownerColor || '').match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+    const rgba = rgbMatch
+      ? { r: Number(rgbMatch[1]), g: Number(rgbMatch[2]), b: Number(rgbMatch[3]) }
+      : { r: 170, g: 170, b: 170 };
+
+    const unitCanvas = document.createElement('canvas');
+    unitCanvas.width = cellW;
+    unitCanvas.height = cellH;
+    const unitCtx = unitCanvas.getContext('2d');
+    unitCtx.drawImage(atlas, srcX, srcY, cellW, cellH, 0, 0, cellW, cellH);
+    unitCtx.globalCompositeOperation = 'source-atop';
+    unitCtx.fillStyle = `rgba(${rgba.r}, ${rgba.g}, ${rgba.b}, 0.48)`;
+    unitCtx.fillRect(0, 0, cellW, cellH);
+    unitCtx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(unitCanvas, 0, 0, cellW, cellH, dx, dy, size, size);
+
+    if (size >= 10) {
+      const dot = Math.max(3, Math.round(size * 0.15));
+      ctx.fillStyle = `rgb(${rgba.r}, ${rgba.g}, ${rgba.b})`;
+      ctx.beginPath();
+      ctx.arc(dx + dot + 1, dy + dot + 1, dot, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
     if (stack.length > 1 && size >= 14) {
       const label = String(stack.length);
       ctx.font = `${Math.max(8, Math.round(size * 0.36))}px sans-serif`;
@@ -14223,31 +15972,35 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
   };
 
-  const drawCityOverlay = (record, geom, sx, sy) => {
+  const getCityRecordForTile = (record, geom) => {
     const cityId = parseIntLoose(getFieldByBaseKey(record, 'city')?.value, -1);
-    const cityRecord = cityId >= 0
-      ? cityRecordById[cityId]
-      : (geom ? cityRecordByCoord.get(`${geom.xPos},${geom.yPos}`) : null);
+    if (cityId >= 0 && cityRecordById[cityId]) return cityRecordById[cityId];
+    return geom ? (cityRecordByCoord.get(`${geom.xPos},${geom.yPos}`) || null) : null;
+  };
+
+  const drawCityOverlay = (record, geom, sx, sy) => {
+    const cityRecord = getCityRecordForTile(record, geom);
     if (!cityRecord) return;
     const cityLevel = parseIntLoose(getFieldByBaseKey(cityRecord, 'citylevel')?.value, 0);
     const citySize = parseIntLoose(getFieldByBaseKey(cityRecord, 'size')?.value, cityLevel + 1);
     const hasWalls = parseIntLoose(getFieldByBaseKey(cityRecord, 'haswalls')?.value, 0) !== 0;
-    const cityName = String(getFieldByBaseKey(cityRecord, 'name')?.value || '').trim();
-    const ownerType = parseIntLoose(getFieldByBaseKey(cityRecord, 'ownertype')?.value, 0);
-    const owner = parseIntLoose(getFieldByBaseKey(cityRecord, 'owner')?.value, -1);
-    let civId = -1;
+    const ownerTypeRaw = String(getFieldRawValue(cityRecord, 'ownertype') || getFieldDisplayValue(cityRecord, 'ownertype') || '');
+    const ownerRaw = String(getFieldRawValue(cityRecord, 'owner') || getFieldDisplayValue(cityRecord, 'owner') || '');
+    const ownerType = parseOwnerType(ownerTypeRaw);
+    const owner = parseIndexedRef(ownerRaw);
+    let civId = resolveCivIdFromOwnership(ownerTypeRaw, ownerRaw);
     let era = 0;
-    if (ownerType === 2) {
-      civId = owner;
+    if (ownerType === 2 && civId >= 0) {
       era = parseIntLoose(civEraById[civId], 0);
     } else if (ownerType === 3) {
-      civId = parseIntLoose(playerCivById[owner], -1);
       era = parseIntLoose(playerEraById[owner], 0);
     }
     const culture = Number.isFinite(raceCultureById[civId]) ? raceCultureById[civId] : 2;
-    const citySizeBucket = citySize > 12 ? 2 : (citySize > 6 ? 1 : 0);
+    let citySizeBucket = citySize > maxCity2Size ? 2 : (citySize > maxCity1Size ? 1 : 0);
+    const hasPalace = parseIntLoose(getFieldByBaseKey(cityRecord, 'haspalace')?.value, 0) !== 0;
+    if (citySizeBucket < 2 && hasPalace) citySizeBucket += 1;
     const cityAge = Math.max(0, Math.min(3, era === 4 ? 3 : era));
-    const cityCulture = Math.max(0, Math.min(4, culture));
+    const cityCulture = culture < 0 ? 0 : Math.max(0, Math.min(4, culture));
     const noWallKeys = ['cityAmerc', 'cityEuro', 'cityRoman', 'cityMidEast', 'cityAsian'];
     const wallKeys = ['cityAmercWall', 'cityEuroWall', 'cityRomanWall', 'cityMidEastWall', 'cityAsianWall'];
     const sheet = state.biqMapArtCache[hasWalls ? wallKeys[cityCulture] : noWallKeys[cityCulture]];
@@ -14278,28 +16031,328 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         drewCity = true;
       }
     }
-    if (!drewCity) return;
-    if (state.biqMapShowCityNames && cityName && tilePx >= 8) {
-      const tileScale = tileW / 128;
-      ctx.font = `${Math.max(8, Math.round(10 * tileScale))}px sans-serif`;
-      const tx = sx + Math.round(40 * tileScale);
-      const ty = sy + Math.round(64 * tileScale);
-      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-      ctx.lineWidth = 2;
-      ctx.strokeText(cityName, tx, ty);
-      ctx.fillStyle = '#f3f6ff';
-      ctx.fillText(cityName, tx, ty);
+  };
+
+  const drawCityNameOverlay = (record, geom, sx, sy) => {
+    if (!state.biqMapShowCityNames || tilePx < 8) return;
+    const cityRecord = getCityRecordForTile(record, geom);
+    if (!cityRecord) return;
+    const cityName = String(getFieldByBaseKey(cityRecord, 'name')?.value || '').trim();
+    if (!cityName) return;
+    const tileScale = tileW / 128;
+    ctx.font = `${Math.max(8, Math.round(10 * tileScale))}px sans-serif`;
+    const tx = sx + Math.round(40 * tileScale);
+    const ty = sy + Math.round(64 * tileScale);
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.lineWidth = 2;
+    ctx.strokeText(cityName, tx, ty);
+    ctx.fillStyle = '#f3f6ff';
+    ctx.fillText(cityName, tx, ty);
+  };
+
+  const parseRgbCss = (css) => {
+    const m = String(css || '').match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+    if (!m) return null;
+    return { r: Number(m[1]) | 0, g: Number(m[2]) | 0, b: Number(m[3]) | 0 };
+  };
+  const brighterRgb = (rgb) => {
+    if (!rgb) return { r: 255, g: 255, b: 255 };
+    const scale = 1 / 0.7; // Java Color.brighter() scale factor.
+    const minNonZero = 3;
+    let r = rgb.r | 0;
+    let g = rgb.g | 0;
+    let b = rgb.b | 0;
+    if (r === 0 && g === 0 && b === 0) return { r: minNonZero, g: minNonZero, b: minNonZero };
+    if (r > 0 && r < minNonZero) r = minNonZero;
+    if (g > 0 && g < minNonZero) g = minNonZero;
+    if (b > 0 && b < minNonZero) b = minNonZero;
+    return {
+      r: Math.min(255, Math.floor(r * scale)),
+      g: Math.min(255, Math.floor(g * scale)),
+      b: Math.min(255, Math.floor(b * scale))
+    };
+  };
+  const getTerritoryEdgesForColor = (slot) => {
+    const cacheKey = `slot:${slot}`;
+    if (state.biqMapTerritoryEdgeCache.has(cacheKey)) return state.biqMapTerritoryEdgeCache.get(cacheKey);
+    const territorySheet = state.biqMapArtCache.territory;
+    const ntpSheet = state.biqMapArtCache[`ntp-${slot}`];
+    if (!territorySheet || !ntpSheet) return null;
+    const ownerRgb = parseRgbCss(colorFromCivSlot(slot));
+    if (!ownerRgb) return null;
+    const brightRgb = brighterRgb(ownerRgb);
+    const recolorCanvas = document.createElement('canvas');
+    recolorCanvas.width = territorySheet.width;
+    recolorCanvas.height = territorySheet.height;
+    const recolorCtx = recolorCanvas.getContext('2d');
+    recolorCtx.drawImage(territorySheet, 0, 0);
+    const imageData = recolorCtx.getImageData(0, 0, recolorCanvas.width, recolorCanvas.height);
+    const px = imageData.data;
+    for (let i = 0; i < px.length; i += 4) {
+      const r = px[i];
+      const g = px[i + 1];
+      const b = px[i + 2];
+      if (r === 177 && g === 177 && b === 177) {
+        px[i + 3] = 0;
+        continue;
+      }
+      if (r === 255 && g === 0 && b === 0) {
+        px[i] = ownerRgb.r; px[i + 1] = ownerRgb.g; px[i + 2] = ownerRgb.b; px[i + 3] = 255;
+        continue;
+      }
+      if (r === 236 && g === 255 && b === 0) {
+        px[i] = brightRgb.r; px[i + 1] = brightRgb.g; px[i + 2] = brightRgb.b; px[i + 3] = 255;
+        continue;
+      }
+      if (r === 255 && g === 163 && b === 255) {
+        px[i] = 0; px[i + 1] = 93; px[i + 2] = 0; px[i + 3] = 112;
+        continue;
+      }
+      if (r === 255 && g === 218 && b === 255) {
+        px[i] = 0; px[i + 1] = 36; px[i + 2] = 0; px[i + 3] = 112;
+      }
     }
+    recolorCtx.putImageData(imageData, 0, 0);
+    const edges = new Array(8).fill(null);
+    for (let row = 0; row < 4; row += 1) {
+      for (let col = 0; col < 2; col += 1) {
+        const edge = document.createElement('canvas');
+        edge.width = 128;
+        edge.height = 72;
+        const edgeCtx = edge.getContext('2d');
+        edgeCtx.drawImage(recolorCanvas, col * 128, row * 72, 128, 72, 0, 0, 128, 72);
+        edges[row * 2 + col] = edge;
+      }
+    }
+    state.biqMapTerritoryEdgeCache.set(cacheKey, edges);
+    return edges;
   };
 
   const drawTileFeatureOverlays = (record, geom, sx, sy) => {
     if (!record || !geom) return;
     const c3cOverlays = parseIntLoose(getFieldByBaseKey(record, 'c3coverlays')?.value, 0) >>> 0;
+    const c3cBonuses = parseIntLoose(getFieldByBaseKey(record, 'c3cbonuses')?.value, 0) >>> 0;
     const hasRoad = (c3cOverlays & 0x00000001) === 0x00000001;
     const hasRailroad = (c3cOverlays & 0x00000002) === 0x00000002;
     const hasIrrigation = (c3cOverlays & 0x00000008) === 0x00000008;
     const hasMine = (c3cOverlays & 0x00000004) === 0x00000004;
     const hasFort = (c3cOverlays & 0x00000010) === 0x00000010;
+    const riverMask = parseIntLoose(
+      (getFieldByBaseKey(record, 'riverconnectioninfo') || getFieldByBaseKey(record, 'river_connection_info'))?.value,
+      0
+    ) >>> 0;
+    const terrain = terrainInfo(record);
+    const realTerrain = terrain.realTerrain;
+    const baseTerrain = terrain.baseTerrain;
+
+    const useForestOrJungleHillVariant = () => {
+      const neighbors = [
+        getTileAtCoord(geom.xPos + 1, geom.yPos - 1),
+        getTileAtCoord(geom.xPos + 1, geom.yPos + 1),
+        getTileAtCoord(geom.xPos - 1, geom.yPos + 1),
+        getTileAtCoord(geom.xPos - 1, geom.yPos - 1)
+      ];
+      let hillyNeighborCount = 0;
+      let forestNeighborCount = 0;
+      let jungleNeighborCount = 0;
+      neighbors.forEach((neighborRecord) => {
+        if (!neighborRecord) return;
+        const neighborTerrain = terrainInfo(neighborRecord).realTerrain;
+        if (isHillyTerrain(neighborTerrain)) hillyNeighborCount += 1;
+        else if (neighborTerrain === BIQ_TERRAIN.FOREST) forestNeighborCount += 1;
+        else if (neighborTerrain === BIQ_TERRAIN.JUNGLE) jungleNeighborCount += 1;
+      });
+      if (forestNeighborCount === 0 && jungleNeighborCount === 0) return -1;
+      if ((forestNeighborCount + jungleNeighborCount + hillyNeighborCount) < 4) return -1;
+      if (forestNeighborCount > jungleNeighborCount) return BIQ_TERRAIN.FOREST;
+      if (jungleNeighborCount > forestNeighborCount) return BIQ_TERRAIN.JUNGLE;
+      return (geom.xPos % 2 === 0) ? BIQ_TERRAIN.FOREST : BIQ_TERRAIN.JUNGLE;
+    };
+
+    const getMountainIndex = () => {
+      let idx = 0;
+      const nw = getTileAtCoord(geom.xPos - 1, geom.yPos - 1);
+      const ne = getTileAtCoord(geom.xPos + 1, geom.yPos - 1);
+      const sw = getTileAtCoord(geom.xPos - 1, geom.yPos + 1);
+      const se = getTileAtCoord(geom.xPos + 1, geom.yPos + 1);
+      if (nw && isHillyTerrain(terrainInfo(nw).realTerrain)) idx += 1;
+      if (ne && isHillyTerrain(terrainInfo(ne).realTerrain)) idx += 2;
+      if (sw && isHillyTerrain(terrainInfo(sw).realTerrain)) idx += 4;
+      if (se && isHillyTerrain(terrainInfo(se).realTerrain)) idx += 8;
+      return idx;
+    };
+
+    const drawHillyTerrainOverlay = () => {
+      if (!isHillyTerrain(realTerrain)) return;
+      const graphicsIndex = getMountainIndex();
+      const forestJungleVariant = useForestOrJungleHillVariant();
+      const isLandmark = (c3cBonuses & BIQ_TILE_BONUS.LANDMARK) === BIQ_TILE_BONUS.LANDMARK;
+      if (realTerrain === BIQ_TERRAIN.HILLS) {
+        const drawH = Math.max(1, Math.round(72 * scale));
+        const drawY = sy - Math.round(12 * scale);
+        let hillSheet = state.biqMapArtCache.hills;
+        if (isLandmark) hillSheet = state.biqMapArtCache.lmHills || hillSheet;
+        else if (forestJungleVariant === BIQ_TERRAIN.FOREST) hillSheet = state.biqMapArtCache.forestHills || hillSheet;
+        else if (forestJungleVariant === BIQ_TERRAIN.JUNGLE) hillSheet = state.biqMapArtCache.jungleHills || hillSheet;
+        drawSheetSpriteScaled(hillSheet, 4, 4, graphicsIndex, sx, drawY, tileW, drawH);
+        return;
+      }
+      const drawH = Math.max(1, Math.round(88 * scale));
+      const drawY = sy - Math.round(24 * scale);
+      if (realTerrain === BIQ_TERRAIN.VOLCANO) {
+        let volcanoSheet = state.biqMapArtCache.volcanos;
+        if (forestJungleVariant === BIQ_TERRAIN.FOREST) volcanoSheet = state.biqMapArtCache.forestVolcanos || volcanoSheet;
+        else if (forestJungleVariant === BIQ_TERRAIN.JUNGLE) volcanoSheet = state.biqMapArtCache.jungleVolcanos || volcanoSheet;
+        drawSheetSpriteScaled(volcanoSheet, 4, 4, graphicsIndex, sx, drawY, tileW, drawH);
+        return;
+      }
+      let mountainSheet = state.biqMapArtCache.mountains;
+      if (isLandmark) mountainSheet = state.biqMapArtCache.lmMountains || mountainSheet;
+      else if ((c3cBonuses & BIQ_TILE_BONUS.SNOW_CAPPED_MOUNTAIN) === BIQ_TILE_BONUS.SNOW_CAPPED_MOUNTAIN) mountainSheet = state.biqMapArtCache.snowMountains || mountainSheet;
+      else if (forestJungleVariant === BIQ_TERRAIN.FOREST) mountainSheet = state.biqMapArtCache.forestMountains || mountainSheet;
+      else if (forestJungleVariant === BIQ_TERRAIN.JUNGLE) mountainSheet = state.biqMapArtCache.jungleMountains || mountainSheet;
+      drawSheetSpriteScaled(mountainSheet, 4, 4, graphicsIndex, sx, drawY, tileW, drawH);
+    };
+
+    const drawWoodlandOverlay = () => {
+      if (realTerrain !== BIQ_TERRAIN.FOREST && realTerrain !== BIQ_TERRAIN.JUNGLE) return;
+      const tileVariant = (geom.xPos + geom.yPos) | 0;
+      const drawH = Math.max(1, Math.round(88 * scale));
+      const srcFromSheet = (sheet, cols, startRow, idx, cellW = 128, cellH = 88) => {
+        if (!sheet) return false;
+        if (!Number.isFinite(cellW) || !Number.isFinite(cellH) || cellW <= 0 || cellH <= 0) return false;
+        const totalRows = Math.max(1, Math.floor(sheet.height / cellH));
+        const rowOffset = startRow + Math.floor(idx / cols);
+        const col = idx % cols;
+        if (rowOffset < 0 || rowOffset >= totalRows) return false;
+        const srcX = col * cellW;
+        const srcY = rowOffset * cellH;
+        if (srcX + cellW > sheet.width || srcY + cellH > sheet.height) return false;
+        ctx.drawImage(sheet, srcX, srcY, cellW, cellH, sx, sy, tileW, drawH);
+        return true;
+      };
+      if (realTerrain === BIQ_TERRAIN.JUNGLE) {
+        // Quint uses the first 2x4 block from grassland forests for large jungle.
+        const jungleIdx = tileVariant % 8;
+        srcFromSheet(state.biqMapArtCache.grasslandForests, 4, 0, jungleIdx);
+        return;
+      }
+      const isPine = (c3cBonuses & BIQ_TILE_BONUS.PINE_FOREST) === BIQ_TILE_BONUS.PINE_FOREST;
+      if (isPine) {
+        const pineIdx = tileVariant % 12;
+        if (baseTerrain === BIQ_TERRAIN.PLAINS) {
+          if (srcFromSheet(state.biqMapArtCache.plainsForests, 6, 8, pineIdx)) return;
+        } else if (baseTerrain === BIQ_TERRAIN.TUNDRA) {
+          if (srcFromSheet(state.biqMapArtCache.tundraForests, 6, 8, pineIdx)) return;
+        }
+        srcFromSheet(state.biqMapArtCache.grasslandForests, 6, 8, pineIdx);
+        return;
+      }
+      const forestIdx = tileVariant % 8;
+      if (baseTerrain === BIQ_TERRAIN.PLAINS) {
+        if (srcFromSheet(state.biqMapArtCache.plainsForests, 4, 4, forestIdx)) return;
+      } else if (baseTerrain === BIQ_TERRAIN.TUNDRA) {
+        if (srcFromSheet(state.biqMapArtCache.tundraForests, 4, 4, forestIdx)) return;
+      }
+      srcFromSheet(state.biqMapArtCache.grasslandForests, 4, 4, forestIdx);
+    };
+
+    const hasRiverConnection = (tileRecord, directionMask) => {
+      if (!tileRecord) return false;
+      const rawMask = parseIntLoose(
+        (getFieldByBaseKey(tileRecord, 'riverconnectioninfo') || getFieldByBaseKey(tileRecord, 'river_connection_info'))?.value,
+        0
+      ) >>> 0;
+      return (rawMask & directionMask) === directionMask;
+    };
+
+    const getRiverImageIndex = (northTile, eastTile, westTile, southTile) => {
+      let idx = 0;
+      if (northTile && hasRiverConnection(northTile, 32)) idx += 1;
+      if (eastTile && hasRiverConnection(eastTile, 128)) idx += 2;
+      if (westTile && hasRiverConnection(westTile, 8)) idx += 4;
+      if (southTile && hasRiverConnection(southTile, 2)) idx += 8;
+      return idx;
+    };
+
+    const isRiverDelta = (riverImageIndex, westTile, northTile, eastTile, southTile) => {
+      if (riverImageIndex !== 1 && riverImageIndex !== 2 && riverImageIndex !== 4 && riverImageIndex !== 8) return false;
+      if (!westTile || !northTile || !eastTile || !southTile) return false;
+      const westWater = isWaterTerrain(terrainInfo(westTile).realTerrain);
+      const northWater = isWaterTerrain(terrainInfo(northTile).realTerrain);
+      const eastWater = isWaterTerrain(terrainInfo(eastTile).realTerrain);
+      const southWater = isWaterTerrain(terrainInfo(southTile).realTerrain);
+      if (riverImageIndex === 1) return eastWater && southWater;
+      if (riverImageIndex === 2) return westWater && southWater;
+      if (riverImageIndex === 4) return northWater && eastWater;
+      return westWater && northWater;
+    };
+
+    const drawRivers = () => {
+      if (riverMask === 0) return;
+      if (geom.xPos === 1) {
+        const northTile = getTileAtCoord(geom.xPos - 1, geom.yPos - 1);
+        const eastTile = record;
+        const southTile = getTileAtCoord(geom.xPos - 1, geom.yPos + 1);
+        const riverImageIndex = getRiverImageIndex(northTile, eastTile, null, southTile);
+        if (riverImageIndex !== 0) {
+          drawSheetSprite(state.biqMapArtCache.mtnRivers, 4, 4, riverImageIndex, sx - stepX, sy);
+        }
+      }
+      {
+        const northTile = getTileAtCoord(geom.xPos + 1, geom.yPos - 1);
+        const eastTile = getTileAtCoord(geom.xPos + 2, geom.yPos);
+        const southTile = getTileAtCoord(geom.xPos + 1, geom.yPos + 1);
+        const westTile = record;
+        const riverImageIndex = getRiverImageIndex(northTile, eastTile, westTile, southTile);
+        if (riverImageIndex !== 0) {
+          const isDelta = isRiverDelta(riverImageIndex, westTile, northTile, eastTile, southTile);
+          drawSheetSprite(
+            isDelta ? (state.biqMapArtCache.deltaRivers || state.biqMapArtCache.mtnRivers) : state.biqMapArtCache.mtnRivers,
+            4,
+            4,
+            riverImageIndex,
+            sx + stepX,
+            sy
+          );
+        }
+      }
+    };
+
+  const drawTerritoryBorders = () => {
+      const ownerInfo = resolveTileTerritoryInfo(record);
+      if (!ownerInfo.hasOwner) return;
+      const borderRaw = getFieldRawValue(record, 'bordercolor') || getFieldDisplayValue(record, 'bordercolor');
+      let borderColorId = parseIntLoose(borderRaw, NaN);
+      const derivedFromBorderTag = String(ownerInfo.ownerKey || '').startsWith('border:');
+      if (derivedFromBorderTag && borderColorId === 0) borderColorId = NaN;
+      if (!Number.isFinite(borderColorId) && ownerInfo.civId >= 0) borderColorId = parseIntLoose(raceDefaultColorById[ownerInfo.civId], NaN);
+      if (!Number.isFinite(borderColorId) && Number.isFinite(ownerInfo.borderTag) && ownerInfo.borderTag > 0) borderColorId = ownerInfo.borderTag % 32;
+      if (!Number.isFinite(borderColorId)) borderColorId = 0;
+      borderColorId = ((borderColorId % 32) + 32) % 32;
+      const hasDifferentOwner = (neighborRecord) => {
+        if (!neighborRecord) return false;
+        const neighborInfo = resolveTileTerritoryInfo(neighborRecord);
+        if (!neighborInfo.hasOwner) return true;
+        return neighborInfo.ownerKey !== ownerInfo.ownerKey;
+      };
+      const nwBorder = hasDifferentOwner(getTileAtCoord(geom.xPos - 1, geom.yPos - 1));
+      const neBorder = hasDifferentOwner(getTileAtCoord(geom.xPos + 1, geom.yPos - 1));
+      const swBorder = hasDifferentOwner(getTileAtCoord(geom.xPos - 1, geom.yPos + 1));
+      const seBorder = hasDifferentOwner(getTileAtCoord(geom.xPos + 1, geom.yPos + 1));
+      if (!nwBorder && !neBorder && !swBorder && !seBorder) return;
+      const edges = getTerritoryEdgesForColor(borderColorId);
+      if (!edges) return;
+      const drawY = sy - Math.round(12 * scale);
+      const drawH = Math.max(1, Math.round(72 * scale));
+      if (nwBorder && edges[0]) ctx.drawImage(edges[0], 0, 0, 128, 72, sx, drawY, tileW, drawH);
+      if (neBorder && edges[2]) ctx.drawImage(edges[2], 0, 0, 128, 72, sx, drawY, tileW, drawH);
+      if (swBorder && edges[4]) ctx.drawImage(edges[4], 0, 0, 128, 72, sx, drawY, tileW, drawH);
+      if (seBorder && edges[6]) ctx.drawImage(edges[6], 0, 0, 128, 72, sx, drawY, tileW, drawH);
+    };
+
+    drawWoodlandOverlay();
+    drawHillyTerrainOverlay();
     if (hasRoad) {
       const idx = calculateRoadImageIndex(geom, 0x00000001);
       drawSheetSprite(state.biqMapArtCache.roads, 16, 16, idx, sx, sy);
@@ -14309,12 +16362,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       drawSheetSprite(state.biqMapArtCache.railroads || state.biqMapArtCache.roads, 16, 16, idx, sx, sy);
     }
     if (hasIrrigation) {
-      const baseTerrain = parseIntLoose(getFieldByBaseKey(record, 'baserealterrain')?.value, 2);
       const idx = calculateIrrigationIndex(geom);
       let key = 'irrigationGrass';
-      if (baseTerrain === 0) key = 'irrigationDesert';
-      else if (baseTerrain === 1) key = 'irrigationPlains';
-      else if (baseTerrain === 4) key = 'irrigationTundra';
+      if (baseTerrain === BIQ_TERRAIN.DESERT) key = 'irrigationDesert';
+      else if (baseTerrain === BIQ_TERRAIN.PLAINS) key = 'irrigationPlains';
+      else if (baseTerrain === BIQ_TERRAIN.TUNDRA) key = 'irrigationTundra';
       drawSheetSprite(state.biqMapArtCache[key], 4, 4, idx, sx, sy);
     }
     if (hasMine || hasFort) {
@@ -14326,6 +16378,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         if (hasFort) drawSheetSprite(sheet, cols, rows, 0, sx, sy);
       }
     }
+    drawRivers();
+    drawTerritoryBorders();
   };
 
   const drawDistrictOverlay = (record, sx, sy) => {
@@ -14398,7 +16452,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const geom = tileGeom[i];
     const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
     const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
-    const terrain = parseIntLoose(getFieldByBaseKey(record, 'baserealterrain')?.value, 0);
+    const terrain = terrainInfo(record).baseTerrain;
     const resource = parseIntLoose(getFieldByBaseKey(record, 'resource')?.value, -1);
     const owner = parseIntLoose(getFieldByBaseKey(record, 'owner')?.value, 0);
     const continent = parseIntLoose(getFieldByBaseKey(record, 'continent')?.value, 0);
@@ -14412,7 +16466,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const sx = basePos.sx + wrapDx;
       const sy = basePos.sy;
       let drewSprite = false;
-      if (state.biqMapLayer === 'terrain') drewSprite = drawTerrainSprite(record, sx, sy);
+      if (state.biqMapLayer === 'terrain') drewSprite = drawTerrainSprite(record, geom, sx, sy);
       if (!drewSprite) {
         ctx.fillStyle = value < 0 ? '#222831' : colorFromNumber(value);
         ctx.beginPath();
@@ -14446,6 +16500,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       ctx.lineTo(item.sx, item.sy + Math.floor(tileH / 2));
       ctx.closePath();
       ctx.stroke();
+    }
+  }
+
+  if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
+    for (let i = 0; i < overlayPassItems.length; i += 1) {
+      const item = overlayPassItems[i];
+      drawCityNameOverlay(item.record, item.geom, item.sx, item.sy);
     }
   }
 
@@ -14607,6 +16668,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       ...getPaneMetrics()
     });
   });
+
+  if (floatingUi) {
+    return container;
+  }
 
   const inspector = document.createElement('div');
   inspector.className = 'section-card';
@@ -16258,8 +18323,18 @@ function renderSectionTab(tab, tabKey) {
 
 function renderTabs() {
   el.tabs.innerHTML = '';
+  if (state.activeTab === 'players' && !hasCustomPlayerData()) {
+    state.activeTab = state.bundle.tabs.scenarioSettings ? 'scenarioSettings' : (Object.keys(state.bundle.tabs)[0] || 'base');
+  }
+  if (state.activeTab === 'players' && state.bundle.tabs.scenarioSettings) {
+    state.activeTab = 'scenarioSettings';
+  }
   TAB_GROUPS.forEach((group) => {
-    const present = group.keys.filter((key) => state.bundle.tabs[key]);
+    const present = group.keys.filter((key) => {
+      if (!state.bundle.tabs[key]) return false;
+      if (key === 'players') return false;
+      return true;
+    });
     if (present.length === 0) return;
     const groupWrap = document.createElement('div');
     groupWrap.className = 'tab-group';
@@ -16307,6 +18382,9 @@ function renderActiveTab(options = {}) {
   state.isRendering = true;
   hideRichTooltip();
   el.tabContent.innerHTML = '';
+  if (state.activeTab === 'players' && state.bundle.tabs.scenarioSettings) {
+    state.activeTab = 'scenarioSettings';
+  }
   const tab = state.bundle.tabs[state.activeTab];
   if (!tab) {
     state.isRendering = false;
@@ -16418,6 +18496,8 @@ async function loadBundleAndRender(options = {}) {
     state.baseFilter = '';
     state.biqMapArtCache = {};
     state.biqMapArtLoading = {};
+    state.biqMapTerritoryEdgeCache = new Map();
+    state.biqMapNtpColorCache = {};
     state.biqMapSelectedTile = -1;
     state.biqMapScrollLeft = null;
     state.biqMapScrollTop = null;
@@ -16953,23 +19033,16 @@ async function init() {
     });
   }
 
-  if (el.performanceMode) {
-    el.performanceMode.addEventListener('change', async () => {
-      const nextMode = String(el.performanceMode.value || DEFAULT_PERFORMANCE_MODE);
-      applyPerformanceModeRuntime(nextMode, { clearCaches: true });
-      await window.c3xManager.setSettings(state.settings);
-      const needsRestart = String(state.startupPerformanceMode || '') !== String(nextMode);
-      if (needsRestart) {
-        const doRestart = window.confirm('Performance mode changed. Restart now to apply GPU rendering mode?');
-        if (doRestart && window.c3xManager && typeof window.c3xManager.relaunch === 'function') {
-          await window.c3xManager.relaunch();
-          return;
-        }
-      } else {
-        setStatus(`Performance mode set to ${nextMode === 'safe' ? 'Safe' : 'High'}.`);
-      }
-      renderActiveTab({ preserveTabScroll: true });
+  if (window.c3xManager && typeof window.c3xManager.onPerformanceModeMenuSelect === 'function') {
+    state.performanceMenuUnsubscribe = window.c3xManager.onPerformanceModeMenuSelect((nextMode) => {
+      void updatePerformanceMode(nextMode);
     });
+    window.addEventListener('beforeunload', () => {
+      if (state.performanceMenuUnsubscribe) {
+        state.performanceMenuUnsubscribe();
+        state.performanceMenuUnsubscribe = null;
+      }
+    }, { once: true });
   }
 
   [el.c3xPath, el.civ3Path, el.scenarioPath].forEach((input) => {
