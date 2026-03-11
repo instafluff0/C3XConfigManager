@@ -991,10 +991,56 @@ button.danger:hover {
 .biq-map-layout {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .biq-map-frame {
   position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.biq-map-layout.floating-ui {
+  height: 100%;
+  min-height: 0;
+}
+
+.biq-map-layout.floating-ui .biq-map-frame {
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+}
+
+.biq-map-layout.floating-ui .biq-map-canvas-wrap {
+  height: 100%;
+  max-height: none;
+  width: 100%;
+}
+
+.biq-map-floating-panel {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.biq-map-floating-panel > * {
+  pointer-events: auto;
+}
+
+.biq-map-floating-top-left {
+  top: 12px;
+  left: 12px;
+  right: 340px;
+  display: grid;
+  gap: 8px;
+}
+
+.biq-map-floating-right {
+  top: 12px;
+  right: 12px;
+  width: min(360px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  overflow: auto;
 }
 
 .biq-map-toolbar {
@@ -1018,9 +1064,15 @@ button.danger:hover {
   gap: 6px;
 }
 
+.map-tool-row {
+  margin-top: -2px;
+}
+
 .biq-map-canvas-wrap {
   overflow: auto;
   max-height: calc(100vh - 360px);
+  width: 100%;
+  min-width: 0;
   border: 1px solid rgba(73, 69, 98, 0.16);
   border-radius: 12px;
   background: transparent;
@@ -1028,6 +1080,14 @@ button.danger:hover {
   cursor: grab;
   user-select: none;
   touch-action: none;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.biq-map-canvas-wrap::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .biq-map-canvas-wrap.dragging {
@@ -1998,6 +2058,67 @@ button.danger:hover {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
+.map-editor-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 46;
+  background: rgba(10, 16, 30, 0.56);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.map-editor-modal-overlay.hidden {
+  display: none;
+}
+
+.map-editor-modal-panel {
+  width: min(1560px, 98vw);
+  height: min(980px, 97vh);
+  border-radius: 14px;
+  border: 1px solid rgba(78, 96, 136, 0.34);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 36px rgba(11, 18, 32, 0.34);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
+
+.map-editor-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(72, 84, 121, 0.18);
+  background: linear-gradient(145deg, rgba(250, 252, 255, 0.97), rgba(240, 246, 255, 0.97));
+}
+
+.map-editor-modal-body {
+  overflow: hidden;
+  padding: 10px;
+}
+
+.map-editor-modal-body .biq-map-layout {
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.map-editor-modal-body .biq-map-layout.floating-ui {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.map-editor-modal-body .biq-map-frame {
+  min-height: 0;
+}
+
+.map-editor-modal-body .biq-map-canvas-wrap {
+  height: 100%;
+  max-height: none;
+}
+
 .art-focus-overlay {
   position: fixed;
   inset: 0;
@@ -2914,6 +3035,13 @@ button.danger:hover {
 
 .kv-row.compact {
   grid-template-columns: 1fr auto;
+}
+
+.inline-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .advanced-kv-row {

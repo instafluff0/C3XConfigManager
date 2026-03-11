@@ -6,6 +6,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 
 const { loadBundle, saveBundle } = require('../src/configCore');
+const mapCore = require('../src/mapEditorCore');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-biq-test-'));
@@ -27,6 +28,18 @@ function findSampleBiqPath() {
     '/Users/nicdobbins/fun/Civilization III Complete/Conquests/conquests.biq'
   ].filter(Boolean);
   return candidates.find((p) => fs.existsSync(p)) || '';
+}
+
+function findSampleMapBiqPath() {
+  const envPath = String(process.env.C3X_TEST_MAP_BIQ || '').trim();
+  const candidates = [
+    envPath,
+    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/2 MP Rise of Rome.biq',
+    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/3 MP Fall of Rome.biq',
+    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/8 MP Napoleonic Europe.biq',
+    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/9 MP WWII in the Pacific.biq'
+  ].filter((p) => p && fs.existsSync(p));
+  return candidates[0] || '';
 }
 
 function resolveCiv3RootFromBiq(biqPath) {
@@ -55,6 +68,17 @@ function biqSectionHasCivilopediaKey(bundle, sectionCode, wantedKey) {
 function getEntryByCivKey(entries, civKey) {
   const target = String(civKey || '').trim().toUpperCase();
   return (Array.isArray(entries) ? entries : []).find((entry) => String(entry.civilopediaKey || '').trim().toUpperCase() === target) || null;
+}
+
+function getSection(tab, code) {
+  const sections = tab && Array.isArray(tab.sections) ? tab.sections : [];
+  return sections.find((section) => String(section && section.code || '').toUpperCase() === String(code || '').toUpperCase()) || null;
+}
+
+function getRecordField(record, key) {
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  const target = String(key || '').trim().toLowerCase();
+  return fields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target) || null;
 }
 
 test('BIQ round-trip persists tech tree coordinate edits on scenario copy', (t) => {
@@ -295,6 +319,78 @@ test('BIQ matrix copy/delete test works for multiple sections', (t) => {
   });
 });
 
+test('BIQ map round-trip supports map painting + adding city/unit records', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle && bundle.tabs && bundle.tabs.map;
+  if (!mapTab) {
+    t.skip('Sample BIQ has no map tab.');
+    return;
+  }
+  const tileSection = getSection(mapTab, 'TILE');
+  const citySection = getSection(mapTab, 'CITY');
+  const unitSection = getSection(mapTab, 'UNIT');
+  if (!(tileSection && citySection && unitSection)) {
+    t.skip('Sample BIQ map tab is missing TILE/CITY/UNIT sections.');
+    return;
+  }
+  assert.ok(Array.isArray(tileSection.records) && tileSection.records.length > 0, 'expected at least one tile record');
+
+  const tile = tileSection.records[0];
+  mapCore.applyTerrain(tileSection.records, [0], 2);
+  mapCore.applyOverlay(tileSection.records, [0], 'road', true);
+  mapCore.applyFog(tileSection.records, [0], true);
+  mapCore.applyDistrict(tileSection.records, [0], 1, 1, true);
+
+  const x = mapCore.parseIntLoose(mapCore.getField(tile, 'xpos') && mapCore.getField(tile, 'xpos').value, 0);
+  const y = mapCore.parseIntLoose(mapCore.getField(tile, 'ypos') && mapCore.getField(tile, 'ypos').value, 0);
+
+  if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
+  const cityRef = `CITY_C3X_TEST_${Date.now()}`.toUpperCase();
+  const unitRef = `UNIT_C3X_TEST_${Date.now()}`.toUpperCase();
+  mapCore.addCity(citySection, tile, x, y, 0, 1, 'C3X Test City', cityRef);
+  mapCore.addUnit(unitSection, tile, x, y, 0, 1, 0, unitRef);
+  mapTab.recordOps.push({ op: 'add', sectionCode: 'CITY', newRecordRef: cityRef });
+  mapTab.recordOps.push({ op: 'add', sectionCode: 'UNIT', newRecordRef: unitRef });
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reMap = reloaded.tabs.map;
+  const reTileSection = getSection(reMap, 'TILE');
+  const reCitySection = getSection(reMap, 'CITY');
+  const reUnitSection = getSection(reMap, 'UNIT');
+  assert.ok(reTileSection && reTileSection.records.length > 0);
+  const reTile = reTileSection.records[0];
+  assert.equal(String(mapCore.getField(reTile, 'baserealterrain') && mapCore.getField(reTile, 'baserealterrain').value), '2');
+  assert.equal(String(mapCore.getField(reTile, 'fogofwar') && mapCore.getField(reTile, 'fogofwar').value), '0');
+  const roadField = mapCore.getField(reTile, 'road') || mapCore.getField(reTile, 'overlays');
+  assert.ok(roadField, 'expected road/overlay data on tile after save');
+  const districtField = mapCore.getField(reTile, 'district') || mapCore.getField(reTile, 'c3coverlays');
+  assert.ok(districtField, 'expected district/c3coverlays data on tile after save');
+  assert.ok((reCitySection && reCitySection.records && reCitySection.records.length) >= citySection.records.length);
+  assert.ok((reUnitSection && reUnitSection.records && reUnitSection.records.length) >= unitSection.records.length);
+});
+
 test('mixed BIQ + text save failure rolls back all committed changes', (t) => {
   const sampleBiq = findSampleBiqPath();
   if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
@@ -364,4 +460,170 @@ test('mixed BIQ + text save failure rolls back all committed changes', (t) => {
   const afterBiqHash = crypto.createHash('sha256').update(fs.readFileSync(scenarioBiq)).digest('hex');
   assert.equal(afterBiqHash, beforeBiqHash, 'expected BIQ file to be unchanged after rollback');
   assert.equal(fs.readFileSync(scenarioBasePath, 'utf8'), originalBaseText, 'expected scenario base file rollback');
+});
+
+test('BIQ map round-trip persists city relocation and city improvements edits', (t) => {
+  const sampleBiq = findSampleMapBiqPath();
+  if (!sampleBiq) t.skip('No map-enabled BIQ available. Set C3X_TEST_MAP_BIQ to run this test.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle && bundle.tabs && bundle.tabs.map;
+  if (!mapTab) {
+    t.skip('Map tab unavailable in sample BIQ.');
+    return;
+  }
+  const tileSection = getSection(mapTab, 'TILE');
+  const citySection = getSection(mapTab, 'CITY');
+  if (!(tileSection && citySection) || !Array.isArray(citySection.records) || citySection.records.length === 0) {
+    t.skip('Sample BIQ is missing map TILE/CITY records.');
+    return;
+  }
+  const city = citySection.records[0];
+  const oldX = Number(getRecordField(city, 'x') && getRecordField(city, 'x').value);
+  const oldY = Number(getRecordField(city, 'y') && getRecordField(city, 'y').value);
+  assert.ok(Number.isFinite(oldX) && Number.isFinite(oldY), 'expected city x/y fields');
+
+  const tileRecords = tileSection.records || [];
+  const sourceTile = tileRecords.find((record) => {
+    const x = Number(getRecordField(record, 'xpos') && getRecordField(record, 'xpos').value);
+    const y = Number(getRecordField(record, 'ypos') && getRecordField(record, 'ypos').value);
+    return x === oldX && y === oldY;
+  });
+  const destinationTile = tileRecords.find((record) => {
+    const x = Number(getRecordField(record, 'xpos') && getRecordField(record, 'xpos').value);
+    const y = Number(getRecordField(record, 'ypos') && getRecordField(record, 'ypos').value);
+    const cityRef = Number(getRecordField(record, 'city') && getRecordField(record, 'city').value);
+    return x !== oldX && y !== oldY && cityRef < 0;
+  });
+  if (!(sourceTile && destinationTile)) {
+    t.skip('No suitable source/destination tile pair for relocation in sample BIQ.');
+    return;
+  }
+
+  const cityIndex = Number(city.index);
+  const destX = Number(getRecordField(destinationTile, 'xpos').value);
+  const destY = Number(getRecordField(destinationTile, 'ypos').value);
+  getRecordField(city, 'x').value = String(destX);
+  getRecordField(city, 'y').value = String(destY);
+  const sourceCityField = getRecordField(sourceTile, 'city');
+  if (sourceCityField) sourceCityField.value = '-1';
+  const destinationCityField = getRecordField(destinationTile, 'city');
+  if (destinationCityField) destinationCityField.value = String(cityIndex);
+  mapCore.setField(city, 'numbuildings', '1', 'Number of Buildings');
+  mapCore.setField(city, 'buildings', '0', 'Buildings');
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reMap = reloaded.tabs.map;
+  const reTile = getSection(reMap, 'TILE');
+  const reCity = getSection(reMap, 'CITY');
+  const reCityRecord = (reCity.records || []).find((record) => Number(record && record.index) === cityIndex);
+  assert.ok(reCityRecord, 'expected relocated city record');
+  assert.equal(Number(getRecordField(reCityRecord, 'x').value), destX);
+  assert.equal(Number(getRecordField(reCityRecord, 'y').value), destY);
+  const bCount = Number(getRecordField(reCityRecord, 'numbuildings') && getRecordField(reCityRecord, 'numbuildings').value);
+  assert.ok(Number.isFinite(bCount) && bCount >= 1, 'expected persisted city improvement data');
+  const reDestinationTile = (reTile.records || []).find((record) => {
+    const x = Number(getRecordField(record, 'xpos') && getRecordField(record, 'xpos').value);
+    const y = Number(getRecordField(record, 'ypos') && getRecordField(record, 'ypos').value);
+    return x === destX && y === destY;
+  });
+  assert.ok(reDestinationTile, 'expected destination tile after reload');
+  assert.equal(Number(getRecordField(reDestinationTile, 'city').value), cityIndex);
+});
+
+test('BIQ map round-trip persists multi-unit edits on same tile', (t) => {
+  const sampleBiq = findSampleMapBiqPath();
+  if (!sampleBiq) t.skip('No map-enabled BIQ available. Set C3X_TEST_MAP_BIQ to run this test.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle && bundle.tabs && bundle.tabs.map;
+  if (!mapTab) {
+    t.skip('Map tab unavailable in sample BIQ.');
+    return;
+  }
+  const unitSection = getSection(mapTab, 'UNIT');
+  const tileSection = getSection(mapTab, 'TILE');
+  if (!(unitSection && tileSection) || !Array.isArray(unitSection.records) || unitSection.records.length === 0) {
+    t.skip('Sample BIQ is missing UNIT/TILE records.');
+    return;
+  }
+  const seed = unitSection.records[0];
+  const sx = Number(getRecordField(seed, 'x') && getRecordField(seed, 'x').value);
+  const sy = Number(getRecordField(seed, 'y') && getRecordField(seed, 'y').value);
+  if (!Number.isFinite(sx) || !Number.isFinite(sy)) {
+    t.skip('Seed unit is missing x/y.');
+    return;
+  }
+  const sameTileUnits = unitSection.records.filter((record) => {
+    const ux = Number(getRecordField(record, 'x') && getRecordField(record, 'x').value);
+    const uy = Number(getRecordField(record, 'y') && getRecordField(record, 'y').value);
+    return ux === sx && uy === sy;
+  });
+  const beforeCount = sameTileUnits.length;
+  const owner = Number(getRecordField(seed, 'owner') && getRecordField(seed, 'owner').value) || 0;
+  const ownerType = Number(getRecordField(seed, 'ownertype') && getRecordField(seed, 'ownertype').value) || 1;
+  const prto = Number(getRecordField(seed, 'prtonumber') && getRecordField(seed, 'prtonumber').value)
+    || Number(getRecordField(seed, 'unit_type') && getRecordField(seed, 'unit_type').value)
+    || 0;
+  const tile = (tileSection.records || []).find((record) => {
+    const tx = Number(getRecordField(record, 'xpos') && getRecordField(record, 'xpos').value);
+    const ty = Number(getRecordField(record, 'ypos') && getRecordField(record, 'ypos').value);
+    return tx === sx && ty === sy;
+  });
+  if (!tile) {
+    t.skip('No matching tile record for seed unit.');
+    return;
+  }
+
+  const addRef = `UNIT_C3X_MULTI_${Date.now()}`.toUpperCase();
+  const added = mapCore.addUnit(unitSection, tile, sx, sy, owner, ownerType, prto, addRef);
+  if (!Array.isArray(mapTab.recordOps)) mapTab.recordOps = [];
+  mapTab.recordOps.push({ op: 'add', sectionCode: 'UNIT', newRecordRef: addRef });
+  assert.ok(added && Number.isFinite(Number(added.index)), 'expected added unit');
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reMap = reloaded.tabs.map;
+  const reUnits = getSection(reMap, 'UNIT').records || [];
+  const afterSameTile = reUnits.filter((record) => {
+    const ux = Number(getRecordField(record, 'x') && getRecordField(record, 'x').value);
+    const uy = Number(getRecordField(record, 'y') && getRecordField(record, 'y').value);
+    return ux === sx && uy === sy;
+  });
+  assert.ok(afterSameTile.length >= beforeCount + 1, 'expected additional unit on same tile after save/reload');
 });

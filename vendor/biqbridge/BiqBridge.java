@@ -10,6 +10,8 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.HashMap;
 
 public class BiqBridge {
     private static String jescape(String s) {
@@ -188,6 +190,47 @@ public class BiqBridge {
         return null;
     }
 
+    private static boolean applyTerrainResourceMask(BIQSection rec, String rawValue) {
+        if (!(rec instanceof com.civfanatics.civ3.biqFile.TERR)) return false;
+        com.civfanatics.civ3.biqFile.TERR terr = (com.civfanatics.civ3.biqFile.TERR) rec;
+        String raw = rawValue == null ? "" : rawValue.trim();
+        String[] parts = raw.isEmpty() ? new String[0] : raw.split("[,\\s]+");
+        ArrayList<Boolean> allowed = new ArrayList<>();
+        ArrayList<Byte> possible = new ArrayList<>();
+        for (String part : parts) {
+            if (part == null) continue;
+            String token = part.trim();
+            if (token.isEmpty()) continue;
+            Integer n = parseIntLoose(token);
+            byte value = (n != null && n.intValue() != 0) ? (byte) 1 : (byte) 0;
+            allowed.add(Boolean.valueOf(value != 0));
+            possible.add(Byte.valueOf(value));
+        }
+        terr.setNumTotalResources(allowed.size());
+        terr.allowedResources = allowed;
+        terr.possibleResources = possible;
+        terr.numPossibleResources = allowed.size();
+        return true;
+    }
+
+    private static boolean applyCityBuildingsList(BIQSection rec, String rawValue) {
+        if (!(rec instanceof com.civfanatics.civ3.biqFile.CITY)) return false;
+        com.civfanatics.civ3.biqFile.CITY city = (com.civfanatics.civ3.biqFile.CITY) rec;
+        String raw = rawValue == null ? "" : rawValue.trim();
+        city.removeAllBuildings();
+        if (raw.isEmpty()) return true;
+        String[] parts = raw.split("[,\\s]+");
+        for (String part : parts) {
+            if (part == null) continue;
+            String token = part.trim();
+            if (token.isEmpty()) continue;
+            Integer idx = parseIntLoose(token);
+            if (idx == null || idx.intValue() < 0) continue;
+            city.addBuilding(idx.intValue());
+        }
+        return true;
+    }
+
     private static BIQSection findRecordByRef(List<?> records, String recordRef) {
         if (records == null) return null;
         String key = recordRef == null ? "" : recordRef.trim();
@@ -260,6 +303,14 @@ public class BiqBridge {
                     return new com.civfanatics.civ3.biqFile.GOVT(name, idx, io);
                 case PRTO:
                     return new com.civfanatics.civ3.biqFile.PRTO(name, io, idx);
+                case CITY:
+                    return new com.civfanatics.civ3.biqFile.CITY(io);
+                case UNIT:
+                    return new com.civfanatics.civ3.biqFile.UNIT(io);
+                case CLNY:
+                    return new com.civfanatics.civ3.biqFile.CLNY(io);
+                case SLOC:
+                    return new com.civfanatics.civ3.biqFile.SLOC(io);
                 default:
                     return null;
             }
@@ -321,7 +372,7 @@ public class BiqBridge {
         }
     }
 
-    private static boolean addRecord(com.civfanatics.civ3.biqFile.IO io, Section section, String newRef, String copyFromRef, StringBuilder warnings) {
+    private static boolean addRecord(com.civfanatics.civ3.biqFile.IO io, Section section, String newRef, String copyFromRef, StringBuilder warnings, Map<String, BIQSection> createdRefs) {
         List<?> listAny = io.getSection(section);
         if (!(listAny instanceof List)) return false;
         @SuppressWarnings("unchecked")
@@ -350,6 +401,9 @@ public class BiqBridge {
         }
         setCivilopediaEntrySafe(created, newKey);
         list.add(created);
+        if (createdRefs != null) {
+            createdRefs.put(section.name() + "|" + newKey, created);
+        }
         return true;
     }
 
@@ -718,6 +772,7 @@ public class BiqBridge {
         int skipped = 0;
         StringBuilder warnings = new StringBuilder();
         List<String[]> setOps = new ArrayList<>();
+        Map<String, BIQSection> createdRefs = new HashMap<>();
         for (String line : lines) {
             if (line == null || line.trim().isEmpty()) continue;
             String[] parts = line.split("\t", -1);
@@ -750,7 +805,7 @@ public class BiqBridge {
                     warnings.append("unknown section ").append(sectionCode).append("; ");
                     continue;
                 }
-                if (addRecord(io, section, newRef, copyFromRef, warnings)) {
+                if (addRecord(io, section, newRef, copyFromRef, warnings, createdRefs)) {
                     applied++;
                 } else {
                     skipped++;
@@ -773,7 +828,7 @@ public class BiqBridge {
                     warnings.append("unknown section ").append(sectionCode).append("; ");
                     continue;
                 }
-                if (addRecord(io, section, newRef, fromRef, warnings)) {
+                if (addRecord(io, section, newRef, fromRef, warnings, createdRefs)) {
                     applied++;
                 } else {
                     skipped++;
@@ -827,6 +882,9 @@ public class BiqBridge {
             List<?> records = io.getSection(section);
             BIQSection rec = findRecordByRef(records, recordRef);
             if (rec == null) {
+                rec = createdRefs.get(section.name() + "|" + (recordRef == null ? "" : recordRef.trim().toUpperCase()));
+            }
+            if (rec == null) {
                 skipped++;
                 warnings.append("missing record ").append(recordRef).append(" in ").append(sectionCode).append("; ");
                 continue;
@@ -841,6 +899,54 @@ public class BiqBridge {
                 setter = findSetterByCanonicalFieldKey(rec.getClass(), fieldKey);
             }
             if (setter == null) {
+                String canonicalField = aliasCanonicalFieldKey(canonicalFieldKey(fieldKey));
+                if (section == Section.TILE && canonicalField.equals("district")) {
+                    String raw = rawValue == null ? "" : rawValue.trim();
+                    if (raw.isEmpty() || raw.equals("-1")) {
+                        try {
+                            Method clear = rec.getClass().getMethod("clearDistrict");
+                            clear.invoke(rec);
+                            applied++;
+                            continue;
+                        } catch (Throwable ignored) {
+                            // fall through
+                        }
+                    } else {
+                        String[] districtParts = raw.split("[,\\s]+");
+                        Integer type = districtParts.length > 0 ? parseIntLoose(districtParts[0]) : null;
+                        Integer state = districtParts.length > 1 ? parseIntLoose(districtParts[1]) : Integer.valueOf(1);
+                        if (type != null && type.intValue() >= 0 && state != null) {
+                            try {
+                                Method setDistrict = rec.getClass().getMethod("setDistrict", int.class, int.class);
+                                setDistrict.invoke(rec, Integer.valueOf(type.intValue()), Integer.valueOf(state.intValue()));
+                                applied++;
+                                continue;
+                            } catch (Throwable ignored) {
+                                // fall through
+                            }
+                        }
+                    }
+                }
+                if (section == Section.TERR && (
+                    canonicalField.equals("possibleresourcesmask")
+                    || canonicalField.equals("possibleresources")
+                    || canonicalField.equals("allowedresources")
+                )) {
+                    if (applyTerrainResourceMask(rec, rawValue)) {
+                        applied++;
+                        continue;
+                    }
+                }
+                if (section == Section.CITY && (
+                    canonicalField.equals("buildings")
+                    || canonicalField.equals("buildingids")
+                    || canonicalField.equals("buildinglist")
+                )) {
+                    if (applyCityBuildingsList(rec, rawValue)) {
+                        applied++;
+                        continue;
+                    }
+                }
                 skipped++;
                 warnings.append("no setter for field ").append(fieldKey).append(" in ").append(recordRef).append("; ");
                 continue;

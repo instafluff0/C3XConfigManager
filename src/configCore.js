@@ -3265,9 +3265,17 @@ function saveBundle(payload) {
     const protectErr = failIfProtected(scenarioPath, 'scenario BIQ target');
     if (protectErr) return { ok: false, error: protectErr };
     const biqRecordOps = collectBiqReferenceRecordOps(payload.tabs || {});
+    const biqStructureRecordOps = collectBiqStructureRecordOps(payload.tabs || {});
+    const biqMapRecordOps = collectBiqMapRecordOps(payload.tabs || {});
     const biqEdits = collectBiqReferenceEdits(payload.tabs || {});
     const structureEdits = collectBiqStructureEdits(payload.tabs || {});
-    const allBiqEdits = biqRecordOps.concat(biqEdits).concat(structureEdits);
+    const mapEdits = collectBiqMapEdits(payload.tabs || {});
+    const allBiqEdits = biqRecordOps
+      .concat(biqStructureRecordOps)
+      .concat(biqMapRecordOps)
+      .concat(biqEdits)
+      .concat(structureEdits)
+      .concat(mapEdits);
     if (allBiqEdits.length > 0) {
       const biqSave = applyBiqReferenceEdits({
         biqPath: scenarioPath,
@@ -3468,6 +3476,53 @@ function collectBiqReferenceRecordOps(tabs) {
   return ops;
 }
 
+function collectBiqStructureRecordOps(tabs) {
+  const ops = [];
+  BIQ_STRUCTURE_TAB_SPECS.forEach((spec) => {
+    const tab = tabs[spec.key];
+    if (!tab || !Array.isArray(tab.recordOps) || tab.recordOps.length === 0) return;
+    tab.recordOps.forEach((op) => {
+      const kind = String(op && op.op || '').toLowerCase();
+      const sectionCode = String(op && op.sectionCode || '').trim().toUpperCase();
+      if (!sectionCode) return;
+      if (kind === 'add') {
+        const newRecordRef = String(op.newRecordRef || '').trim().toUpperCase();
+        if (!newRecordRef) return;
+        const copyFromRef = String(op.copyFromRef || '').trim().toUpperCase();
+        ops.push({
+          op: copyFromRef ? 'copy' : 'add',
+          sectionCode,
+          newRecordRef,
+          copyFromRef
+        });
+        return;
+      }
+      if (kind === 'copy') {
+        const sourceRef = String(op.sourceRef || op.copyFromRef || '').trim().toUpperCase();
+        const newRecordRef = String(op.newRecordRef || '').trim().toUpperCase();
+        if (!sourceRef || !newRecordRef) return;
+        ops.push({
+          op: 'copy',
+          sectionCode,
+          sourceRef,
+          newRecordRef
+        });
+        return;
+      }
+      if (kind === 'delete') {
+        const recordRef = String(op.recordRef || '').trim().toUpperCase();
+        if (!recordRef) return;
+        ops.push({
+          op: 'delete',
+          sectionCode,
+          recordRef
+        });
+      }
+    });
+  });
+  return ops;
+}
+
 function collectBiqStructureEdits(tabs) {
   const edits = [];
   BIQ_STRUCTURE_TAB_SPECS.forEach((spec) => {
@@ -3478,20 +3533,100 @@ function collectBiqStructureEdits(tabs) {
       if (!sectionCode || !Array.isArray(section.records)) return;
       section.records.forEach((record) => {
         const recordIndex = Number(record && record.index);
-        if (!Number.isFinite(recordIndex) || !Array.isArray(record.fields)) return;
+        const isNew = !!(record && record.newRecordRef);
+        if ((!Number.isFinite(recordIndex) && !isNew) || !Array.isArray(record.fields)) return;
         record.fields.forEach((field) => {
           if (!field) return;
           const key = String((field.baseKey || field.key) || '').trim();
-          if (!key || key.toLowerCase() === 'civilopediaentry') return;
+          if (!key) return;
+          const keyLower = key.toLowerCase();
+          if (keyLower === 'civilopediaentry' || keyLower === 'note') return;
           const value = cleanDisplayText(field.value);
           const originalValue = cleanDisplayText(field.originalValue);
           if (value === originalValue) return;
           edits.push({
             sectionCode,
-            recordRef: `@INDEX:${recordIndex}`,
+            recordRef: isNew ? String(record.newRecordRef).trim().toUpperCase() : `@INDEX:${recordIndex}`,
             fieldKey: key,
             value
           });
+        });
+      });
+    });
+  });
+  return edits;
+}
+
+function collectBiqMapRecordOps(tabs) {
+  const ops = [];
+  const tab = tabs && tabs.map;
+  if (!tab || !Array.isArray(tab.recordOps) || tab.recordOps.length === 0) return ops;
+  tab.recordOps.forEach((op) => {
+    const kind = String(op && op.op || '').toLowerCase();
+    const sectionCode = String(op && op.sectionCode || '').trim().toUpperCase();
+    if (!sectionCode) return;
+    if (kind === 'add') {
+      const newRecordRef = String(op.newRecordRef || '').trim().toUpperCase();
+      if (!newRecordRef) return;
+      const copyFromRef = String(op.copyFromRef || '').trim().toUpperCase();
+      ops.push({
+        op: copyFromRef ? 'copy' : 'add',
+        sectionCode,
+        newRecordRef,
+        copyFromRef
+      });
+      return;
+    }
+    if (kind === 'copy') {
+      const sourceRef = String(op.sourceRef || op.copyFromRef || '').trim().toUpperCase();
+      const newRecordRef = String(op.newRecordRef || '').trim().toUpperCase();
+      if (!sourceRef || !newRecordRef) return;
+      ops.push({
+        op: 'copy',
+        sectionCode,
+        sourceRef,
+        newRecordRef
+      });
+      return;
+    }
+    if (kind === 'delete') {
+      const recordRef = String(op.recordRef || '').trim().toUpperCase();
+      if (!recordRef) return;
+      ops.push({
+        op: 'delete',
+        sectionCode,
+        recordRef
+      });
+    }
+  });
+  return ops;
+}
+
+function collectBiqMapEdits(tabs) {
+  const edits = [];
+  const tab = tabs && tabs.map;
+  if (!tab || !Array.isArray(tab.sections)) return edits;
+  tab.sections.forEach((section) => {
+    const sectionCode = String((section && section.code) || '').trim().toUpperCase();
+    if (!sectionCode || !Array.isArray(section.records)) return;
+    section.records.forEach((record) => {
+      const recordIndex = Number(record && record.index);
+      const isNew = !!(record && record.newRecordRef);
+      if ((!Number.isFinite(recordIndex) && !isNew) || !Array.isArray(record.fields)) return;
+      record.fields.forEach((field) => {
+        if (!field) return;
+        const key = String((field.baseKey || field.key) || '').trim();
+        if (!key) return;
+        const keyLower = key.toLowerCase();
+        if (keyLower === 'civilopediaentry' || keyLower === 'note') return;
+        const value = cleanDisplayText(field.value);
+        const originalValue = cleanDisplayText(field.originalValue);
+        if (value === originalValue) return;
+        edits.push({
+          sectionCode,
+          recordRef: isNew ? String(record.newRecordRef).trim().toUpperCase() : `@INDEX:${recordIndex}`,
+          fieldKey: key,
+          value
         });
       });
     });

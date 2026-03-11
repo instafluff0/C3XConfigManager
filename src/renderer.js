@@ -90,10 +90,23 @@ const state = {
     results: []
   },
   techTreeEraSelectionByTab: {},
+  mapEditorTool: {
+    mode: 'select',
+    diameter: 1,
+    terrainCode: 0,
+    overlayType: 'road',
+    fogMode: 'add',
+    districtType: 0,
+    districtState: 1,
+    ownerType: 1,
+    owner: 0,
+    unitType: 0
+  },
   settingsPersistTimer: null,
   startupPerformanceMode: 'high',
   sectionValidationError: ''
 };
+const mapCore = (typeof window !== 'undefined' && window.MapEditorCore) ? window.MapEditorCore : null;
 const richTooltip = {
   node: null,
   active: false
@@ -112,6 +125,13 @@ const techTreeModal = {
   node: null,
   body: null,
   title: null
+};
+const mapModal = {
+  node: null,
+  body: null,
+  title: null,
+  tab: null,
+  tileSection: null
 };
 const pediaLinkPreview = {
   node: null,
@@ -5465,7 +5485,7 @@ const UNIT_BOTTOM_LIST_HIDDEN_KEYS = new Set([
 ]);
 
 const BIQ_STRUCTURE_FIELD_HIDDEN = {
-  all: new Set(['byte_length', 'data_length', 'datalength', 'note', 'civilopediaentry']),
+  all: new Set(['byte_length', 'data_length', 'datalength', 'note', 'civilopediaentry', 'possible_resources_mask']),
   GAME: new Set(['playable_civ_ids']),
   LEAD: new Set(['numberofdifferentstartunits', 'numberofstartingtechnologies']),
   RULE: new Set([]),
@@ -5591,6 +5611,72 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       metropolisdefencebonus: { group: 'Defense', control: 'number' },
       fortressdefencebonus: { group: 'Defense', control: 'number' },
       fortificationsdefencebonus: { group: 'Defense', control: 'number' }
+    }
+  },
+  TERR: {
+    order: [
+      'civilopediaentry',
+      'food', 'landmarkfood',
+      'shields', 'landmarkshields',
+      'commerce', 'landmarkcommerce',
+      'foodbonus', 'landmarkfoodbonus',
+      'shieldsbonus', 'landmarkshieldsbonus',
+      'commercebonus', 'landmarkcommercebonus',
+      'movementcost', 'landmarkmovementcost',
+      'defencebonus', 'landmarkdefencebonus',
+      'landmarkname', 'landmarkenabled',
+      'allowcities', 'allowcolonies', 'allowairfields', 'allowoutposts', 'allowradartowers', 'allowforts',
+      'impassable', 'impassablebywheeled',
+      'terrainflags', 'diseasestrength',
+      'pollutioneffect', 'workerjob',
+      '__terrain_possible_resources',
+      'questionmark', 'questionmark2'
+    ],
+    fields: {
+      food: { group: 'Terrain Values', control: 'number', label: 'Food' },
+      landmarkfood: { group: 'Terrain Values', control: 'number', label: 'Landmark Food' },
+      shields: { group: 'Terrain Values', control: 'number', label: 'Shields' },
+      landmarkshields: { group: 'Terrain Values', control: 'number', label: 'Landmark Shields' },
+      commerce: { group: 'Terrain Values', control: 'number', label: 'Commerce' },
+      landmarkcommerce: { group: 'Terrain Values', control: 'number', label: 'Landmark Commerce' },
+      foodbonus: { group: 'Terrain Values', control: 'number', label: 'Irrigation Bonus' },
+      landmarkfoodbonus: { group: 'Terrain Values', control: 'number', label: 'Landmark Irrigation Bonus' },
+      shieldsbonus: { group: 'Terrain Values', control: 'number', label: 'Mining Bonus' },
+      landmarkshieldsbonus: { group: 'Terrain Values', control: 'number', label: 'Landmark Mining Bonus' },
+      commercebonus: { group: 'Terrain Values', control: 'number', label: 'Trade Bonus' },
+      landmarkcommercebonus: { group: 'Terrain Values', control: 'number', label: 'Landmark Trade Bonus' },
+      movementcost: { group: 'Terrain Values', control: 'number', min: 0, label: 'Movement Cost' },
+      landmarkmovementcost: { group: 'Terrain Values', control: 'number', min: 0, label: 'Landmark Movement Cost' },
+      defencebonus: { group: 'Terrain Values', control: 'number', label: 'Defence Bonus' },
+      landmarkdefencebonus: { group: 'Terrain Values', control: 'number', label: 'Landmark Defence Bonus' },
+      landmarkname: { group: 'Terrain Values', control: 'text', label: 'Landmark Terrain Name' },
+      landmarkenabled: { group: 'Terrain Values', control: 'bool', label: 'Landmark Enabled' },
+      allowcities: { group: 'Flags', control: 'bool', label: 'Allow Cities' },
+      allowcolonies: { group: 'Flags', control: 'bool', label: 'Allow Colonies' },
+      allowairfields: { group: 'Flags', control: 'bool', label: 'Allow Airfields' },
+      allowoutposts: { group: 'Flags', control: 'bool', label: 'Allow Outposts' },
+      allowradartowers: { group: 'Flags', control: 'bool', label: 'Allow Radar Towers' },
+      allowforts: { group: 'Flags', control: 'bool', label: 'Allow Forts' },
+      impassable: { group: 'Flags', control: 'bool', label: 'Impassable' },
+      impassablebywheeled: { group: 'Flags', control: 'bool', label: 'Impassable by Wheeled Units' },
+      terrainflags: { group: 'Flags', control: 'number', min: 0, label: 'Terrain Flags' },
+      diseasestrength: { group: 'Flags', control: 'number', min: 0, label: 'Strength' },
+      pollutioneffect: { group: 'Pollution / Terraform', control: 'reference', label: 'Pollution Yields' },
+      workerjob: { group: 'Pollution / Terraform', control: 'reference', label: 'Worker Terraform Action' },
+      __terrain_possible_resources: { group: 'Possible Resources', control: 'multi_ref', label: 'Resource list' },
+      questionmark: { group: 'Unknown Parameters', control: 'number', label: 'Unknown 1' },
+      questionmark2: { group: 'Unknown Parameters', control: 'number', label: 'Unknown 2' }
+    }
+  },
+  TFRM: {
+    order: ['civilopediaentry', 'turnstocomplete', 'requiredadvance', 'requiredresource1', 'requiredresource2', 'order'],
+    fields: {
+      civilopediaentry: { group: 'General', control: 'text', label: 'Civilopedia Entry' },
+      turnstocomplete: { group: 'General', control: 'number', min: 0, label: 'Turns To Complete' },
+      requiredadvance: { group: 'Requirements', control: 'reference', label: 'Required Technology' },
+      requiredresource1: { group: 'Requirements', control: 'reference', label: 'Required Resource 1' },
+      requiredresource2: { group: 'Requirements', control: 'reference', label: 'Required Resource 2' },
+      order: { group: 'General', control: 'text', label: 'Worker Order' }
     }
   }
 };
@@ -6427,6 +6513,76 @@ function setCivilizationNoteListValues(entry, countKey, values) {
   const nextNotes = cleaned.map((value) => ({ ...template, value }));
   fields.splice(start, Math.max(0, end - start), ...nextNotes);
   countField.value = String(cleaned.length);
+}
+
+function getTerrainResourceOptions() {
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs.resources;
+  const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+  return entries
+    .map((entry, idx) => ({
+      value: String(Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : idx),
+      label: String(entry && (entry.name || entry.civilopediaKey) || `Resource ${idx + 1}`),
+      entry: entry || null
+    }))
+    .sort((a, b) => Number.parseInt(a.value, 10) - Number.parseInt(b.value, 10));
+}
+
+function parseTerrainMaskCsv(raw) {
+  return String(raw || '')
+    .split(/[,\s]+/)
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .map((part) => {
+      const n = Number.parseInt(part, 10);
+      return Number.isFinite(n) && n !== 0 ? 1 : 0;
+    });
+}
+
+function deriveTerrainMaskFromNotes(record) {
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  const countField = fields.find((field) => canonicalBiqFieldKey(field) === 'numpossibleresources');
+  const declaredCount = Math.max(0, parseIntFromDisplayValue(countField && countField.value) || 0);
+  const countIndex = countField ? fields.indexOf(countField) : -1;
+  if (countIndex < 0) return [];
+  let i = countIndex + 1;
+  const mask = [];
+  while (i < fields.length && canonicalBiqFieldKey(fields[i]) === 'note') {
+    const v = Number.parseInt(String(fields[i] && fields[i].value || '').trim(), 10);
+    mask.push(Number.isFinite(v) && v !== 0 ? 1 : 0);
+    i += 1;
+  }
+  if (declaredCount > mask.length) {
+    while (mask.length < declaredCount) mask.push(0);
+  }
+  return mask;
+}
+
+function getTerrainResourceMask(record) {
+  if (!record || !Array.isArray(record.fields)) return [];
+  const maskField = record.fields.find((field) => canonicalBiqFieldKey(field) === 'possibleresourcesmask');
+  if (maskField && String(maskField.value || '').trim()) {
+    return parseTerrainMaskCsv(maskField.value);
+  }
+  return deriveTerrainMaskFromNotes(record);
+}
+
+function ensureTerrainResourceMaskField(record) {
+  if (!record) return null;
+  if (!Array.isArray(record.fields)) record.fields = [];
+  const existing = record.fields.find((field) => canonicalBiqFieldKey(field) === 'possibleresourcesmask');
+  if (existing) return existing;
+  const initial = getTerrainResourceMask(record);
+  const csv = initial.join(',');
+  const created = {
+    key: 'possible_resources_mask',
+    baseKey: 'possible_resources_mask',
+    label: 'Possible Resources Mask',
+    value: csv,
+    originalValue: csv,
+    editable: true
+  };
+  record.fields.push(created);
+  return created;
 }
 
 function renderCivilizationNoteListEditor(entry, cfg, referenceEditable) {
@@ -8121,6 +8277,78 @@ function openTechTreeModal(config) {
   overlay.setAttribute('aria-hidden', 'false');
 }
 
+function ensureMapModalNode() {
+  if (mapModal.node && mapModal.node.isConnected) return mapModal.node;
+  const overlay = document.createElement('div');
+  overlay.className = 'map-editor-modal-overlay hidden';
+  overlay.setAttribute('aria-hidden', 'true');
+  overlay.innerHTML = `
+    <div class="map-editor-modal-panel" role="dialog" aria-modal="true" aria-label="Map Editor">
+      <div class="map-editor-modal-header">
+        <strong id="map-editor-modal-title">Map Editor</strong>
+        <button type="button" class="ghost" data-act="close">Close</button>
+      </div>
+      <div id="map-editor-modal-body" class="map-editor-modal-body"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  mapModal.node = overlay;
+  mapModal.body = overlay.querySelector('#map-editor-modal-body');
+  mapModal.title = overlay.querySelector('#map-editor-modal-title');
+  const closeBtn = overlay.querySelector('[data-act="close"]');
+  if (closeBtn) closeBtn.addEventListener('click', () => closeMapModal());
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) closeMapModal();
+  });
+  return overlay;
+}
+
+function renderMapModalBody() {
+  if (!mapModal.body || !mapModal.tab || !mapModal.tileSection) return;
+  mapModal.body.innerHTML = '';
+  try {
+    mapModal.body.appendChild(renderBiqMapSection(mapModal.tab, mapModal.tileSection, { inModal: true }));
+  } catch (err) {
+    const card = document.createElement('div');
+    card.className = 'section-card';
+    const title = document.createElement('div');
+    title.className = 'section-top';
+    title.innerHTML = '<strong>Map Failed To Open</strong>';
+    const note = document.createElement('p');
+    note.className = 'warning';
+    note.textContent = String(err && err.message || err || 'Unknown map modal render error');
+    card.appendChild(title);
+    card.appendChild(note);
+    mapModal.body.appendChild(card);
+    setStatus(`Map editor failed to render: ${String(err && err.message || err || 'unknown error')}`, true);
+  }
+}
+
+function closeMapModal() {
+  const overlay = ensureMapModalNode();
+  overlay.classList.add('hidden');
+  overlay.setAttribute('aria-hidden', 'true');
+  if (mapModal.body) mapModal.body.innerHTML = '';
+  mapModal.tab = null;
+  mapModal.tileSection = null;
+}
+
+function openMapModal(config) {
+  const cfg = config || {};
+  const tab = cfg.tab || null;
+  const tileSection = cfg.tileSection || null;
+  if (!tab || !tileSection) return;
+  const overlay = ensureMapModalNode();
+  mapModal.tab = tab;
+  mapModal.tileSection = tileSection;
+  if (mapModal.title) {
+    mapModal.title.textContent = String(cfg.title || `${tab.title || 'Map'} Editor`);
+  }
+  overlay.classList.remove('hidden');
+  overlay.setAttribute('aria-hidden', 'false');
+  renderMapModalBody();
+}
+
 function mapCivilopediaKeyToTabKey(civilopediaKey) {
   const key = String(civilopediaKey || '').toUpperCase();
   if (key.startsWith('RACE_')) return 'civilizations';
@@ -9222,6 +9450,115 @@ function ensureReferenceRecordOps(tab) {
   if (!tab) return [];
   if (!Array.isArray(tab.recordOps)) tab.recordOps = [];
   return tab.recordOps;
+}
+
+function ensureBiqStructureRecordOps(tab) {
+  if (!tab) return [];
+  if (!Array.isArray(tab.recordOps)) tab.recordOps = [];
+  return tab.recordOps;
+}
+
+function getBiqRecordCivilopediaKey(record) {
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  const field = fields.find((f) => canonicalBiqFieldKey(f) === 'civilopediaentry');
+  return String(field && field.value || '').trim().toUpperCase();
+}
+
+function getBiqStructureRecordRef(record) {
+  if (!record) return '';
+  if (record.newRecordRef) return String(record.newRecordRef).trim().toUpperCase();
+  const civKey = getBiqRecordCivilopediaKey(record);
+  if (civKey) return civKey;
+  const idx = Number(record.index);
+  if (Number.isFinite(idx)) return `@INDEX:${idx}`;
+  return '';
+}
+
+function makeUniqueBiqStructureRecordRef(tab, sectionCode) {
+  const code = String(sectionCode || '').trim().toUpperCase() || 'REC';
+  const existing = new Set();
+  const sections = Array.isArray(tab && tab.sections) ? tab.sections : [];
+  sections.forEach((section) => {
+    if (String(section && section.code || '').toUpperCase() !== code) return;
+    const records = Array.isArray(section && section.records) ? section.records : [];
+    records.forEach((record) => {
+      const ref = getBiqStructureRecordRef(record);
+      if (ref) existing.add(ref);
+    });
+  });
+  const ops = Array.isArray(tab && tab.recordOps) ? tab.recordOps : [];
+  ops.forEach((op) => {
+    if (String(op && op.sectionCode || '').toUpperCase() !== code) return;
+    const newRef = String(op && op.newRecordRef || '').trim().toUpperCase();
+    if (newRef) existing.add(newRef);
+  });
+  let i = 1;
+  let next = `${code}_NEW_${i}`;
+  while (existing.has(next)) {
+    i += 1;
+    next = `${code}_NEW_${i}`;
+  }
+  return next;
+}
+
+function makeDefaultBiqStructureFieldValue(field) {
+  const raw = String(field && field.value || '').trim().toLowerCase();
+  if (raw === 'true' || raw === 'false') return 'false';
+  const n = parseIntFromDisplayValue(raw);
+  if (n != null) return '0';
+  return '';
+}
+
+function buildBiqStructureRecordFromSource({ section, sourceRecord, mode, newRecordRef }) {
+  const base = sourceRecord
+    ? JSON.parse(JSON.stringify(sourceRecord))
+    : { index: -1, name: `${String(section && section.code || 'Record')} New`, fields: [] };
+  const record = base && typeof base === 'object' ? base : { index: -1, name: 'New Record', fields: [] };
+  if (!Array.isArray(record.fields)) record.fields = [];
+  const code = String(section && section.code || '').toUpperCase();
+  const maxIndex = (Array.isArray(section && section.records) ? section.records : []).reduce((max, rec) => {
+    const idx = Number(rec && rec.index);
+    return Number.isFinite(idx) ? Math.max(max, idx) : max;
+  }, -1);
+  record.index = maxIndex + 1;
+  record.newRecordRef = String(newRecordRef || '').trim().toUpperCase();
+  if (mode === 'blank') {
+    record.fields = record.fields.map((field) => {
+      const canon = canonicalBiqFieldKey(field);
+      if (canon === 'note') return field;
+      if (canon === 'civilopediaentry') {
+        return { ...field, value: record.newRecordRef, originalValue: '' };
+      }
+      const value = makeDefaultBiqStructureFieldValue(field);
+      return { ...field, value, originalValue: '' };
+    });
+  } else if (mode === 'copy') {
+    record.fields = record.fields.map((field) => {
+      const canon = canonicalBiqFieldKey(field);
+      if (canon === 'civilopediaentry') return { ...field, value: record.newRecordRef, originalValue: record.newRecordRef };
+      const value = String(field && field.value || '');
+      return { ...field, originalValue: value };
+    });
+  } else {
+    record.fields = record.fields.map((field) => {
+      const canon = canonicalBiqFieldKey(field);
+      if (canon === 'civilopediaentry') return { ...field, value: record.newRecordRef, originalValue: '' };
+      return { ...field, originalValue: '' };
+    });
+  }
+  const civKey = getBiqRecordCivilopediaKey(record);
+  if (!civKey) {
+    record.fields.unshift({
+      key: 'civilopediaentry',
+      baseKey: 'civilopediaentry',
+      label: 'Civilopedia Entry',
+      value: record.newRecordRef,
+      originalValue: mode === 'copy' ? record.newRecordRef : ''
+    });
+  }
+  const display = record.newRecordRef.replace(/^([A-Z0-9]+_)/, '').replace(/_/g, ' ').trim();
+  record.name = display ? display.replace(/\b\w/g, (m) => m.toUpperCase()) : `${code} New`;
+  return record;
 }
 
 function normalizeReferenceKeyToken(raw) {
@@ -10744,12 +11081,36 @@ function renderBiqTab(tab) {
   const recordFilterKey = `${selectionKey}:${selected.id}`;
   recordSearch.value = state.biqRecordFilter[recordFilterKey] || '';
   recordFilterRow.appendChild(recordSearch);
+  const controlsRight = document.createElement('div');
+  controlsRight.className = 'reference-filter-right';
+  recordFilterRow.appendChild(controlsRight);
   wrap.appendChild(recordFilterRow);
 
   const records = Array.isArray(selected.records) ? selected.records : [];
 
   if (selected.code === 'TILE') {
-    wrap.appendChild(renderBiqMapSection(tab, selected));
+    const card = document.createElement('div');
+    card.className = 'section-card';
+    const top = document.createElement('div');
+    top.className = 'section-top';
+    top.innerHTML = '<strong>Map Editor</strong><span class="hint">Opens in modal</span>';
+    const openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.className = 'secondary';
+    openBtn.textContent = 'Open Map';
+    openBtn.addEventListener('click', () => {
+      openMapModal({ tab, tileSection: selected, title: `${tab.title || 'Map'} Editor` });
+    });
+    top.appendChild(openBtn);
+    card.appendChild(top);
+    const hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.textContent = 'Pan, zoom, and tile inspection are now in a large modal workspace.';
+    card.appendChild(hint);
+    wrap.appendChild(card);
+    window.requestAnimationFrame(() => {
+      openMapModal({ tab, tileSection: selected, title: `${tab.title || 'Map'} Editor` });
+    });
     return wrap;
   }
 
@@ -10758,6 +11119,152 @@ function renderBiqTab(tab) {
     Math.min(Number(state.biqRecordSelection[selected.id] || 0), Math.max(0, records.length - 1))
   );
   state.biqRecordSelection[selected.id] = selectedRecordIndex;
+  const selectedRecord = records[selectedRecordIndex] || null;
+
+  const structureMutable = !tab.readOnly && (selected.code === 'TERR' || selected.code === 'TFRM');
+  if (structureMutable) {
+    const actionRow = document.createElement('div');
+    actionRow.className = 'reference-entity-actions';
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'ghost action-add';
+    addBtn.textContent = '＋ Add';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'ghost action-copy';
+    copyBtn.textContent = '⧉ Copy';
+    copyBtn.disabled = !selectedRecord;
+
+    const importBtn = document.createElement('button');
+    importBtn.type = 'button';
+    importBtn.className = 'ghost action-import';
+    importBtn.textContent = '⇪ Import';
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'ghost action-delete';
+    deleteBtn.textContent = '🗑 Delete';
+    deleteBtn.disabled = !selectedRecord;
+
+    addBtn.addEventListener('click', () => {
+      const newRef = makeUniqueBiqStructureRecordRef(tab, selected.code);
+      const newRecord = buildBiqStructureRecordFromSource({
+        section: selected,
+        sourceRecord: selectedRecord || records[0] || null,
+        mode: 'blank',
+        newRecordRef: newRef
+      });
+      const ops = ensureBiqStructureRecordOps(tab);
+      rememberUndoSnapshot();
+      selected.records.unshift(newRecord);
+      ops.push({ op: 'add', sectionCode: selected.code, newRecordRef: newRef });
+      state.biqRecordSelection[selected.id] = 0;
+      setDirty(true);
+      setStatus(`Added new ${selected.code} record.`);
+      renderActiveTab({ preserveTabScroll: true });
+    });
+
+    copyBtn.addEventListener('click', () => {
+      if (!selectedRecord) return;
+      const sourceRef = getBiqStructureRecordRef(selectedRecord);
+      if (!sourceRef) {
+        setStatus('Could not resolve source record for copy.', true);
+        return;
+      }
+      const newRef = makeUniqueBiqStructureRecordRef(tab, selected.code);
+      const newRecord = buildBiqStructureRecordFromSource({
+        section: selected,
+        sourceRecord: selectedRecord,
+        mode: 'copy',
+        newRecordRef: newRef
+      });
+      const ops = ensureBiqStructureRecordOps(tab);
+      rememberUndoSnapshot();
+      selected.records.unshift(newRecord);
+      ops.push({ op: 'copy', sectionCode: selected.code, sourceRef, newRecordRef: newRef });
+      state.biqRecordSelection[selected.id] = 0;
+      setDirty(true);
+      setStatus(`Copied ${selected.code} record.`);
+      renderActiveTab({ preserveTabScroll: true });
+    });
+
+    importBtn.addEventListener('click', async () => {
+      const importPath = await window.c3xManager.pickFile({
+        filters: [{ name: 'BIQ Scenario Files', extensions: ['biq'] }]
+      });
+      if (!importPath) return;
+      try {
+        const loaded = await window.c3xManager.loadBundle({
+          mode: 'scenario',
+          c3xPath: state.settings.c3xPath,
+          civ3Path: state.settings.civ3Path,
+          scenarioPath: importPath
+        });
+        const importTab = loaded && loaded.tabs ? loaded.tabs[selectionKey] : null;
+        const importSections = importTab && Array.isArray(importTab.sections) ? importTab.sections : [];
+        const importSection = importSections.find((s) => String(s && s.code || '').toUpperCase() === selected.code);
+        const importRecords = importSection && Array.isArray(importSection.records) ? importSection.records : [];
+        if (importRecords.length === 0) {
+          setStatus(`No ${selected.code} records found in import scenario.`, true);
+          return;
+        }
+        const sourceIdx = Math.max(0, Math.min(selectedRecordIndex, importRecords.length - 1));
+        const sourceRecord = importRecords[sourceIdx];
+        const newRef = makeUniqueBiqStructureRecordRef(tab, selected.code);
+        const newRecord = buildBiqStructureRecordFromSource({
+          section: selected,
+          sourceRecord,
+          mode: 'import',
+          newRecordRef: newRef
+        });
+        const ops = ensureBiqStructureRecordOps(tab);
+        rememberUndoSnapshot();
+        selected.records.unshift(newRecord);
+        ops.push({ op: 'add', sectionCode: selected.code, newRecordRef: newRef });
+        state.biqRecordSelection[selected.id] = 0;
+        setDirty(true);
+        setStatus(`Imported ${selected.code} record from scenario.`);
+        renderActiveTab({ preserveTabScroll: true });
+      } catch (err) {
+        setStatus(err && err.message ? err.message : 'Import failed.', true);
+      }
+    });
+
+    deleteBtn.addEventListener('click', () => {
+      if (!selectedRecord) return;
+      const targetRef = getBiqStructureRecordRef(selectedRecord);
+      if (!targetRef) {
+        setStatus('Could not resolve record for delete.', true);
+        return;
+      }
+      const target = String(targetRef).trim().toUpperCase();
+      rememberUndoSnapshot();
+      selected.records = selected.records.filter((record) => record !== selectedRecord);
+      const ops = ensureBiqStructureRecordOps(tab);
+      const hadCreate = ops.some((op) => String(op && op.newRecordRef || '').trim().toUpperCase() === target);
+      tab.recordOps = ops.filter((op) => {
+        const rec = String(op && op.recordRef || '').trim().toUpperCase();
+        const src = String(op && op.sourceRef || '').trim().toUpperCase();
+        const next = String(op && op.newRecordRef || '').trim().toUpperCase();
+        return rec !== target && src !== target && next !== target;
+      });
+      if (!hadCreate) {
+        ensureBiqStructureRecordOps(tab).push({ op: 'delete', sectionCode: selected.code, recordRef: target });
+      }
+      state.biqRecordSelection[selected.id] = 0;
+      setDirty(true);
+      setStatus(`Deleted ${selected.code} record.`);
+      renderActiveTab({ preserveTabScroll: true });
+    });
+
+    actionRow.appendChild(addBtn);
+    actionRow.appendChild(copyBtn);
+    actionRow.appendChild(importBtn);
+    actionRow.appendChild(deleteBtn);
+    controlsRight.appendChild(actionRow);
+  }
 
   if (selected.recordsTruncated) {
     const title = document.createElement('p');
@@ -10838,10 +11345,6 @@ function renderBiqTab(tab) {
       if (terrainPrimaryArtSlot) {
         const sidebarArt = document.createElement('div');
         sidebarArt.className = 'section-card reference-sidebar-art';
-        const sidebarTitle = document.createElement('div');
-        sidebarTitle.className = 'section-top';
-        sidebarTitle.innerHTML = `<strong>${terrainPrimaryArtSlot.label}</strong>`;
-        sidebarArt.appendChild(sidebarTitle);
         sidebarArt.appendChild(makeArtSlotCard({
           tabKey: terrainArtTabKey,
           entry: terrainPediaEntry,
@@ -10905,7 +11408,7 @@ function renderBiqTab(tab) {
 
     }
 
-    const fields = (record.fields || [])
+    let fields = (record.fields || [])
       .filter((field) => !shouldHideBiqStructureField(selected.code, field))
       .sort((a, b) => {
         const ao = getBiqStructureFieldOrder(selected.code, a);
@@ -10913,6 +11416,24 @@ function renderBiqTab(tab) {
         if (ao !== bo) return ao - bo;
         return String(a.label || a.key).localeCompare(String(b.label || b.key), 'en', { sensitivity: 'base' });
       });
+    if (selected.code === 'TERR') {
+      fields = fields.filter((field) => {
+        const canon = canonicalBiqFieldKey(field);
+        return canon !== 'numpossibleresources' && canon !== 'note';
+      });
+      fields.push({
+        key: '__terrain_possible_resources',
+        baseKey: '__terrain_possible_resources',
+        label: 'Possible Resources',
+        value: ''
+      });
+      fields.sort((a, b) => {
+        const ao = getBiqStructureFieldOrder(selected.code, a);
+        const bo = getBiqStructureFieldOrder(selected.code, b);
+        if (ao !== bo) return ao - bo;
+        return String(a.label || a.key).localeCompare(String(b.label || b.key), 'en', { sensitivity: 'base' });
+      });
+    }
     if (fields.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'hint';
@@ -11039,6 +11560,54 @@ function renderBiqTab(tab) {
           controlWrap.className = 'rule-control';
           const editable = !tab.readOnly;
           const baseKey = String(field.baseKey || field.key || '').toLowerCase();
+          if (selected.code === 'TERR' && baseKey === '__terrain_possible_resources') {
+            const options = getTerrainResourceOptions();
+            const currentMask = getTerrainResourceMask(record);
+            const selectedValues = options
+              .filter((opt) => {
+                const idx = Number.parseInt(String(opt.value || ''), 10);
+                return Number.isFinite(idx) && currentMask[idx] === 1;
+              })
+              .map((opt) => String(opt.value));
+            if (editable) {
+              const editor = makeNamedListPickerEditor({
+                tabKey: 'resources',
+                options,
+                values: selectedValues,
+                onValuesChange: (nextValues) => {
+                  rememberUndoSnapshot();
+                  const nextSet = new Set((Array.isArray(nextValues) ? nextValues : []).map((v) => String(v)));
+                  const maxOptionIndex = options.reduce((max, opt) => {
+                    const idx = Number.parseInt(String(opt.value || ''), 10);
+                    return Number.isFinite(idx) ? Math.max(max, idx) : max;
+                  }, -1);
+                  const nextMask = getTerrainResourceMask(record).slice();
+                  const targetLen = Math.max(nextMask.length, maxOptionIndex + 1);
+                  while (nextMask.length < targetLen) nextMask.push(0);
+                  options.forEach((opt) => {
+                    const idx = Number.parseInt(String(opt.value || ''), 10);
+                    if (!Number.isFinite(idx) || idx < 0) return;
+                    nextMask[idx] = nextSet.has(String(opt.value)) ? 1 : 0;
+                  });
+                  const maskField = ensureTerrainResourceMaskField(record);
+                  if (maskField) maskField.value = nextMask.join(',');
+                  setDirty(true);
+                }
+              });
+              controlWrap.appendChild(editor);
+            } else {
+              const selectedLabels = options
+                .filter((opt) => selectedValues.includes(String(opt.value)))
+                .map((opt) => String(opt.label || opt.value));
+              const text = document.createElement('div');
+              text.className = 'field-meta';
+              text.textContent = selectedLabels.length ? selectedLabels.join(', ') : '(none)';
+              controlWrap.appendChild(text);
+            }
+            row.appendChild(controlWrap);
+            groupCard.appendChild(row);
+            return;
+          }
           const refSpec = getBiqStructureRefSpec(selected.code, baseKey);
           const refOptions = refSpec ? makeBiqSectionIndexOptions(refSpec.section, !!refSpec.oneBased) : [];
           const refTargetTabKey = refSpec ? (BIQ_SECTION_TO_REFERENCE_TAB[String(refSpec.section || '').toUpperCase()] || '') : '';
@@ -11202,7 +11771,28 @@ function renderMapTab(tab) {
     wrap.appendChild(note);
     return wrap;
   }
-  wrap.appendChild(renderBiqMapSection(tab, tileSection));
+  const card = document.createElement('div');
+  card.className = 'section-card';
+  const top = document.createElement('div');
+  top.className = 'section-top';
+  top.innerHTML = '<strong>Map Editor</strong><span class="hint">Opens in modal</span>';
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.className = 'secondary';
+  openBtn.textContent = 'Open Map';
+  openBtn.addEventListener('click', () => {
+    openMapModal({ tab, tileSection, title: `${tab.title || 'Map'} Editor` });
+  });
+  top.appendChild(openBtn);
+  card.appendChild(top);
+  const note = document.createElement('p');
+  note.className = 'hint';
+  note.textContent = 'Map editing now uses a full-screen modal for navigation and editing.';
+  card.appendChild(note);
+  wrap.appendChild(card);
+  window.requestAnimationFrame(() => {
+    openMapModal({ tab, tileSection, title: `${tab.title || 'Map'} Editor` });
+  });
   return wrap;
 }
 
@@ -11223,6 +11813,38 @@ function setRecordFieldValue(record, key, value) {
   const f = getFieldByBaseKey(record, key);
   if (!f) return false;
   f.value = String(value);
+  return true;
+}
+
+function getMapFieldValue(record, key, fallback = '') {
+  if (mapCore && typeof mapCore.getField === 'function') {
+    const field = mapCore.getField(record, key);
+    if (field) return String(field.value || '');
+  }
+  const field = getFieldByBaseKey(record, key);
+  if (!field) return String(fallback);
+  return String(field.value || '');
+}
+
+function setMapFieldValue(record, key, value, label = '') {
+  if (!record) return false;
+  if (mapCore && typeof mapCore.setField === 'function') {
+    mapCore.setField(record, key, value, label || toFriendlyKey(key));
+    return true;
+  }
+  if (!Array.isArray(record.fields)) record.fields = [];
+  const existing = getFieldByBaseKey(record, key);
+  if (existing) {
+    existing.value = String(value == null ? '' : value);
+    return true;
+  }
+  record.fields.push({
+    key: String(key || ''),
+    baseKey: String(key || ''),
+    label: String(label || toFriendlyKey(key)),
+    value: String(value == null ? '' : value),
+    originalValue: ''
+  });
   return true;
 }
 
@@ -11287,6 +11909,11 @@ function requestBiqMapArtAsset(assetKey, assetPath) {
     state.biqMapRerenderPending = true;
     window.requestAnimationFrame(() => {
       state.biqMapRerenderPending = false;
+      const mapOverlay = ensureMapModalNode();
+      if (mapModal.tab && mapModal.tileSection && !mapOverlay.classList.contains('hidden')) {
+        renderMapModalBody();
+        return;
+      }
       if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs[state.activeTab] || state.bundle.tabs[state.activeTab].type !== 'map') {
         return;
       }
@@ -11295,10 +11922,19 @@ function requestBiqMapArtAsset(assetKey, assetPath) {
   });
 }
 
-function renderBiqMapSection(tab, tileSection) {
+function renderBiqMapSection(tab, tileSection, options = {}) {
   const container = document.createElement('div');
   container.className = 'biq-map-layout';
+  const floatingUi = !!(options && options.inModal);
+  if (floatingUi) container.classList.add('floating-ui');
   appendDebugLog('biq-map:open', { sectionId: tileSection && tileSection.id, sourcePath: tab && tab.sourcePath });
+  const rerenderMapView = () => {
+    if (options && options.inModal) {
+      renderMapModalBody();
+      return;
+    }
+    renderActiveTab({ preserveTabScroll: true });
+  };
 
   const wmapSection = (tab.sections || []).find((s) => s.code === 'WMAP');
   const wmapRecord = wmapSection && Array.isArray(wmapSection.records) ? wmapSection.records[0] : null;
@@ -11343,7 +11979,7 @@ function renderBiqMapSection(tab, tileSection) {
   layerSelect.addEventListener('change', () => {
     state.biqMapLayer = layerSelect.value;
     appendDebugLog('biq-map:layer-change', { layer: state.biqMapLayer });
-    renderActiveTab({ preserveTabScroll: true });
+    rerenderMapView();
   });
   layerLabel.appendChild(layerSelect);
   controls.appendChild(layerLabel);
@@ -11356,7 +11992,7 @@ function renderBiqMapSection(tab, tileSection) {
   grid.addEventListener('change', () => {
     state.biqMapShowGrid = grid.checked;
     appendDebugLog('biq-map:grid-toggle', { enabled: state.biqMapShowGrid });
-    renderActiveTab({ preserveTabScroll: true });
+    rerenderMapView();
   });
   const gridText = document.createElement('span');
   gridText.textContent = 'Grid';
@@ -11372,7 +12008,7 @@ function renderBiqMapSection(tab, tileSection) {
   overlays.addEventListener('change', () => {
     state.biqMapShowOverlays = overlays.checked;
     appendDebugLog('biq-map:overlays-toggle', { enabled: state.biqMapShowOverlays });
-    renderActiveTab({ preserveTabScroll: true });
+    rerenderMapView();
   });
   const overlaysText = document.createElement('span');
   overlaysText.textContent = 'Overlays';
@@ -11388,7 +12024,7 @@ function renderBiqMapSection(tab, tileSection) {
   names.addEventListener('change', () => {
     state.biqMapShowCityNames = names.checked;
     appendDebugLog('biq-map:city-names-toggle', { enabled: state.biqMapShowCityNames });
-    renderActiveTab({ preserveTabScroll: true });
+    rerenderMapView();
   });
   const namesText = document.createElement('span');
   namesText.textContent = 'City Names';
@@ -11399,16 +12035,288 @@ function renderBiqMapSection(tab, tileSection) {
   const hint = document.createElement('span');
   hint.className = 'hint';
   hint.textContent = isScenarioMode()
-    ? 'Wheel to zoom. Map edits are local UI edits for now (BIQ writing is next).'
+    ? 'Wheel to zoom. Drag to pan. Shortcuts: S/T/O/F/D/C/U tools, 1/3/5/7 brush, +/- zoom.'
     : 'Wheel to zoom. Standard Game BIQ is read-only.';
   controls.appendChild(hint);
 
-  container.appendChild(controls);
+  if (!floatingUi) container.appendChild(controls);
+
+  const tool = state.mapEditorTool || (state.mapEditorTool = {});
+  if (!tool.mode) tool.mode = 'select';
+  if (!Number.isFinite(Number(tool.diameter))) tool.diameter = 1;
+  if (!Number.isFinite(Number(tool.terrainCode))) tool.terrainCode = 0;
+  if (!tool.overlayType) tool.overlayType = 'road';
+  if (!tool.fogMode) tool.fogMode = 'add';
+  if (!Number.isFinite(Number(tool.districtType))) tool.districtType = 0;
+  if (!Number.isFinite(Number(tool.districtState))) tool.districtState = 1;
+  if (!Number.isFinite(Number(tool.ownerType))) tool.ownerType = 1;
+  if (!Number.isFinite(Number(tool.owner))) tool.owner = 0;
+  if (!Number.isFinite(Number(tool.unitType))) tool.unitType = 0;
+
+  const toolRow = document.createElement('div');
+  toolRow.className = 'biq-map-toolbar map-tool-row';
+
+  const modeWrap = document.createElement('label');
+  modeWrap.className = 'hint';
+  modeWrap.textContent = 'Tool';
+  const modeSelect = document.createElement('select');
+  [
+    { value: 'select', label: 'Select' },
+    { value: 'terrain', label: 'Terrain Paint' },
+    { value: 'overlay', label: 'Overlay Paint' },
+    { value: 'fog', label: 'Fog Paint' },
+    { value: 'district', label: 'District Paint' },
+    { value: 'city', label: 'City' },
+    { value: 'unit', label: 'Unit' }
+  ].forEach((opt) => {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    modeSelect.appendChild(o);
+  });
+  modeSelect.value = String(tool.mode || 'select');
+  modeSelect.addEventListener('change', () => {
+    state.mapEditorTool.mode = modeSelect.value;
+    rerenderMapView();
+  });
+  modeWrap.appendChild(modeSelect);
+  toolRow.appendChild(modeWrap);
+
+  const sizeWrap = document.createElement('label');
+  sizeWrap.className = 'hint';
+  sizeWrap.textContent = 'Brush';
+  const sizeSelect = document.createElement('select');
+  [1, 3, 5, 7].forEach((size) => {
+    const o = document.createElement('option');
+    o.value = String(size);
+    o.textContent = `${size}x${size}`;
+    sizeSelect.appendChild(o);
+  });
+  sizeSelect.value = String(Number(tool.diameter) || 1);
+  sizeSelect.addEventListener('change', () => {
+    state.mapEditorTool.diameter = parseIntLoose(sizeSelect.value, 1);
+  });
+  sizeWrap.appendChild(sizeSelect);
+  toolRow.appendChild(sizeWrap);
+
+  const terrainWrap = document.createElement('label');
+  terrainWrap.className = 'hint';
+  terrainWrap.textContent = 'Terrain';
+  const terrainSelect = document.createElement('select');
+  const terrainSectionForPicker = (tab.sections || []).find((s) => s.code === 'TERR');
+  const terrainRecordsForPicker = terrainSectionForPicker && Array.isArray(terrainSectionForPicker.records) ? terrainSectionForPicker.records : [];
+  terrainRecordsForPicker.forEach((record, idx) => {
+    const o = document.createElement('option');
+    o.value = String(idx);
+    o.textContent = String(record && record.name || `Terrain ${idx}`);
+    terrainSelect.appendChild(o);
+  });
+  terrainSelect.value = String(Number(tool.terrainCode) || 0);
+  terrainSelect.addEventListener('change', () => {
+    state.mapEditorTool.terrainCode = parseIntLoose(terrainSelect.value, 0);
+  });
+  terrainWrap.appendChild(terrainSelect);
+  toolRow.appendChild(terrainWrap);
+
+  const overlayWrap = document.createElement('label');
+  overlayWrap.className = 'hint';
+  overlayWrap.textContent = 'Overlay';
+  const overlaySelect = document.createElement('select');
+  [
+    { value: 'road', label: 'Road' },
+    { value: 'railroad', label: 'Railroad' },
+    { value: 'mine', label: 'Mine' },
+    { value: 'irrigation', label: 'Irrigation' },
+    { value: 'fort', label: 'Fort' },
+    { value: 'barricade', label: 'Barricade' },
+    { value: 'barbariancamp', label: 'Barbarian Camp' },
+    { value: 'goodyhut', label: 'Goody Hut' },
+    { value: 'pollution', label: 'Pollution' },
+    { value: 'crater', label: 'Crater' },
+    { value: 'airfield', label: 'Airfield' },
+    { value: 'radartower', label: 'Radar Tower' },
+    { value: 'outpost', label: 'Outpost' },
+    { value: 'colony', label: 'Colony' },
+    { value: 'victorypoint', label: 'Victory Point' },
+    { value: 'ruins', label: 'Ruins' },
+    { value: 'startinglocation', label: 'Starting Location' }
+  ].forEach((opt) => {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    overlaySelect.appendChild(o);
+  });
+  overlaySelect.value = String(tool.overlayType || 'road');
+  overlaySelect.addEventListener('change', () => {
+    state.mapEditorTool.overlayType = overlaySelect.value;
+  });
+  overlayWrap.appendChild(overlaySelect);
+  toolRow.appendChild(overlayWrap);
+
+  const fogWrap = document.createElement('label');
+  fogWrap.className = 'hint';
+  fogWrap.textContent = 'Fog';
+  const fogSelect = document.createElement('select');
+  [{ value: 'add', label: 'Add Fog' }, { value: 'remove', label: 'Remove Fog' }].forEach((opt) => {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    fogSelect.appendChild(o);
+  });
+  fogSelect.value = String(tool.fogMode || 'add');
+  fogSelect.addEventListener('change', () => {
+    state.mapEditorTool.fogMode = fogSelect.value;
+  });
+  fogWrap.appendChild(fogSelect);
+  toolRow.appendChild(fogWrap);
+
+  const districtWrap = document.createElement('label');
+  districtWrap.className = 'hint';
+  districtWrap.textContent = 'District';
+  const districtSelect = document.createElement('select');
+  const districtSections = (((state.bundle && state.bundle.tabs && state.bundle.tabs.districts && state.bundle.tabs.districts.model) || {}).sections || []);
+  const districtEntries = districtSections.map((section, idx) => ({
+    idx,
+    name: String(getFieldValue(section, 'name') || `District ${idx + 1}`)
+  }));
+  districtEntries.forEach((entry) => {
+    const o = document.createElement('option');
+    o.value = String(entry.idx);
+    o.textContent = entry.name;
+    districtSelect.appendChild(o);
+  });
+  if (districtEntries.length === 0) {
+    const o = document.createElement('option');
+    o.value = '0';
+    o.textContent = '(none)';
+    districtSelect.appendChild(o);
+  }
+  districtSelect.value = String(Number(tool.districtType) || 0);
+  districtSelect.addEventListener('change', () => {
+    state.mapEditorTool.districtType = parseIntLoose(districtSelect.value, 0);
+  });
+  districtWrap.appendChild(districtSelect);
+  toolRow.appendChild(districtWrap);
+
+  const ownerWrap = document.createElement('label');
+  ownerWrap.className = 'hint';
+  ownerWrap.textContent = 'Owner';
+  const ownerSelect = document.createElement('select');
+  const leadSectionForOwner = (tab.sections || []).find((s) => s.code === 'LEAD');
+  const leadRecordsForOwner = leadSectionForOwner && Array.isArray(leadSectionForOwner.records) ? leadSectionForOwner.records : [];
+  leadRecordsForOwner.forEach((record, idx) => {
+    const o = document.createElement('option');
+    o.value = String(idx);
+    o.textContent = String(record && record.name || `Player ${idx + 1}`);
+    ownerSelect.appendChild(o);
+  });
+  if (leadRecordsForOwner.length === 0) {
+    const o = document.createElement('option');
+    o.value = '0';
+    o.textContent = 'Owner 0';
+    ownerSelect.appendChild(o);
+  }
+  ownerSelect.value = String(Number(tool.owner) || 0);
+  ownerSelect.addEventListener('change', () => {
+    state.mapEditorTool.owner = parseIntLoose(ownerSelect.value, 0);
+  });
+  ownerWrap.appendChild(ownerSelect);
+  toolRow.appendChild(ownerWrap);
+
+  const ownerTypeWrap = document.createElement('label');
+  ownerTypeWrap.className = 'hint';
+  ownerTypeWrap.textContent = 'Owner Type';
+  const ownerTypeSelect = document.createElement('select');
+  [
+    { value: '0', label: 'None' },
+    { value: '1', label: 'Barbarians' },
+    { value: '3', label: 'Player' },
+    { value: '2', label: 'Civilization' }
+  ].forEach((opt) => {
+    const o = document.createElement('option');
+    o.value = opt.value;
+    o.textContent = opt.label;
+    ownerTypeSelect.appendChild(o);
+  });
+  ownerTypeSelect.value = String(parseIntLoose(tool.ownerType, 1));
+  ownerTypeSelect.addEventListener('change', () => {
+    state.mapEditorTool.ownerType = parseIntLoose(ownerTypeSelect.value, 1);
+  });
+  ownerTypeWrap.appendChild(ownerTypeSelect);
+  toolRow.appendChild(ownerTypeWrap);
+
+  const unitWrap = document.createElement('label');
+  unitWrap.className = 'hint';
+  unitWrap.textContent = 'Unit Type';
+  const unitSelect = document.createElement('select');
+  const unitSectionForPicker = (tab.sections || []).find((s) => s.code === 'PRTO');
+  const unitRecordsForPicker = unitSectionForPicker && Array.isArray(unitSectionForPicker.records) ? unitSectionForPicker.records : [];
+  unitRecordsForPicker.forEach((record, idx) => {
+    const o = document.createElement('option');
+    o.value = String(idx);
+    o.textContent = String(record && record.name || `Unit ${idx}`);
+    unitSelect.appendChild(o);
+  });
+  if (unitRecordsForPicker.length === 0) {
+    const o = document.createElement('option');
+    o.value = '0';
+    o.textContent = 'Unit 0';
+    unitSelect.appendChild(o);
+  }
+  unitSelect.value = String(Number(tool.unitType) || 0);
+  unitSelect.addEventListener('change', () => {
+    state.mapEditorTool.unitType = parseIntLoose(unitSelect.value, 0);
+  });
+  unitWrap.appendChild(unitSelect);
+  toolRow.appendChild(unitWrap);
+
+  const removeToggle = document.createElement('label');
+  removeToggle.className = 'bool-toggle';
+  const removeCheck = document.createElement('input');
+  removeCheck.type = 'checkbox';
+  removeCheck.checked = !!tool.remove;
+  const removeText = document.createElement('span');
+  removeText.textContent = removeCheck.checked ? 'Remove Mode' : 'Add Mode';
+  removeCheck.addEventListener('change', () => {
+    state.mapEditorTool.remove = removeCheck.checked;
+    removeText.textContent = removeCheck.checked ? 'Remove Mode' : 'Add Mode';
+  });
+  removeToggle.appendChild(removeCheck);
+  removeToggle.appendChild(removeText);
+  toolRow.appendChild(removeToggle);
+
+  const showForMode = (elNode, modes) => {
+    elNode.classList.toggle('hidden', !modes.includes(String(state.mapEditorTool.mode || 'select')));
+  };
+  showForMode(terrainWrap, ['terrain']);
+  showForMode(overlayWrap, ['overlay']);
+  showForMode(fogWrap, ['fog']);
+  showForMode(districtWrap, ['district']);
+  showForMode(ownerWrap, ['city', 'unit']);
+  showForMode(ownerTypeWrap, ['city', 'unit']);
+  showForMode(unitWrap, ['unit']);
+
+  if (!floatingUi) container.appendChild(toolRow);
 
   const mapFrame = document.createElement('div');
   mapFrame.className = 'biq-map-frame';
+  mapFrame.style.width = '100%';
+  let floatingTopLeft = null;
+  let floatingRight = null;
+  if (floatingUi) {
+    floatingTopLeft = document.createElement('div');
+    floatingTopLeft.className = 'biq-map-floating-panel biq-map-floating-top-left';
+    floatingTopLeft.appendChild(controls);
+    floatingTopLeft.appendChild(toolRow);
+    floatingRight = document.createElement('div');
+    floatingRight.className = 'biq-map-floating-panel biq-map-floating-right';
+    mapFrame.appendChild(floatingTopLeft);
+    mapFrame.appendChild(floatingRight);
+  }
   const mapPane = document.createElement('div');
   mapPane.className = 'biq-map-canvas-wrap';
+  mapPane.style.width = '100%';
+  container.tabIndex = 0;
   let isDraggingMap = false;
   let dragPointerId = null;
   let dragStartX = 0;
@@ -11416,7 +12324,40 @@ function renderBiqMapSection(tab, tileSection) {
   let dragLastX = 0;
   let dragLastY = 0;
   let dragMoved = false;
+  let horizontalWrapEnabled = false;
+  let horizontalWrapSpan = 0;
+  let horizontalWrapCenter = 0;
+  let lastDragLogTs = 0;
   const DRAG_THRESHOLD = 4;
+  const getPaneMetrics = () => {
+    const clientWidth = Math.max(0, Math.round(mapPane.clientWidth || 0));
+    const clientHeight = Math.max(0, Math.round(mapPane.clientHeight || 0));
+    const scrollWidth = Math.max(0, Math.round(mapPane.scrollWidth || 0));
+    const scrollHeight = Math.max(0, Math.round(mapPane.scrollHeight || 0));
+    const maxLeft = Math.max(0, scrollWidth - clientWidth);
+    const maxTop = Math.max(0, scrollHeight - clientHeight);
+    return {
+      clientWidth,
+      clientHeight,
+      scrollWidth,
+      scrollHeight,
+      maxLeft,
+      maxTop
+    };
+  };
+  const setMapPaneScroll = (nextLeft, nextTop, reason) => {
+    const metrics = getPaneMetrics();
+    const clampedLeft = Math.max(0, Math.min(metrics.maxLeft, Number(nextLeft) || 0));
+    const clampedTop = Math.max(0, Math.min(metrics.maxTop, Number(nextTop) || 0));
+    mapPane.scrollLeft = clampedLeft;
+    mapPane.scrollTop = clampedTop;
+    if (reason && reason.logWhenNoHorizontal && metrics.maxLeft <= 0) {
+      appendDebugLog('biq-map:horizontal-range-zero', {
+        reason: reason.reason || 'unknown',
+        ...metrics
+      });
+    }
+  };
   const onDragMove = (ev) => {
     if (!isDraggingMap || ev.pointerId !== dragPointerId) return;
     ev.preventDefault();
@@ -11427,10 +12368,25 @@ function renderBiqMapSection(tab, tileSection) {
     }
     const dx = ev.clientX - dragLastX;
     const dy = ev.clientY - dragLastY;
-    mapPane.scrollLeft -= dx;
-    mapPane.scrollTop -= dy;
+    setMapPaneScroll(
+      mapPane.scrollLeft - dx,
+      mapPane.scrollTop - dy,
+      { reason: 'drag', logWhenNoHorizontal: true }
+    );
     dragLastX = ev.clientX;
     dragLastY = ev.clientY;
+    const now = Date.now();
+    if (now - lastDragLogTs > 120) {
+      lastDragLogTs = now;
+      appendDebugLog('biq-map:drag-move', {
+        dx,
+        dy,
+        totalDx,
+        totalDy,
+        left: mapPane.scrollLeft,
+        top: mapPane.scrollTop
+      });
+    }
   };
   const onDragEnd = () => {
     if (!isDraggingMap) return;
@@ -11446,7 +12402,13 @@ function renderBiqMapSection(tab, tileSection) {
     }
   };
   mapPane.addEventListener('pointerdown', (ev) => {
+    container.focus({ preventScroll: true });
     if (ev.button !== 0) return;
+    const mode = String(state.mapEditorTool && state.mapEditorTool.mode || 'select');
+    if (isScenarioMode() && mode !== 'select') {
+      appendDebugLog('biq-map:drag-blocked', { reason: 'tool-mode', mode });
+      return;
+    }
     ev.preventDefault();
     isDraggingMap = true;
     dragPointerId = ev.pointerId;
@@ -11457,11 +12419,29 @@ function renderBiqMapSection(tab, tileSection) {
     dragLastY = ev.clientY;
     mapPane.classList.add('dragging');
     mapPane.setPointerCapture(ev.pointerId);
+    const metrics = getPaneMetrics();
+    appendDebugLog('biq-map:drag-start', {
+      mode,
+      left: mapPane.scrollLeft,
+      top: mapPane.scrollTop,
+      ...metrics
+    });
   });
   mapPane.addEventListener('pointermove', onDragMove);
   mapPane.addEventListener('pointerup', onDragEnd);
   mapPane.addEventListener('pointercancel', onDragEnd);
   mapPane.addEventListener('scroll', () => {
+    if (horizontalWrapEnabled && horizontalWrapSpan > 0) {
+      const minLeft = horizontalWrapCenter - horizontalWrapSpan;
+      const maxLeft = horizontalWrapCenter + horizontalWrapSpan;
+      if (mapPane.scrollLeft < minLeft) {
+        mapPane.scrollLeft += horizontalWrapSpan;
+        appendDebugLog('biq-map:wrap-shift', { dir: 'right', left: mapPane.scrollLeft, minLeft, maxLeft });
+      } else if (mapPane.scrollLeft > maxLeft) {
+        mapPane.scrollLeft -= horizontalWrapSpan;
+        appendDebugLog('biq-map:wrap-shift', { dir: 'left', left: mapPane.scrollLeft, minLeft, maxLeft });
+      }
+    }
     state.biqMapScrollLeft = mapPane.scrollLeft;
     state.biqMapScrollTop = mapPane.scrollTop;
     const now = Date.now();
@@ -11489,15 +12469,16 @@ function renderBiqMapSection(tab, tileSection) {
     };
     state.biqMapZoom = clamped;
     appendDebugLog('biq-map:zoom-change', { zoom: state.biqMapZoom, source });
-    renderActiveTab({ preserveTabScroll: true });
+    rerenderMapView();
   };
   mapPane.addEventListener('wheel', (ev) => {
     ev.preventDefault();
-    const rect = mapPane.getBoundingClientRect();
-    const paneX = ev.clientX - rect.left;
-    const paneY = ev.clientY - rect.top;
-    const canvasX = mapPane.scrollLeft + paneX;
-    const canvasY = mapPane.scrollTop + paneY;
+    const paneRect = mapPane.getBoundingClientRect();
+    const paneX = ev.clientX - paneRect.left;
+    const paneY = ev.clientY - paneRect.top;
+    const canvasRect = canvas.getBoundingClientRect();
+    const canvasX = ((ev.clientX - canvasRect.left) / Math.max(1, canvasRect.width)) * canvas.width;
+    const canvasY = ((ev.clientY - canvasRect.top) / Math.max(1, canvasRect.height)) * canvas.height;
     const hovered = typeof findTileAtCanvasPx === 'function'
       ? findTileAtCanvasPx(canvasX, canvasY, false)
       : null;
@@ -11541,7 +12522,87 @@ function renderBiqMapSection(tab, tileSection) {
   zoomControls.appendChild(zoomInBtn);
   zoomControls.appendChild(zoomOutBtn);
 
+  const setToolMode = (mode) => {
+    const nextMode = String(mode || 'select');
+    if (state.mapEditorTool.mode === nextMode) return;
+    state.mapEditorTool.mode = nextMode;
+    modeSelect.value = nextMode;
+    rerenderMapView();
+  };
+  const setBrushDiameter = (diameter) => {
+    const next = parseIntLoose(diameter, 1);
+    if (![1, 3, 5, 7].includes(next)) return;
+    if (parseIntLoose(state.mapEditorTool.diameter, 1) === next) return;
+    state.mapEditorTool.diameter = next;
+    sizeSelect.value = String(next);
+    rerenderMapView();
+  };
+  const hotkeyMap = {
+    s: 'select',
+    t: 'terrain',
+    o: 'overlay',
+    d: 'district',
+    c: 'city',
+    u: 'unit'
+  };
+  container.addEventListener('keydown', (ev) => {
+    const target = ev.target;
+    if (target && (
+      target.tagName === 'INPUT'
+      || target.tagName === 'SELECT'
+      || target.tagName === 'TEXTAREA'
+      || target.isContentEditable
+    )) return;
+    const key = String(ev.key || '').toLowerCase();
+    if (hotkeyMap[key]) {
+      ev.preventDefault();
+      setToolMode(hotkeyMap[key]);
+      return;
+    }
+    if (key === 'f') {
+      ev.preventDefault();
+      if (state.mapEditorTool.mode !== 'fog') {
+        setToolMode('fog');
+        state.mapEditorTool.fogMode = 'add';
+      } else {
+        state.mapEditorTool.fogMode = String(state.mapEditorTool.fogMode || 'add') === 'add' ? 'remove' : 'add';
+      }
+      rerenderMapView();
+      return;
+    }
+    if (key === '1' || key === '3' || key === '5' || key === '7') {
+      ev.preventDefault();
+      setBrushDiameter(parseIntLoose(key, 1));
+      return;
+    }
+    if (key === '+' || key === '=') {
+      ev.preventDefault();
+      setMapZoom(Number(state.biqMapZoom || 6) + 1, 'hotkey+');
+      return;
+    }
+    if (key === '-' || key === '_') {
+      ev.preventDefault();
+      setMapZoom(Number(state.biqMapZoom || 6) - 1, 'hotkey-');
+    }
+  });
+
   const scaleForZoom = (z) => Math.max(0.18, clampZoom(z) / 16);
+  const readBoolField = (record, keys) => {
+    const list = Array.isArray(keys) ? keys : [keys];
+    for (let i = 0; i < list.length; i += 1) {
+      const key = String(list[i] || '').trim();
+      if (!key) continue;
+      const field = getFieldByBaseKey(record, key);
+      if (!field) continue;
+      const raw = String(field.value == null ? '' : field.value).trim().toLowerCase();
+      if (!raw) continue;
+      if (raw === 'true' || raw === 'yes' || raw === 'on') return true;
+      if (raw === 'false' || raw === 'no' || raw === 'off') return false;
+      const parsed = parseIntLoose(raw, NaN);
+      if (Number.isFinite(parsed)) return parsed !== 0;
+    }
+    return null;
+  };
   const canvas = document.createElement('canvas');
   const tilePx = Math.max(BIQ_MAP_ZOOM_MIN, clampZoom(state.biqMapZoom || 6));
   const scale = scaleForZoom(tilePx);
@@ -11552,8 +12613,14 @@ function renderBiqMapSection(tab, tileSection) {
   const padX = tileW + 24;
   const padY = tileH + 24;
   const worldWrapSpan = width * stepX;
-  const xWrap = parseIntLoose(getFieldByBaseKey(wmapRecord, 'xwrapping')?.value, 0) !== 0 || String(getFieldByBaseKey(wmapRecord, 'xwrapping')?.value || '').toLowerCase() === 'true';
-  const wrapCenterOffset = xWrap ? worldWrapSpan : 0;
+  const xWrapFromField = readBoolField(wmapRecord, ['xwrapping', 'x_wrapping', 'x wrapping', 'xwrap']);
+  const wmapFlags = parseIntLoose(getFieldByBaseKey(wmapRecord, 'flags')?.value, 0);
+  const xWrap = xWrapFromField == null ? ((wmapFlags & 0x1) === 0x1) : !!xWrapFromField;
+  const wrapCopyRadius = xWrap ? 2 : 0;
+  const wrapCenterOffset = xWrap ? worldWrapSpan * wrapCopyRadius : 0;
+  horizontalWrapEnabled = !!xWrap;
+  horizontalWrapSpan = worldWrapSpan;
+  horizontalWrapCenter = wrapCenterOffset;
 
   const toTileCoords = (index) => {
     const pairY = Math.floor(index / width) * 2;
@@ -11592,6 +12659,8 @@ function renderBiqMapSection(tab, tileSection) {
   canvas.width = Math.max(1200, (maxSx - minSx) + tileW + padX * 2 + (wrapCenterOffset * 2));
   canvas.height = Math.max(800, (maxSy - minSy) + tileH + padY * 2);
   canvas.className = 'biq-map-canvas';
+  canvas.style.width = `${canvas.width}px`;
+  canvas.style.height = `${canvas.height}px`;
   const ctx = canvas.getContext('2d');
   const originX = padX - minSx + wrapCenterOffset;
   const originY = padY - minSy;
@@ -11622,6 +12691,22 @@ function renderBiqMapSection(tab, tileSection) {
   requestBiqMapArtAsset('resources', 'Art/resources.pcx');
   requestBiqMapArtAsset('units32', 'Art/Units/units_32.pcx');
   requestBiqMapArtAsset('terrainBuildings', 'Art/Terrain/TerrainBuildings.PCX');
+  requestBiqMapArtAsset('roads', 'Art/Terrain/roads.pcx');
+  requestBiqMapArtAsset('railroads', 'Art/Terrain/railroads.pcx');
+  requestBiqMapArtAsset('irrigationGrass', 'Art/Terrain/irrigation.pcx');
+  requestBiqMapArtAsset('irrigationPlains', 'Art/Terrain/irrigation PLAINS.pcx');
+  requestBiqMapArtAsset('irrigationDesert', 'Art/Terrain/irrigation DESETT.pcx');
+  requestBiqMapArtAsset('irrigationTundra', 'Art/Terrain/irrigation TUNDRA.pcx');
+  requestBiqMapArtAsset('cityAmerc', 'Art/Cities/rAMER.pcx');
+  requestBiqMapArtAsset('cityEuro', 'Art/Cities/rEURO.pcx');
+  requestBiqMapArtAsset('cityRoman', 'Art/Cities/rROMAN.pcx');
+  requestBiqMapArtAsset('cityMidEast', 'Art/Cities/rMIDEAST.pcx');
+  requestBiqMapArtAsset('cityAsian', 'Art/Cities/rASIAN.pcx');
+  requestBiqMapArtAsset('cityAmercWall', 'Art/Cities/AMERWALL.pcx');
+  requestBiqMapArtAsset('cityEuroWall', 'Art/Cities/EUROWALL.pcx');
+  requestBiqMapArtAsset('cityRomanWall', 'Art/Cities/ROMANWALL.pcx');
+  requestBiqMapArtAsset('cityMidEastWall', 'Art/Cities/MIDEASTWALL.pcx');
+  requestBiqMapArtAsset('cityAsianWall', 'Art/Cities/ASIANWALL.pcx');
 
   const goodSection = (tab.sections || []).find((s) => s.code === 'GOOD');
   const goodIconById = {};
@@ -11637,9 +12722,286 @@ function renderBiqMapSection(tab, tileSection) {
   });
   const citySection = (tab.sections || []).find((s) => s.code === 'CITY');
   const cityRecordById = {};
+  const cityRecordByCoord = new Map();
   (citySection?.records || []).forEach((record, idx) => {
-    cityRecordById[idx] = record;
+    const ref = Number.isFinite(Number(record && record.index)) ? Number(record.index) : idx;
+    cityRecordById[ref] = record;
+    const cx = parseIntLoose(getFieldByBaseKey(record, 'x')?.value, NaN);
+    const cy = parseIntLoose(getFieldByBaseKey(record, 'y')?.value, NaN);
+    if (Number.isFinite(cx) && Number.isFinite(cy)) {
+      cityRecordByCoord.set(`${cx},${cy}`, record);
+    }
   });
+  const unitSection = (tab.sections || []).find((s) => s.code === 'UNIT');
+  const unitRecordById = {};
+  const unitRecordsByCoord = new Map();
+  (unitSection?.records || []).forEach((record, idx) => {
+    const ref = Number.isFinite(Number(record && record.index)) ? Number(record.index) : idx;
+    unitRecordById[ref] = record;
+    const ux = parseIntLoose(getFieldByBaseKey(record, 'x')?.value, NaN);
+    const uy = parseIntLoose(getFieldByBaseKey(record, 'y')?.value, NaN);
+    if (Number.isFinite(ux) && Number.isFinite(uy)) {
+      const key = `${ux},${uy}`;
+      if (!unitRecordsByCoord.has(key)) unitRecordsByCoord.set(key, []);
+      unitRecordsByCoord.get(key).push(record);
+    }
+  });
+  const raceSection = (tab.sections || []).find((s) => s.code === 'RACE');
+  const raceCultureById = {};
+  (raceSection?.records || []).forEach((record, idx) => {
+    raceCultureById[idx] = parseIntLoose(getFieldByBaseKey(record, 'culturegroup')?.value, 0);
+  });
+  const leadSection = (tab.sections || []).find((s) => s.code === 'LEAD');
+  const playerCivById = {};
+  const playerEraById = {};
+  const civEraById = {};
+  (leadSection?.records || []).forEach((record, idx) => {
+    const civId = parseIntLoose(getFieldByBaseKey(record, 'civ')?.value, -1);
+    const era = parseIntLoose(getFieldByBaseKey(record, 'initialera')?.value, 0);
+    playerCivById[idx] = civId;
+    playerEraById[idx] = era;
+    if (civId >= 0 && !Number.isFinite(civEraById[civId])) {
+      civEraById[civId] = era;
+    }
+  });
+  const tileRecordByCoord = new Map();
+  for (let i = 0; i < tileGeom.length; i += 1) {
+    const geom = tileGeom[i];
+    if (!geom || !tiles[i]) continue;
+    tileRecordByCoord.set(`${geom.xPos},${geom.yPos}`, tiles[i]);
+  }
+
+  const uniqueRecordRef = (sectionCode) => makeUniqueBiqStructureRecordRef(tab, sectionCode);
+  const pushStructureAddOp = (sectionCode, newRecordRef) => {
+    const ops = ensureBiqStructureRecordOps(tab);
+    ops.push({ op: 'add', sectionCode, newRecordRef });
+  };
+  const pushStructureDeleteOp = (sectionCode, recordRef) => {
+    const section = String(sectionCode || '').trim().toUpperCase();
+    const ref = String(recordRef || '').trim().toUpperCase();
+    if (!section || !ref) return;
+    const ops = ensureBiqStructureRecordOps(tab);
+    const addIdx = ops.findIndex((op) => {
+      const kind = String(op && op.op || '').toLowerCase();
+      if (kind !== 'add' && kind !== 'copy') return false;
+      if (String(op && op.sectionCode || '').trim().toUpperCase() !== section) return false;
+      return String(op && op.newRecordRef || '').trim().toUpperCase() === ref;
+    });
+    if (addIdx >= 0) {
+      ops.splice(addIdx, 1);
+      return;
+    }
+    const alreadyQueued = ops.some((op) => {
+      if (String(op && op.op || '').toLowerCase() !== 'delete') return false;
+      if (String(op && op.sectionCode || '').trim().toUpperCase() !== section) return false;
+      return String(op && op.recordRef || '').trim().toUpperCase() === ref;
+    });
+    if (!alreadyQueued) ops.push({ op: 'delete', sectionCode: section, recordRef: ref });
+  };
+  const removeCityByIndex = (cityIndex) => {
+    const idx = Number(cityIndex);
+    if (!Number.isFinite(idx) || idx < 0 || !citySection || !Array.isArray(citySection.records)) return false;
+    const target = citySection.records.find((record) => Number(record && record.index) === idx);
+    if (!target) return false;
+    const ref = getBiqStructureRecordRef(target);
+    if (ref) pushStructureDeleteOp('CITY', ref);
+    citySection.records = citySection.records.filter((record) => record !== target);
+    tiles.forEach((candidateTile) => {
+      if (!candidateTile) return;
+      const candidateValue = parseIntLoose(getMapFieldValue(candidateTile, 'city', '-1'), -1);
+      if (candidateValue === idx) setMapFieldValue(candidateTile, 'city', '-1', 'City');
+    });
+    return true;
+  };
+  const removeUnitByIndex = (unitIndex) => {
+    const idx = Number(unitIndex);
+    if (!Number.isFinite(idx) || idx < 0 || !unitSection || !Array.isArray(unitSection.records)) return false;
+    const target = unitSection.records.find((record) => Number(record && record.index) === idx);
+    if (!target) return false;
+    const tx = parseIntLoose(getFieldByBaseKey(target, 'x')?.value, NaN);
+    const ty = parseIntLoose(getFieldByBaseKey(target, 'y')?.value, NaN);
+    const ref = getBiqStructureRecordRef(target);
+    if (ref) pushStructureDeleteOp('UNIT', ref);
+    unitSection.records = unitSection.records.filter((record) => record !== target);
+    let replacementIndex = -1;
+    if (Number.isFinite(tx) && Number.isFinite(ty)) {
+      const replacement = unitSection.records.find((record) => {
+        const ux = parseIntLoose(getFieldByBaseKey(record, 'x')?.value, NaN);
+        const uy = parseIntLoose(getFieldByBaseKey(record, 'y')?.value, NaN);
+        return ux === tx && uy === ty;
+      });
+      if (replacement) replacementIndex = Number(replacement.index);
+    }
+    tiles.forEach((candidateTile) => {
+      if (!candidateTile) return;
+      const candidateValue = parseIntLoose(getMapFieldValue(candidateTile, 'unit_on_tile', '-1'), -1);
+      if (candidateValue === idx) {
+        setMapFieldValue(candidateTile, 'unit_on_tile', replacementIndex >= 0 ? String(replacementIndex) : '', 'Unit On Tile');
+      }
+    });
+    return true;
+  };
+  const findTileIndexByCoords = (xPos, yPos) => {
+    for (let i = 0; i < tileGeom.length; i += 1) {
+      const g = tileGeom[i];
+      if (!g) continue;
+      if (Number(g.xPos) === Number(xPos) && Number(g.yPos) === Number(yPos)) return i;
+    }
+    return -1;
+  };
+  const listUnitsAtCoords = (xPos, yPos) => {
+    if (!unitSection || !Array.isArray(unitSection.records)) return [];
+    return unitSection.records.filter((record) => {
+      const ux = parseIntLoose(getFieldByBaseKey(record, 'x')?.value, NaN);
+      const uy = parseIntLoose(getFieldByBaseKey(record, 'y')?.value, NaN);
+      return ux === Number(xPos) && uy === Number(yPos);
+    });
+  };
+  const relocateCityToTile = (cityIndex, destinationTileIndex, withUnits) => {
+    if (!citySection || !Array.isArray(citySection.records)) return false;
+    const cityIdx = Number(cityIndex);
+    const toIdx = Number(destinationTileIndex);
+    const destinationTile = tiles[toIdx];
+    const destinationGeom = tileGeom[toIdx];
+    if (!Number.isFinite(cityIdx) || cityIdx < 0 || !destinationTile || !destinationGeom) return false;
+    const cityRecord = citySection.records.find((record) => Number(record && record.index) === cityIdx);
+    if (!cityRecord) return false;
+    const fromX = parseIntLoose(getFieldByBaseKey(cityRecord, 'x')?.value, NaN);
+    const fromY = parseIntLoose(getFieldByBaseKey(cityRecord, 'y')?.value, NaN);
+    const fromTileIdx = Number.isFinite(fromX) && Number.isFinite(fromY) ? findTileIndexByCoords(fromX, fromY) : -1;
+    setMapFieldValue(cityRecord, 'x', String(destinationGeom.xPos), 'X');
+    setMapFieldValue(cityRecord, 'y', String(destinationGeom.yPos), 'Y');
+    if (fromTileIdx >= 0 && tiles[fromTileIdx]) {
+      setMapFieldValue(tiles[fromTileIdx], 'city', '-1', 'City');
+    }
+    setMapFieldValue(destinationTile, 'city', String(cityIdx), 'City');
+    if (withUnits && Number.isFinite(fromX) && Number.isFinite(fromY) && unitSection && Array.isArray(unitSection.records)) {
+      const moved = unitSection.records.filter((record) => {
+        const ux = parseIntLoose(getFieldByBaseKey(record, 'x')?.value, NaN);
+        const uy = parseIntLoose(getFieldByBaseKey(record, 'y')?.value, NaN);
+        return ux === fromX && uy === fromY;
+      });
+      moved.forEach((record) => {
+        setMapFieldValue(record, 'x', String(destinationGeom.xPos), 'X');
+        setMapFieldValue(record, 'y', String(destinationGeom.yPos), 'Y');
+      });
+      if (fromTileIdx >= 0 && tiles[fromTileIdx]) {
+        setMapFieldValue(tiles[fromTileIdx], 'unit_on_tile', '', 'Unit On Tile');
+      }
+      if (moved.length > 0) {
+        setMapFieldValue(destinationTile, 'unit_on_tile', String(Number(moved[0].index)), 'Unit On Tile');
+      }
+    }
+    state.biqMapSelectedTile = toIdx;
+    return true;
+  };
+  const tileCount = tiles.length;
+  const applyBrushAtIndex = (centerIndex) => {
+    if (!isScenarioMode()) return false;
+    const mode = String(state.mapEditorTool && state.mapEditorTool.mode || 'select');
+    if (mode === 'select') return false;
+    const diameter = parseIntLoose(state.mapEditorTool && state.mapEditorTool.diameter, 1) || 1;
+    const indices = (mapCore && typeof mapCore.computeBrushTileIndexes === 'function')
+      ? mapCore.computeBrushTileIndexes(width, tileCount, centerIndex, diameter)
+      : [centerIndex];
+    if (indices.length === 0) return false;
+    if (mode === 'terrain') {
+      const terrainCode = parseIntLoose(state.mapEditorTool && state.mapEditorTool.terrainCode, 0);
+      if (mapCore && typeof mapCore.applyTerrain === 'function') {
+        mapCore.applyTerrain(tiles, indices, terrainCode);
+      } else {
+        indices.forEach((idx) => {
+          setMapFieldValue(tiles[idx], 'baserealterrain', String(terrainCode), 'Base Real Terrain');
+          setMapFieldValue(tiles[idx], 'c3cbaserealterrain', String(terrainCode), 'C3C Base Real Terrain');
+        });
+      }
+      return true;
+    }
+    if (mode === 'overlay') {
+      const overlayType = String(state.mapEditorTool && state.mapEditorTool.overlayType || 'road');
+      const enabled = !(state.mapEditorTool && state.mapEditorTool.remove);
+      if (mapCore && typeof mapCore.applyOverlay === 'function') {
+        mapCore.applyOverlay(tiles, indices, overlayType, enabled);
+      }
+      return true;
+    }
+    if (mode === 'fog') {
+      const addFog = String(state.mapEditorTool && state.mapEditorTool.fogMode || 'add') !== 'remove';
+      if (mapCore && typeof mapCore.applyFog === 'function') {
+        mapCore.applyFog(tiles, indices, addFog);
+      } else {
+        indices.forEach((idx) => setMapFieldValue(tiles[idx], 'fogofwar', addFog ? '0' : '1', 'Fog Of War'));
+      }
+      return true;
+    }
+    if (mode === 'district') {
+      const enabled = !(state.mapEditorTool && state.mapEditorTool.remove);
+      const type = parseIntLoose(state.mapEditorTool && state.mapEditorTool.districtType, 0);
+      const dState = parseIntLoose(state.mapEditorTool && state.mapEditorTool.districtState, 1);
+      if (mapCore && typeof mapCore.applyDistrict === 'function') {
+        mapCore.applyDistrict(tiles, indices, type, dState, enabled);
+      }
+      return true;
+    }
+    if (mode === 'city') {
+      const owner = parseIntLoose(state.mapEditorTool && state.mapEditorTool.owner, 0);
+      const ownerType = parseIntLoose(state.mapEditorTool && state.mapEditorTool.ownerType, 1);
+      const remove = !!(state.mapEditorTool && state.mapEditorTool.remove);
+      let changed = false;
+      indices.forEach((idx) => {
+        const tile = tiles[idx];
+        if (!tile) return;
+        const g = tileGeom[idx];
+        if (!g) return;
+        if (remove) {
+          const cityValue = parseIntLoose(getMapFieldValue(tile, 'city', '-1'), -1);
+          setMapFieldValue(tile, 'city', '-1', 'City');
+          if (cityValue >= 0) removeCityByIndex(cityValue);
+          changed = true;
+          return;
+        }
+        const cityValue = parseIntLoose(getMapFieldValue(tile, 'city', '-1'), -1);
+        if (cityValue >= 0) return;
+        if (!citySection) return;
+        const ref = uniqueRecordRef('CITY');
+        if (mapCore && typeof mapCore.addCity === 'function') {
+          mapCore.addCity(citySection, tile, g.xPos, g.yPos, owner, ownerType, `City ${citySection.records.length + 1}`, ref);
+          pushStructureAddOp('CITY', ref);
+          changed = true;
+        }
+      });
+      return changed;
+    }
+    if (mode === 'unit') {
+      const owner = parseIntLoose(state.mapEditorTool && state.mapEditorTool.owner, 0);
+      const ownerType = parseIntLoose(state.mapEditorTool && state.mapEditorTool.ownerType, 1);
+      const prtoNumber = parseIntLoose(state.mapEditorTool && state.mapEditorTool.unitType, 0);
+      const remove = !!(state.mapEditorTool && state.mapEditorTool.remove);
+      let changed = false;
+      indices.forEach((idx) => {
+        const tile = tiles[idx];
+        if (!tile) return;
+        const g = tileGeom[idx];
+        if (!g) return;
+        if (remove) {
+          const unitValue = parseIntLoose(getMapFieldValue(tile, 'unit_on_tile', '-1'), -1);
+          setMapFieldValue(tile, 'unit_on_tile', '', 'Unit On Tile');
+          if (unitValue >= 0) removeUnitByIndex(unitValue);
+          changed = true;
+          return;
+        }
+        if (!unitSection) return;
+        const ref = uniqueRecordRef('UNIT');
+        if (mapCore && typeof mapCore.addUnit === 'function') {
+          mapCore.addUnit(unitSection, tile, g.xPos, g.yPos, owner, ownerType, prtoNumber, ref);
+          pushStructureAddOp('UNIT', ref);
+          changed = true;
+        }
+      });
+      return changed;
+    }
+    return false;
+  };
 
   const drawTerrainSprite = (record, sx, sy) => {
     const fileIdx = parseIntLoose(getFieldByBaseKey(record, 'file')?.value, -1);
@@ -11667,6 +13029,55 @@ function renderBiqMapSection(tab, tileSection) {
     return true;
   };
 
+  const getTileAtCoord = (xPos, yPos) => {
+    let x = Number(xPos);
+    const y = Number(yPos);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    if (xWrap && width > 0) {
+      x = ((x % width) + width) % width;
+    }
+    return tileRecordByCoord.get(`${x},${y}`) || null;
+  };
+
+  const overlayMask = (record, mask) => {
+    if (!record) return false;
+    const c3cOverlays = parseIntLoose(getFieldByBaseKey(record, 'c3coverlays')?.value, 0) >>> 0;
+    return (c3cOverlays & mask) === mask;
+  };
+
+  const calculateRoadImageIndex = (geom, mask) => {
+    let idx = 0;
+    if (overlayMask(getTileAtCoord(geom.xPos + 1, geom.yPos - 1), mask)) idx += 1;
+    if (overlayMask(getTileAtCoord(geom.xPos + 2, geom.yPos), mask)) idx += 2;
+    if (overlayMask(getTileAtCoord(geom.xPos + 1, geom.yPos + 1), mask)) idx += 4;
+    if (overlayMask(getTileAtCoord(geom.xPos, geom.yPos + 2), mask)) idx += 8;
+    if (overlayMask(getTileAtCoord(geom.xPos - 1, geom.yPos + 1), mask)) idx += 16;
+    if (overlayMask(getTileAtCoord(geom.xPos - 2, geom.yPos), mask)) idx += 32;
+    if (overlayMask(getTileAtCoord(geom.xPos - 1, geom.yPos - 1), mask)) idx += 64;
+    if (overlayMask(getTileAtCoord(geom.xPos, geom.yPos - 2), mask)) idx += 128;
+    return idx;
+  };
+
+  const calculateIrrigationIndex = (geom) => {
+    let idx = 0;
+    if (overlayMask(getTileAtCoord(geom.xPos + 1, geom.yPos - 1), 0x00000008)) idx += 2;
+    if (overlayMask(getTileAtCoord(geom.xPos - 1, geom.yPos + 1), 0x00000008)) idx += 4;
+    if (!overlayMask(getTileAtCoord(geom.xPos + 1, geom.yPos + 1), 0x00000008)) idx += 8;
+    if (!overlayMask(getTileAtCoord(geom.xPos - 1, geom.yPos - 1), 0x00000008)) idx += 1;
+    return idx;
+  };
+
+  const drawSheetSprite = (sheet, cols, rows, index, dx, dy) => {
+    if (!sheet || !Number.isFinite(index) || index < 0) return false;
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    if (row >= rows) return false;
+    const srcW = Math.max(1, Math.floor(sheet.width / cols));
+    const srcH = Math.max(1, Math.floor(sheet.height / rows));
+    ctx.drawImage(sheet, col * srcW, row * srcH, srcW, srcH, dx, dy, tileW, tileH);
+    return true;
+  };
+
   const drawResourceOverlay = (record, sx, sy) => {
     const atlas = state.biqMapArtCache.resources;
     if (!atlas) return;
@@ -11679,19 +13090,29 @@ function renderBiqMapSection(tab, tileSection) {
     const cellH = Math.floor(atlas.height / cols);
     const col = iconIdx % cols;
     const row = Math.floor(iconIdx / cols);
-    const size = Math.max(6, Math.round(32 * scale));
-    const dx = sx + Math.round(BIQ_MAP_OVERLAY_ANCHORS.resource.x * scale);
-    const dy = sy + Math.round(BIQ_MAP_OVERLAY_ANCHORS.resource.y * scale);
+    const tileScale = tileW / 128;
+    const size = Math.max(8, Math.round(50 * tileScale));
+    const dx = sx + Math.round(40 * tileScale);
+    const dy = sy + Math.round(9 * tileScale);
     ctx.drawImage(atlas, col * cellW, row * cellH, cellW, cellH, dx, dy, size, size);
   };
 
-  const drawUnitOverlay = (record, screenX, screenY) => {
+  const drawUnitOverlay = (record, geom, screenX, screenY) => {
     const atlas = state.biqMapArtCache.units32;
     if (!atlas) return;
-    const rawUnit = String(getFieldByBaseKey(record, 'unit_on_tile')?.value || '').trim();
-    if (!rawUnit) return;
-    const unitName = rawUnit.replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
-    const unitId = prtoIndexByName[unitName];
+    const coordKey = geom ? `${geom.xPos},${geom.yPos}` : '';
+    const stack = coordKey ? (unitRecordsByCoord.get(coordKey) || []) : [];
+    let unitId = NaN;
+    if (stack.length > 0) {
+      unitId = parseIntLoose(getFieldByBaseKey(stack[0], 'prtonumber')?.value, NaN);
+    }
+    if (!Number.isFinite(unitId)) {
+      const rawUnit = String(getFieldByBaseKey(record, 'unit_on_tile')?.value || '').trim();
+      if (!rawUnit) return;
+      const unitName = rawUnit.replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+      unitId = prtoIndexByName[unitName];
+      if (!Number.isFinite(unitId)) unitId = parseIntLoose(rawUnit, NaN);
+    }
     if (!Number.isFinite(unitId)) return;
     const iconIdx = prtoIconById[unitId];
     if (!Number.isFinite(iconIdx) || iconIdx < 0) return;
@@ -11704,54 +13125,85 @@ function renderBiqMapSection(tab, tileSection) {
     const srcX = col * step;
     const srcY = row * step;
     if (srcX + cellW > atlas.width || srcY + cellH > atlas.height) return;
-    const size = Math.max(6, Math.round(32 * scale));
-    const dx = screenX + Math.round(BIQ_MAP_OVERLAY_ANCHORS.unit.x * scale);
-    const dy = screenY + Math.round(BIQ_MAP_OVERLAY_ANCHORS.unit.y * scale);
+    const tileScale = tileW / 128;
+    const size = Math.max(10, Math.round(32 * tileScale));
+    const dx = screenX + Math.round(48 * tileScale);
+    const dy = screenY + Math.round(9 * tileScale);
     ctx.drawImage(atlas, srcX, srcY, cellW, cellH, dx, dy, size, size);
+    if (stack.length > 1 && size >= 14) {
+      const label = String(stack.length);
+      ctx.font = `${Math.max(8, Math.round(size * 0.36))}px sans-serif`;
+      const tx = dx + size - Math.max(8, Math.round(size * 0.24));
+      const ty = dy + size - 2;
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+      ctx.lineWidth = 2;
+      ctx.strokeText(label, tx, ty);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(label, tx, ty);
+    }
   };
 
-  const drawCityOverlay = (record, sx, sy) => {
+  const drawCityOverlay = (record, geom, sx, sy) => {
     const cityId = parseIntLoose(getFieldByBaseKey(record, 'city')?.value, -1);
-    if (cityId < 0) return;
-    const cityRecord = cityRecordById[cityId];
+    const cityRecord = cityId >= 0
+      ? cityRecordById[cityId]
+      : (geom ? cityRecordByCoord.get(`${geom.xPos},${geom.yPos}`) : null);
+    if (!cityRecord) return;
     const cityLevel = parseIntLoose(getFieldByBaseKey(cityRecord, 'citylevel')?.value, 0);
+    const citySize = parseIntLoose(getFieldByBaseKey(cityRecord, 'size')?.value, cityLevel + 1);
     const hasWalls = parseIntLoose(getFieldByBaseKey(cityRecord, 'haswalls')?.value, 0) !== 0;
     const cityName = String(getFieldByBaseKey(cityRecord, 'name')?.value || '').trim();
-    const atlas = state.biqMapArtCache.terrainBuildings;
-
-    if (atlas) {
-      const cols = 16;
-      const cellW = Math.floor(atlas.width / cols);
-      const cellH = Math.floor(atlas.height / 8);
-      const levelBase = Math.max(0, Math.min(2, cityLevel));
-      const idx = levelBase + (hasWalls ? 16 : 0);
-      const col = idx % cols;
-      const row = Math.floor(idx / cols);
-      const srcX = col * cellW;
-      const srcY = row * cellH;
-      const size = Math.max(8, Math.round(Math.max(cellW, cellH) * scale));
-      const dx = sx + Math.round(BIQ_MAP_OVERLAY_ANCHORS.city.x * scale) - Math.floor(size / 2);
-      const dy = sy + Math.round(BIQ_MAP_OVERLAY_ANCHORS.city.y * scale) - Math.floor(size / 2);
-      if (srcX + cellW <= atlas.width && srcY + cellH <= atlas.height) {
-        ctx.drawImage(atlas, srcX, srcY, cellW, cellH, dx, dy, size, size);
-      }
-    } else {
-      const cx = sx + Math.floor(tileW / 2);
-      const cy = sy + Math.floor(tileH / 2);
-      const r = Math.max(1, Math.floor(tilePx / 5));
-      ctx.fillStyle = '#f8f8ff';
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#233045';
-      ctx.lineWidth = 1;
-      ctx.stroke();
+    const ownerType = parseIntLoose(getFieldByBaseKey(cityRecord, 'ownertype')?.value, 0);
+    const owner = parseIntLoose(getFieldByBaseKey(cityRecord, 'owner')?.value, -1);
+    let civId = -1;
+    let era = 0;
+    if (ownerType === 2) {
+      civId = owner;
+      era = parseIntLoose(civEraById[civId], 0);
+    } else if (ownerType === 3) {
+      civId = parseIntLoose(playerCivById[owner], -1);
+      era = parseIntLoose(playerEraById[owner], 0);
     }
-
+    const culture = Number.isFinite(raceCultureById[civId]) ? raceCultureById[civId] : 2;
+    const citySizeBucket = citySize > 12 ? 2 : (citySize > 6 ? 1 : 0);
+    const cityAge = Math.max(0, Math.min(3, era === 4 ? 3 : era));
+    const cityCulture = Math.max(0, Math.min(4, culture));
+    const noWallKeys = ['cityAmerc', 'cityEuro', 'cityRoman', 'cityMidEast', 'cityAsian'];
+    const wallKeys = ['cityAmercWall', 'cityEuroWall', 'cityRomanWall', 'cityMidEastWall', 'cityAsianWall'];
+    const sheet = state.biqMapArtCache[hasWalls ? wallKeys[cityCulture] : noWallKeys[cityCulture]];
+    let drewCity = false;
+    if (sheet) {
+      const tileScale = tileW / 128;
+      let srcX = 0;
+      let srcY = 0;
+      let srcW = sheet.width;
+      let srcH = sheet.height;
+      if (hasWalls) {
+        srcH = Math.max(1, Math.floor(sheet.height / 4));
+        srcY = srcH * cityAge;
+      } else {
+        srcW = Math.max(1, Math.floor(sheet.width / 3));
+        srcH = Math.max(1, Math.floor(sheet.height / 4));
+        srcX = srcW * citySizeBucket;
+        srcY = srcH * cityAge;
+      }
+      if (srcX + srcW <= sheet.width && srcY + srcH <= sheet.height) {
+        const drawW = Math.max(1, Math.round(srcW * tileScale));
+        const drawH = Math.max(1, Math.round(srcH * tileScale));
+        const widthOffset = Math.max(0, Math.floor((srcW - 167) / 2));
+        const heightOffset = Math.max(0, Math.floor((srcH - 95) / 2));
+        const dx = sx - Math.round((18 + widthOffset) * tileScale);
+        const dy = sy - Math.round((18 + heightOffset) * tileScale);
+        ctx.drawImage(sheet, srcX, srcY, srcW, srcH, dx, dy, drawW, drawH);
+        drewCity = true;
+      }
+    }
+    if (!drewCity) return;
     if (state.biqMapShowCityNames && cityName && tilePx >= 8) {
-      ctx.font = `${Math.max(8, Math.floor(tilePx * 0.55))}px sans-serif`;
-      const tx = sx + Math.round(BIQ_MAP_OVERLAY_ANCHORS.cityName.x * scale);
-      const ty = sy + Math.round(BIQ_MAP_OVERLAY_ANCHORS.cityName.y * scale);
+      const tileScale = tileW / 128;
+      ctx.font = `${Math.max(8, Math.round(10 * tileScale))}px sans-serif`;
+      const tx = sx + Math.round(40 * tileScale);
+      const ty = sy + Math.round(64 * tileScale);
       ctx.strokeStyle = 'rgba(0,0,0,0.7)';
       ctx.lineWidth = 2;
       ctx.strokeText(cityName, tx, ty);
@@ -11760,10 +13212,78 @@ function renderBiqMapSection(tab, tileSection) {
     }
   };
 
+  const drawTileFeatureOverlays = (record, geom, sx, sy) => {
+    if (!record || !geom) return;
+    const c3cOverlays = parseIntLoose(getFieldByBaseKey(record, 'c3coverlays')?.value, 0) >>> 0;
+    const hasRoad = (c3cOverlays & 0x00000001) === 0x00000001;
+    const hasRailroad = (c3cOverlays & 0x00000002) === 0x00000002;
+    const hasIrrigation = (c3cOverlays & 0x00000008) === 0x00000008;
+    const hasMine = (c3cOverlays & 0x00000004) === 0x00000004;
+    const hasFort = (c3cOverlays & 0x00000010) === 0x00000010;
+    if (hasRoad) {
+      const idx = calculateRoadImageIndex(geom, 0x00000001);
+      drawSheetSprite(state.biqMapArtCache.roads, 16, 16, idx, sx, sy);
+    }
+    if (hasRailroad) {
+      const idx = calculateRoadImageIndex(geom, 0x00000002);
+      drawSheetSprite(state.biqMapArtCache.railroads || state.biqMapArtCache.roads, 16, 16, idx, sx, sy);
+    }
+    if (hasIrrigation) {
+      const baseTerrain = parseIntLoose(getFieldByBaseKey(record, 'baserealterrain')?.value, 2);
+      const idx = calculateIrrigationIndex(geom);
+      let key = 'irrigationGrass';
+      if (baseTerrain === 0) key = 'irrigationDesert';
+      else if (baseTerrain === 1) key = 'irrigationPlains';
+      else if (baseTerrain === 4) key = 'irrigationTundra';
+      drawSheetSprite(state.biqMapArtCache[key], 4, 4, idx, sx, sy);
+    }
+    if (hasMine || hasFort) {
+      const sheet = state.biqMapArtCache.terrainBuildings;
+      if (sheet) {
+        const cols = sheet.width >= 512 ? 4 : 3;
+        const rows = 4;
+        if (hasMine) drawSheetSprite(sheet, cols, rows, 6, sx, sy);
+        if (hasFort) drawSheetSprite(sheet, cols, rows, 0, sx, sy);
+      }
+    }
+  };
+
+  const drawDistrictOverlay = (record, sx, sy) => {
+    const districtRaw = getMapFieldValue(record, 'district', '');
+    if (!districtRaw) return;
+    const parts = districtRaw.split(',').map((p) => parseIntLoose(p, 0));
+    const districtType = Number.isFinite(parts[0]) ? parts[0] : 0;
+    const cx = sx + Math.floor(tileW / 2);
+    const cy = sy + Math.floor(tileH / 2);
+    const radius = Math.max(3, Math.floor(tilePx / 4));
+    ctx.fillStyle = `hsl(${(districtType * 47) % 360} 70% 52% / 0.85)`;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(10, 18, 36, 0.85)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  };
+
+  const drawFogOverlay = (record, sx, sy) => {
+    const fog = parseIntLoose(getMapFieldValue(record, 'fogofwar', '1'), 1);
+    if (fog !== 0) return;
+    ctx.fillStyle = 'rgba(20, 26, 40, 0.34)';
+    ctx.beginPath();
+    ctx.moveTo(sx + Math.floor(tileW / 2), sy);
+    ctx.lineTo(sx + tileW, sy + Math.floor(tileH / 2));
+    ctx.lineTo(sx + Math.floor(tileW / 2), sy + tileH);
+    ctx.lineTo(sx, sy + Math.floor(tileH / 2));
+    ctx.closePath();
+    ctx.fill();
+  };
+
   const selGeom = tileGeom[state.biqMapSelectedTile] || { xPos: 0, yPos: 0 };
   const selPosRaw = tileToScreenTopLeft(selGeom.xPos, selGeom.yPos);
   const selPos = { sx: selPosRaw.sx + originX, sy: selPosRaw.sy + originY };
-  const drawWrapOffsets = xWrap ? [-worldWrapSpan, 0, worldWrapSpan] : [0];
+  const drawWrapOffsets = xWrap
+    ? Array.from({ length: (wrapCopyRadius * 2) + 1 }, (_v, i) => (i - wrapCopyRadius) * worldWrapSpan)
+    : [0];
   const findTileAtCanvasPx = (px, py, requireInside = false) => {
     let bestIdx = -1;
     let bestDist = Number.POSITIVE_INFINITY;
@@ -11792,6 +13312,7 @@ function renderBiqMapSection(tab, tileSection) {
     return { index: bestIdx, centerX: bestCx, centerY: bestCy, metric: bestDist };
   };
 
+  const overlayPassItems = [];
   for (let i = 0; i <= maxIdx; i += 1) {
     const record = tiles[i];
     const geom = tileGeom[i];
@@ -11822,21 +13343,29 @@ function renderBiqMapSection(tab, tileSection) {
         ctx.closePath();
         ctx.fill();
       }
-      if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
-        drawResourceOverlay(record, sx, sy);
-        drawUnitOverlay(record, sx, sy);
-        drawCityOverlay(record, sx, sy);
-      }
-      if (state.biqMapShowGrid && tilePx >= 5) {
-        ctx.strokeStyle = 'rgba(0,0,0,0.2)';
-        ctx.beginPath();
-        ctx.moveTo(sx + Math.floor(tileW / 2), sy);
-        ctx.lineTo(sx + tileW, sy + Math.floor(tileH / 2));
-        ctx.lineTo(sx + Math.floor(tileW / 2), sy + tileH);
-        ctx.lineTo(sx, sy + Math.floor(tileH / 2));
-        ctx.closePath();
-        ctx.stroke();
-      }
+      overlayPassItems.push({ record, geom, sx, sy });
+    }
+  }
+
+  for (let i = 0; i < overlayPassItems.length; i += 1) {
+    const item = overlayPassItems[i];
+    if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
+      drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy);
+      drawCityOverlay(item.record, item.geom, item.sx, item.sy);
+      drawResourceOverlay(item.record, item.sx, item.sy);
+      drawDistrictOverlay(item.record, item.sx, item.sy);
+      drawUnitOverlay(item.record, item.geom, item.sx, item.sy);
+      drawFogOverlay(item.record, item.sx, item.sy);
+    }
+    if (state.biqMapShowGrid && tilePx >= 5) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+      ctx.beginPath();
+      ctx.moveTo(item.sx + Math.floor(tileW / 2), item.sy);
+      ctx.lineTo(item.sx + tileW, item.sy + Math.floor(tileH / 2));
+      ctx.lineTo(item.sx + Math.floor(tileW / 2), item.sy + tileH);
+      ctx.lineTo(item.sx, item.sy + Math.floor(tileH / 2));
+      ctx.closePath();
+      ctx.stroke();
     }
   }
 
@@ -11861,22 +13390,110 @@ function renderBiqMapSection(tab, tileSection) {
   ctx.closePath();
   ctx.stroke();
 
+  let paintStroke = null;
+  const readHitFromPointer = (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    const px = ((ev.clientX - rect.left) / rect.width) * canvas.width;
+    const py = ((ev.clientY - rect.top) / rect.height) * canvas.height;
+    return findTileAtCanvasPx(px, py, true);
+  };
+  const applyAtPointer = (ev) => {
+    const hit = readHitFromPointer(ev);
+    if (!hit) return false;
+    if (!paintStroke) paintStroke = { touched: new Set(), didEdit: false };
+    if (paintStroke.touched.has(hit.index)) return false;
+    paintStroke.touched.add(hit.index);
+    const didEdit = applyBrushAtIndex(hit.index);
+    if (didEdit) {
+      state.biqMapSelectedTile = hit.index;
+      paintStroke.didEdit = true;
+    }
+    return didEdit;
+  };
+
+  canvas.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    const mode = String(state.mapEditorTool && state.mapEditorTool.mode || 'select');
+    if (!isScenarioMode() || mode === 'select') return;
+    ev.preventDefault();
+    canvas.setPointerCapture(ev.pointerId);
+    paintStroke = { touched: new Set(), didEdit: false };
+    rememberUndoSnapshot();
+    const changed = applyAtPointer(ev);
+    if (changed) rerenderMapView();
+  });
+  canvas.addEventListener('pointermove', (ev) => {
+    if (!paintStroke) return;
+    ev.preventDefault();
+    const changed = applyAtPointer(ev);
+    if (changed) rerenderMapView();
+  });
+  const onPaintEnd = (ev) => {
+    if (!paintStroke) return;
+    if (paintStroke.didEdit) setDirty(true);
+    paintStroke = null;
+    if (ev && typeof ev.pointerId === 'number') {
+      try { canvas.releasePointerCapture(ev.pointerId); } catch (_err) {}
+    }
+  };
+  canvas.addEventListener('pointerup', onPaintEnd);
+  canvas.addEventListener('pointercancel', onPaintEnd);
+
   canvas.addEventListener('click', (ev) => {
     if (Date.now() < (state.biqMapSuppressClickUntilTs || 0)) {
       return;
     }
-    const rect = canvas.getBoundingClientRect();
-    const px = ((ev.clientX - rect.left) / rect.width) * canvas.width;
-    const py = ((ev.clientY - rect.top) / rect.height) * canvas.height;
-    const hit = findTileAtCanvasPx(px, py, true);
+    const mode = String(state.mapEditorTool && state.mapEditorTool.mode || 'select');
+    const hit = readHitFromPointer(ev);
+    if (isScenarioMode() && mode === 'relocate_city') {
+      if (hit && Number.isFinite(state.mapEditorTool.relocateCityIndex)) {
+        rememberUndoSnapshot();
+        if (relocateCityToTile(state.mapEditorTool.relocateCityIndex, hit.index, false)) {
+          state.mapEditorTool.mode = 'select';
+          delete state.mapEditorTool.relocateCityIndex;
+          setDirty(true);
+          rerenderMapView();
+        }
+      }
+      return;
+    }
+    if (isScenarioMode() && mode === 'relocate_city_units') {
+      if (hit && Number.isFinite(state.mapEditorTool.relocateCityIndex)) {
+        rememberUndoSnapshot();
+        if (relocateCityToTile(state.mapEditorTool.relocateCityIndex, hit.index, true)) {
+          state.mapEditorTool.mode = 'select';
+          delete state.mapEditorTool.relocateCityIndex;
+          setDirty(true);
+          rerenderMapView();
+        }
+      }
+      return;
+    }
+    if (isScenarioMode() && mode !== 'select') return;
     if (hit) {
       state.biqMapSelectedTile = hit.index;
       const g = tileGeom[hit.index] || null;
       appendDebugLog('biq-map:tile-select', { index: hit.index, xPos: g ? g.xPos : null, yPos: g ? g.yPos : null });
     } else {
-      appendDebugLog('biq-map:tile-select-miss', { px: Math.round(px), py: Math.round(py) });
+      appendDebugLog('biq-map:tile-select-miss', {});
     }
-    renderActiveTab({ preserveTabScroll: true });
+    rerenderMapView();
+  });
+  canvas.addEventListener('dblclick', (ev) => {
+    ev.preventDefault();
+    const paneRect = mapPane.getBoundingClientRect();
+    const paneX = ev.clientX - paneRect.left;
+    const paneY = ev.clientY - paneRect.top;
+    const canvasRect = canvas.getBoundingClientRect();
+    const canvasX = ((ev.clientX - canvasRect.left) / Math.max(1, canvasRect.width)) * canvas.width;
+    const canvasY = ((ev.clientY - canvasRect.top) / Math.max(1, canvasRect.height)) * canvas.height;
+    const hovered = typeof findTileAtCanvasPx === 'function'
+      ? findTileAtCanvasPx(canvasX, canvasY, false)
+      : null;
+    const anchorContent = hovered
+      ? { x: hovered.centerX, y: hovered.centerY }
+      : null;
+    setMapZoom(Number(state.biqMapZoom || 6) + 1, 'double-click', paneX, paneY, anchorContent);
   });
   mapPane.appendChild(canvas);
   mapFrame.appendChild(mapPane);
@@ -11889,25 +13506,26 @@ function renderBiqMapSection(tab, tileSection) {
       const factor = scaleForZoom(state.biqMapZoom) / scaleForZoom(zoomAnchor.fromZoom);
       const targetLeft = Math.max(0, Math.round((zoomAnchor.contentX * factor) - zoomAnchor.paneX));
       const targetTop = Math.max(0, Math.round((zoomAnchor.contentY * factor) - zoomAnchor.paneY));
-      mapPane.scrollLeft = targetLeft;
-      mapPane.scrollTop = targetTop;
-      state.biqMapScrollLeft = targetLeft;
-      state.biqMapScrollTop = targetTop;
+      setMapPaneScroll(targetLeft, targetTop, { reason: 'zoom-anchor', logWhenNoHorizontal: true });
+      state.biqMapScrollLeft = mapPane.scrollLeft;
+      state.biqMapScrollTop = mapPane.scrollTop;
       state.biqMapZoomAnchor = null;
       return;
     }
     if (Number.isFinite(state.biqMapScrollLeft) && Number.isFinite(state.biqMapScrollTop)) {
-      mapPane.scrollLeft = state.biqMapScrollLeft;
-      mapPane.scrollTop = state.biqMapScrollTop;
+      setMapPaneScroll(state.biqMapScrollLeft, state.biqMapScrollTop, { reason: 'restore-scroll' });
       return;
     }
     const targetLeft = Math.max(0, sx + Math.floor(tileW / 2) - Math.floor(mapPane.clientWidth / 2));
     const targetTop = Math.max(0, sy + Math.floor(tileH / 2) - Math.floor(mapPane.clientHeight / 2));
-    mapPane.scrollLeft = targetLeft;
-    mapPane.scrollTop = targetTop;
-    state.biqMapScrollLeft = targetLeft;
-    state.biqMapScrollTop = targetTop;
-    appendDebugLog('biq-map:init-scroll', { left: targetLeft, top: targetTop });
+    setMapPaneScroll(targetLeft, targetTop, { reason: 'init-scroll' });
+    state.biqMapScrollLeft = mapPane.scrollLeft;
+    state.biqMapScrollTop = mapPane.scrollTop;
+    appendDebugLog('biq-map:init-scroll', {
+      left: mapPane.scrollLeft,
+      top: mapPane.scrollTop,
+      ...getPaneMetrics()
+    });
   });
 
   const inspector = document.createElement('div');
@@ -11928,8 +13546,10 @@ function renderBiqMapSection(tab, tileSection) {
     input.value = String(getFieldByBaseKey(selectedTile, key)?.value || '');
     input.addEventListener('change', () => {
       if (!isScenarioMode()) return;
-      setRecordFieldValue(selectedTile, key, input.value.trim());
-      renderActiveTab({ preserveTabScroll: true });
+      rememberUndoSnapshot();
+      setMapFieldValue(selectedTile, key, input.value.trim(), label);
+      setDirty(true);
+      rerenderMapView();
     });
     input.disabled = !isScenarioMode();
     row.appendChild(name);
@@ -11944,8 +13564,312 @@ function renderBiqMapSection(tab, tileSection) {
   addFieldEditor('city', 'City Ref');
   addFieldEditor('unit_on_tile', 'Unit');
   addFieldEditor('rivercrossingdata', 'River Crossing');
+  const riverMaskField = getFieldByBaseKey(selectedTile, 'riverconnectioninfo') || getFieldByBaseKey(selectedTile, 'river_connection_info');
+  const bonusesField = getFieldByBaseKey(selectedTile, 'c3cbonuses') || getFieldByBaseKey(selectedTile, 'c3c_bonuses');
+  const riverMaskValue = parseIntLoose(riverMaskField && riverMaskField.value, 0);
+  const bonusesValue = parseIntLoose(bonusesField && bonusesField.value, 0);
+  const riverCard = document.createElement('div');
+  riverCard.className = 'section-card';
+  const riverHeader = document.createElement('div');
+  riverHeader.className = 'section-top';
+  riverHeader.innerHTML = '<strong>Rivers</strong><span class="hint">Edge and standalone river flags</span>';
+  riverCard.appendChild(riverHeader);
+  const riverGrid = document.createElement('div');
+  riverGrid.className = 'kv-grid';
+  const addRiverToggle = (label, sourceKey, mask) => {
+    const row = document.createElement('label');
+    row.className = 'bool-toggle';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = sourceKey === 'riverconnectioninfo'
+      ? (riverMaskValue & mask) === mask
+      : (bonusesValue & mask) === mask;
+    check.disabled = !isScenarioMode();
+    const text = document.createElement('span');
+    text.textContent = label;
+    check.addEventListener('change', () => {
+      if (!isScenarioMode()) return;
+      rememberUndoSnapshot();
+      const current = parseIntLoose(getMapFieldValue(selectedTile, sourceKey, '0'), 0);
+      const next = check.checked ? (current | mask) : (current & ~mask);
+      setMapFieldValue(selectedTile, sourceKey, String(next), label);
+      setDirty(true);
+      rerenderMapView();
+    });
+    row.appendChild(check);
+    row.appendChild(text);
+    riverGrid.appendChild(row);
+  };
+  addRiverToggle('Border NW', 'riverconnectioninfo', 128);
+  addRiverToggle('Border NE', 'riverconnectioninfo', 2);
+  addRiverToggle('Border SW', 'riverconnectioninfo', 32);
+  addRiverToggle('Border SE', 'riverconnectioninfo', 8);
+  addRiverToggle('Standalone North', 'c3cbonuses', 256);
+  addRiverToggle('Standalone East', 'c3cbonuses', 1024);
+  addRiverToggle('Standalone South', 'c3cbonuses', 2048);
+  addRiverToggle('Standalone West', 'c3cbonuses', 512);
+  riverCard.appendChild(riverGrid);
   inspector.appendChild(fieldsGrid);
-  container.appendChild(inspector);
+  inspector.appendChild(riverCard);
+
+  const addLinkedRecordEditor = (sectionCode, tileKey, displayName, editableFields, onDelete, onRenderExtra) => {
+    const section = (tab.sections || []).find((s) => s.code === sectionCode);
+    const rawRef = parseIntLoose(getMapFieldValue(selectedTile, tileKey, '-1'), -1);
+    if (!section || rawRef < 0) return;
+    const records = Array.isArray(section.records) ? section.records : [];
+    const record = records.find((entry) => Number(entry && entry.index) === rawRef);
+    if (!record) return;
+    const card = document.createElement('div');
+    card.className = 'section-card';
+    const top = document.createElement('div');
+    top.className = 'section-top';
+    const title = String(getFieldByBaseKey(record, 'name')?.value || `${displayName} ${rawRef}`);
+    top.innerHTML = `<strong>${displayName}: ${title}</strong><span class="hint">Index ${rawRef}</span>`;
+    card.appendChild(top);
+    const grid = document.createElement('div');
+    grid.className = 'kv-grid';
+    editableFields.forEach(({ key, label, type }) => {
+      const row = document.createElement('div');
+      row.className = 'kv-row compact';
+      const name = document.createElement('div');
+      name.className = 'field-meta';
+      name.textContent = label;
+      let input;
+      if (type === 'select' && key === 'ownertype') {
+        input = document.createElement('select');
+        [
+          { value: '0', label: 'None' },
+          { value: '1', label: 'Barbarians' },
+          { value: '3', label: 'Player' },
+          { value: '2', label: 'Civilization' }
+        ].forEach((opt) => {
+          const o = document.createElement('option');
+          o.value = opt.value;
+          o.textContent = opt.label;
+          input.appendChild(o);
+        });
+      } else {
+        input = document.createElement('input');
+        input.type = type === 'number' ? 'number' : 'text';
+      }
+      input.value = String(getFieldByBaseKey(record, key)?.value || '');
+      input.disabled = !isScenarioMode();
+      input.addEventListener('change', () => {
+        if (!isScenarioMode()) return;
+        rememberUndoSnapshot();
+        setMapFieldValue(record, key, input.value.trim(), label);
+        setDirty(true);
+        rerenderMapView();
+      });
+      row.appendChild(name);
+      row.appendChild(input);
+      grid.appendChild(row);
+    });
+    card.appendChild(grid);
+    if (typeof onRenderExtra === 'function') {
+      onRenderExtra({ card, record, rawRef, grid });
+    }
+    if (isScenarioMode() && typeof onDelete === 'function') {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'danger';
+      deleteBtn.textContent = `Delete ${displayName}`;
+      deleteBtn.addEventListener('click', () => {
+        rememberUndoSnapshot();
+        if (onDelete(rawRef)) {
+          setDirty(true);
+          rerenderMapView();
+        }
+      });
+      card.appendChild(deleteBtn);
+    }
+    inspector.appendChild(card);
+  };
+  addLinkedRecordEditor(
+    'CITY',
+    'city',
+    'City',
+    [
+      { key: 'name', label: 'Name', type: 'text' },
+      { key: 'size', label: 'Size', type: 'number' },
+      { key: 'culture', label: 'Culture', type: 'number' },
+      { key: 'owner', label: 'Owner', type: 'number' },
+      { key: 'ownertype', label: 'Owner Type', type: 'select' },
+      { key: 'citylevel', label: 'City Level', type: 'number' }
+    ],
+    removeCityByIndex,
+    ({ card, record, rawRef }) => {
+      if (!isScenarioMode()) return;
+      const actions = document.createElement('div');
+      actions.className = 'inline-btn-row';
+      const relocateCityBtn = document.createElement('button');
+      relocateCityBtn.type = 'button';
+      relocateCityBtn.className = 'ghost';
+      relocateCityBtn.textContent = 'Relocate City';
+      relocateCityBtn.addEventListener('click', () => {
+        state.mapEditorTool.mode = 'relocate_city';
+        state.mapEditorTool.relocateCityIndex = rawRef;
+      });
+      const relocateStackBtn = document.createElement('button');
+      relocateStackBtn.type = 'button';
+      relocateStackBtn.className = 'ghost';
+      relocateStackBtn.textContent = 'Relocate City + Units';
+      relocateStackBtn.addEventListener('click', () => {
+        state.mapEditorTool.mode = 'relocate_city_units';
+        state.mapEditorTool.relocateCityIndex = rawRef;
+      });
+      actions.appendChild(relocateCityBtn);
+      actions.appendChild(relocateStackBtn);
+      card.appendChild(actions);
+
+      const bldgSection = (tab.sections || []).find((s) => s.code === 'BLDG');
+      const bldgRecords = bldgSection && Array.isArray(bldgSection.records) ? bldgSection.records : [];
+      if (bldgRecords.length === 0) return;
+      const currentSet = new Set(
+        (Array.isArray(record.fields) ? record.fields : [])
+          .filter((field) => String((field.baseKey || field.key) || '').trim().toLowerCase() === 'building')
+          .map((field) => parseIntLoose(field.value, -1))
+          .filter((value) => value >= 0)
+      );
+      const wrap = document.createElement('div');
+      wrap.className = 'section-card';
+      wrap.innerHTML = '<div class="section-top"><strong>City Improvements</strong><span class="hint">Toggle buildings present in this city</span></div>';
+      const chips = document.createElement('div');
+      chips.className = 'segmented-multi-list';
+      const applyBuildings = () => {
+        if (!isScenarioMode()) return;
+        const chosen = Array.from(currentSet).sort((a, b) => a - b);
+        const baseFields = (Array.isArray(record.fields) ? record.fields : []).filter((field) => {
+          const key = String((field.baseKey || field.key) || '').trim().toLowerCase();
+          return key !== 'building';
+        });
+        chosen.forEach((buildingId) => {
+          baseFields.push({
+            key: 'building',
+            baseKey: 'building',
+            label: 'Building',
+            value: String(buildingId),
+            originalValue: ''
+          });
+        });
+        record.fields = baseFields;
+        setMapFieldValue(record, 'numbuildings', String(chosen.length), 'Number of Buildings');
+        setMapFieldValue(record, 'buildings', chosen.join(','), 'Buildings');
+      };
+      bldgRecords.forEach((buildingRecord, idx) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'segmented-multi-btn';
+        btn.classList.toggle('active', currentSet.has(idx));
+        btn.textContent = String(buildingRecord && buildingRecord.name || `Building ${idx}`);
+        btn.addEventListener('click', () => {
+          if (!isScenarioMode()) return;
+          rememberUndoSnapshot();
+          if (currentSet.has(idx)) currentSet.delete(idx);
+          else currentSet.add(idx);
+          btn.classList.toggle('active', currentSet.has(idx));
+          applyBuildings();
+          setDirty(true);
+        });
+        chips.appendChild(btn);
+      });
+      wrap.appendChild(chips);
+      card.appendChild(wrap);
+    }
+  );
+  addLinkedRecordEditor(
+    'UNIT',
+    'unit_on_tile',
+    'Unit',
+    [
+      { key: 'name', label: 'Name', type: 'text' },
+      { key: 'prtonumber', label: 'Unit Type Index', type: 'number' },
+      { key: 'owner', label: 'Owner', type: 'number' },
+      { key: 'ownertype', label: 'Owner Type', type: 'select' },
+      { key: 'experiencelevel', label: 'Experience', type: 'number' }
+    ],
+    removeUnitByIndex
+  );
+  const unitsAtTile = listUnitsAtCoords(inspectorPos.xPos, inspectorPos.yPos);
+  if (unitSection && Array.isArray(unitSection.records)) {
+    const unitListCard = document.createElement('div');
+    unitListCard.className = 'section-card';
+    unitListCard.innerHTML = `<div class="section-top"><strong>Units On Tile</strong><span class="hint">${unitsAtTile.length} unit(s)</span></div>`;
+    const list = document.createElement('div');
+    list.className = 'kv-grid';
+    const prtoSection = (tab.sections || []).find((s) => s.code === 'PRTO');
+    const prtoRecords = prtoSection && Array.isArray(prtoSection.records) ? prtoSection.records : [];
+    unitsAtTile.forEach((unitRecord, rowIdx) => {
+      const idx = Number(unitRecord && unitRecord.index);
+      const row = document.createElement('div');
+      row.className = 'kv-row';
+      const label = document.createElement('div');
+      label.className = 'field-meta';
+      label.textContent = `Unit ${rowIdx + 1} (#${idx})`;
+      row.appendChild(label);
+      const controls = document.createElement('div');
+      controls.className = 'inline-btn-row';
+      const typeSelect = document.createElement('select');
+      prtoRecords.forEach((prto, i) => {
+        const o = document.createElement('option');
+        o.value = String(i);
+        o.textContent = String(prto && prto.name || `Unit ${i}`);
+        typeSelect.appendChild(o);
+      });
+      typeSelect.value = String(parseIntLoose(getFieldByBaseKey(unitRecord, 'prtonumber')?.value, 0));
+      typeSelect.disabled = !isScenarioMode();
+      typeSelect.addEventListener('change', () => {
+        if (!isScenarioMode()) return;
+        rememberUndoSnapshot();
+        setMapFieldValue(unitRecord, 'prtonumber', typeSelect.value, 'Unit');
+        setDirty(true);
+      });
+      controls.appendChild(typeSelect);
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'danger';
+      del.textContent = 'Delete';
+      del.disabled = !isScenarioMode();
+      del.addEventListener('click', () => {
+        if (!isScenarioMode()) return;
+        rememberUndoSnapshot();
+        if (removeUnitByIndex(idx)) {
+          setDirty(true);
+          rerenderMapView();
+        }
+      });
+      controls.appendChild(del);
+      row.appendChild(controls);
+      list.appendChild(row);
+    });
+    if (isScenarioMode()) {
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'secondary';
+      add.textContent = 'Add Unit Here';
+      add.addEventListener('click', () => {
+        rememberUndoSnapshot();
+        const ref = uniqueRecordRef('UNIT');
+        const owner = parseIntLoose(state.mapEditorTool && state.mapEditorTool.owner, 0);
+        const ownerType = parseIntLoose(state.mapEditorTool && state.mapEditorTool.ownerType, 1);
+        const prtoNumber = parseIntLoose(state.mapEditorTool && state.mapEditorTool.unitType, 0);
+        if (mapCore && typeof mapCore.addUnit === 'function') {
+          mapCore.addUnit(unitSection, selectedTile, inspectorPos.xPos, inspectorPos.yPos, owner, ownerType, prtoNumber, ref);
+          pushStructureAddOp('UNIT', ref);
+          setDirty(true);
+          rerenderMapView();
+        }
+      });
+      unitListCard.appendChild(add);
+    }
+    unitListCard.appendChild(list);
+    inspector.appendChild(unitListCard);
+  }
+  if (floatingUi && floatingRight) {
+    floatingRight.appendChild(inspector);
+  } else {
+    container.appendChild(inspector);
+  }
 
   return container;
 }
@@ -13548,6 +15472,23 @@ function markReferenceTabsAsSaved() {
     if (!tab) return;
     if (tab.type === 'reference') {
       markReferenceTabEntryOriginals(tab);
+      return;
+    }
+    if (tab.type === 'biq') {
+      tab.recordOps = [];
+      const sections = Array.isArray(tab.sections) ? tab.sections : [];
+      sections.forEach((section) => {
+        const records = Array.isArray(section && section.records) ? section.records : [];
+        records.forEach((record) => {
+          if (!record) return;
+          delete record.newRecordRef;
+          const fields = Array.isArray(record.fields) ? record.fields : [];
+          fields.forEach((field) => {
+            if (!field) return;
+            field.originalValue = String(field.value || '');
+          });
+        });
+      });
       return;
     }
     if (tab.key === 'terrain' && tab.civilopedia) {
