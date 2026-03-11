@@ -1848,20 +1848,29 @@ function parseDiplomacySlotOptions(text) {
 }
 
 function parsePediaIconsDocumentWithOrder(text) {
-  const doc = { order: [], blocks: {} };
-  const lines = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const src = String(text || '');
+  const doc = { order: [], blocks: {}, headers: {}, hadTrailingNewline: /\r\n$|\n$|\r$/.test(src) };
+  const lines = src.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   let currentKey = null;
+  let currentHeader = '';
   let currentLines = [];
   const flush = () => {
     if (!currentKey) return;
     doc.blocks[currentKey] = [...currentLines];
     if (!doc.order.includes(currentKey)) doc.order.push(currentKey);
+    if (!doc.headers[currentKey]) doc.headers[currentKey] = currentHeader || currentKey;
   };
   lines.forEach((raw) => {
     const line = String(raw || '');
     if (line.startsWith('#')) {
       flush();
-      currentKey = line.slice(1).trim();
+      currentHeader = line.slice(1);
+      currentKey = currentHeader.trim().toUpperCase();
+      if (!currentKey) {
+        currentHeader = '';
+        currentLines = [];
+        return;
+      }
       currentLines = [];
       return;
     }
@@ -1880,16 +1889,20 @@ function normalizePediaIconsLines(lines) {
 function serializePediaIconsDocumentWithOrder(doc) {
   const order = Array.isArray(doc && doc.order) ? doc.order : [];
   const blocks = (doc && doc.blocks) || {};
+  const headers = (doc && doc.headers) || {};
+  const hadTrailingNewline = !!(doc && doc.hadTrailingNewline);
   const out = [];
   order.forEach((key) => {
-    const k = String(key || '').trim();
+    const k = String(key || '').trim().toUpperCase();
     if (!k) return;
-    out.push(`#${k}`);
-    const lines = normalizePediaIconsLines(blocks[k] || []);
-    lines.forEach((line) => out.push(line));
-    out.push('');
+    const headingRaw = Object.prototype.hasOwnProperty.call(headers, k) ? String(headers[k]) : String(k);
+    const heading = headingRaw.length > 0 ? headingRaw : String(k);
+    out.push(`#${heading}`);
+    const lines = Array.isArray(blocks[k]) ? blocks[k] : [];
+    lines.forEach((line) => out.push(String(line || '')));
   });
-  return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+  const serialized = out.join('\n');
+  return hadTrailingNewline ? ensureTrailingNewline(serialized) : serialized;
 }
 
 function toCanonicalKeyMap(rawMap) {
@@ -1968,17 +1981,23 @@ function normalizeCivilopediaTextValue(value) {
   return String(value == null ? '' : value)
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
-    .split('\n')
-    .map((line) => line.trim())
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+    .trimEnd();
 }
 
 function textToCivilopediaLines(value) {
   const normalized = normalizeCivilopediaTextValue(value);
   if (!normalized) return [];
   return normalized.split('\n');
+}
+
+function countTrailingEmptyLines(lines) {
+  const list = Array.isArray(lines) ? lines : [];
+  let count = 0;
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (String(list[i] || '') !== '') break;
+    count += 1;
+  }
+  return count;
 }
 
 function dedupeStrings(values) {
@@ -2334,7 +2353,12 @@ function buildReferenceTabs(civ3Path, options = {}) {
         const pedia = mapPediaIconsForKey(pediaBlocks, entry.civilopediaKey);
         const overviewLines = parseBodyFromCivilopediaSection(civilopediaSection, { displayName });
         const descLines = parseBodyFromCivilopediaSection(descSection, { displayName });
-        const descriptionLines = descLines.length > 0 ? descLines : overviewLines;
+        const overviewRawText = (civilopediaSection && Array.isArray(civilopediaSection.rawLines))
+          ? civilopediaSection.rawLines.join('\n')
+          : '';
+        const descriptionRawText = (descSection && Array.isArray(descSection.rawLines))
+          ? descSection.rawLines.join('\n')
+          : '';
         const thumbPath =
           tabSpec.key === 'civilizations'
             ? (pedia.racePaths[0] || pedia.iconPaths[pedia.iconPaths.length - 1] || '')
@@ -2367,10 +2391,10 @@ function buildReferenceTabs(civ3Path, options = {}) {
           civilopediaKey: entry.civilopediaKey,
           biqIndex: biqRecord ? Number(biqRecord.index) : null,
           name: displayName,
-          overview: overviewLines.join(' '),
-          originalOverview: overviewLines.join(' '),
-          description: descriptionLines.join(' '),
-          originalDescription: descriptionLines.join(' '),
+          overview: overviewRawText,
+          originalOverview: overviewRawText,
+          description: descriptionRawText,
+          originalDescription: descriptionRawText,
           techDependencies: tabSpec.key === 'technologies' ? [] : extractTechDependenciesFromText(overviewLines),
           improvementKind: tabSpec.key === 'improvements' ? (improvementKindsByKey[entry.civilopediaKey] || 'normal') : null,
           iconPaths: pedia.iconPaths,
@@ -2507,44 +2531,75 @@ function ensureTrailingNewline(text) {
 }
 
 function parseCivilopediaDocumentWithOrder(text) {
+  const src = String(text || '');
   const order = [];
   const sections = {};
-  if (!text) return { order, sections };
-  const lines = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const items = [];
+  if (!text) return { order, sections, hadTrailingNewline: false };
+  const lines = src.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   let currentKey = '';
+  let currentHeader = '';
   let currentLines = [];
   const flush = () => {
     if (!currentKey) return;
-    sections[currentKey] = { key: currentKey, rawLines: currentLines.slice() };
+    const item = { key: currentKey, headerKey: currentHeader || currentKey, rawLines: currentLines.slice() };
+    items.push(item);
+    sections[currentKey] = item;
     if (!order.includes(currentKey)) order.push(currentKey);
   };
   lines.forEach((line) => {
     if (line.startsWith('#')) {
       flush();
-      currentKey = line.slice(1).trim().toUpperCase();
+      currentHeader = line.slice(1);
+      currentKey = currentHeader.trim().toUpperCase();
+      if (!currentKey) {
+        currentHeader = '';
+        currentLines = [];
+        return;
+      }
       currentLines = [];
       return;
     }
     if (currentKey) currentLines.push(line);
   });
   flush();
-  return { order, sections };
+  return { order, sections, items, hadTrailingNewline: /\r\n$|\n$|\r$/.test(src) };
 }
 
 function serializeCivilopediaDocumentWithOrder(doc) {
   const order = Array.isArray(doc && doc.order) ? doc.order : [];
   const sections = (doc && doc.sections) || {};
+  const items = Array.isArray(doc && doc.items) ? doc.items : null;
+  const hadTrailingNewline = !!(doc && doc.hadTrailingNewline);
   const lines = [];
-  order.forEach((rawKey) => {
-    const key = String(rawKey || '').toUpperCase();
-    if (!key || !sections[key]) return;
-    const section = sections[key] || {};
-    const rawLines = Array.isArray(section.rawLines) ? section.rawLines : [];
-    lines.push(`#${key}`);
-    rawLines.forEach((line) => lines.push(String(line || '')));
-    lines.push('');
-  });
-  return ensureTrailingNewline(lines.join('\n'));
+  if (items && items.length > 0) {
+    items.forEach((sectionItem) => {
+      const key = String(sectionItem && sectionItem.key || '').trim().toUpperCase();
+      if (!key) return;
+      const headingRaw = (sectionItem && Object.prototype.hasOwnProperty.call(sectionItem, 'headerKey'))
+        ? String(sectionItem.headerKey)
+        : String(key);
+      const heading = headingRaw.length > 0 ? headingRaw : String(key);
+      const rawLines = Array.isArray(sectionItem && sectionItem.rawLines) ? sectionItem.rawLines : [];
+      lines.push(`#${heading}`);
+      rawLines.forEach((line) => lines.push(String(line || '')));
+    });
+  } else {
+    order.forEach((rawKey) => {
+      const key = String(rawKey || '').toUpperCase();
+      if (!key || !sections[key]) return;
+      const section = sections[key] || {};
+      const headingRaw = (section && Object.prototype.hasOwnProperty.call(section, 'headerKey'))
+        ? String(section.headerKey)
+        : String(key);
+      const heading = headingRaw.length > 0 ? headingRaw : String(key);
+      const rawLines = Array.isArray(section.rawLines) ? section.rawLines : [];
+      lines.push(`#${heading}`);
+      rawLines.forEach((line) => lines.push(String(line || '')));
+    });
+  }
+  const serialized = lines.join('\n');
+  return hadTrailingNewline ? ensureTrailingNewline(serialized) : serialized;
 }
 
 function parseIniLines(text) {
@@ -3089,6 +3144,8 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits }) {
       if (JSON.stringify(prevLines) === JSON.stringify(nextLines)) return;
       doc.blocks[blockKey] = nextLines;
       if (!doc.order.includes(blockKey)) doc.order.push(blockKey);
+      if (!doc.headers) doc.headers = {};
+      if (!doc.headers[blockKey]) doc.headers[blockKey] = blockKey;
       applied += 1;
     });
     if (applied === 0) return { ok: true, applied: 0, buffer: null };
@@ -3106,12 +3163,21 @@ function buildScenarioCivilopediaEditResult({ targetPath, edits }) {
   try {
     const existing = readWindows1252TextIfExists(targetPath) || '';
     const doc = parseCivilopediaDocumentWithOrder(existing);
+    const items = Array.isArray(doc.items) ? doc.items.slice() : [];
     let applied = 0;
     edits.forEach((edit) => {
       const sectionKey = String(edit && edit.sectionKey || '').trim().toUpperCase();
       if (!sectionKey) return;
       const op = String(edit && edit.op || 'upsert').trim().toLowerCase();
       if (op === 'delete') {
+        if (items.length > 0) {
+          const before = items.length;
+          for (let i = items.length - 1; i >= 0; i -= 1) {
+            if (String(items[i] && items[i].key || '').trim().toUpperCase() === sectionKey) items.splice(i, 1);
+          }
+          if (items.length !== before) applied += 1;
+          return;
+        }
         if (doc.sections[sectionKey]) {
           delete doc.sections[sectionKey];
           doc.order = (doc.order || []).filter((k) => String(k || '').trim().toUpperCase() !== sectionKey);
@@ -3119,18 +3185,63 @@ function buildScenarioCivilopediaEditResult({ targetPath, edits }) {
         }
         return;
       }
+      let targetItem = null;
+      if (items.length > 0) {
+        for (let i = items.length - 1; i >= 0; i -= 1) {
+          const candidate = items[i];
+          if (String(candidate && candidate.key || '').trim().toUpperCase() === sectionKey) {
+            targetItem = candidate;
+            break;
+          }
+        }
+      } else if (doc.sections[sectionKey]) {
+        targetItem = doc.sections[sectionKey];
+      }
       const nextLines = textToCivilopediaLines(edit.value);
-      const prevLines = (doc.sections[sectionKey] && Array.isArray(doc.sections[sectionKey].rawLines))
-        ? doc.sections[sectionKey].rawLines
+      const prevLines = (targetItem && Array.isArray(targetItem.rawLines))
+        ? targetItem.rawLines
         : [];
+      if (prevLines.length > 0 && nextLines.length > 0) {
+        const prevTrailingEmpty = countTrailingEmptyLines(prevLines);
+        const nextTrailingEmpty = countTrailingEmptyLines(nextLines);
+        if (prevTrailingEmpty > nextTrailingEmpty) {
+          for (let i = 0; i < (prevTrailingEmpty - nextTrailingEmpty); i += 1) nextLines.push('');
+        }
+      }
       const prevNorm = normalizeCivilopediaTextValue(prevLines.join('\n'));
       const nextNorm = normalizeCivilopediaTextValue(nextLines.join('\n'));
       if (prevNorm === nextNorm) return;
-      doc.sections[sectionKey] = { key: sectionKey, rawLines: nextLines };
-      if (!doc.order.includes(sectionKey)) doc.order.push(sectionKey);
+      const existingSection = targetItem || {};
+      const existingHeaderRaw = Object.prototype.hasOwnProperty.call(existingSection, 'headerKey')
+        ? String(existingSection.headerKey)
+        : String(sectionKey);
+      const headerKey = existingHeaderRaw.length > 0 ? existingHeaderRaw : String(sectionKey);
+      if (items.length > 0) {
+        if (targetItem) {
+          targetItem.key = sectionKey;
+          targetItem.headerKey = headerKey;
+          targetItem.rawLines = nextLines;
+        } else {
+          items.push({ key: sectionKey, headerKey, rawLines: nextLines });
+        }
+      } else {
+        doc.sections[sectionKey] = { key: sectionKey, headerKey, rawLines: nextLines };
+        if (!doc.order.includes(sectionKey)) doc.order.push(sectionKey);
+      }
       applied += 1;
     });
     if (applied === 0) return { ok: true, applied: 0, buffer: null };
+    if (items.length > 0) {
+      doc.items = items;
+      doc.sections = {};
+      doc.order = [];
+      items.forEach((item) => {
+        const key = String(item && item.key || '').trim().toUpperCase();
+        if (!key) return;
+        doc.sections[key] = item;
+        if (!doc.order.includes(key)) doc.order.push(key);
+      });
+    }
     const serialized = serializeCivilopediaDocumentWithOrder(doc);
     return { ok: true, applied, buffer: encodeWindows1252Text(serialized) };
   } catch (err) {
@@ -3247,7 +3358,7 @@ function commitWritesWithRollback(writes) {
   }
 }
 
-function saveBundle(payload) {
+function buildSavePlan(payload) {
   const mode = payload.mode === 'scenario' ? 'scenario' : 'global';
   const c3xPath = payload.c3xPath || '';
   const civ3Path = payload.civ3Path || '';
@@ -3428,12 +3539,218 @@ function saveBundle(payload) {
     }
   }
 
-  const committed = commitWritesWithRollback(plannedWrites);
+  return { ok: true, plannedWrites, saveReport };
+}
+
+function saveBundle(payload) {
+  const plan = buildSavePlan(payload);
+  if (!plan.ok) return plan;
+  const committed = commitWritesWithRollback(plan.plannedWrites);
   if (!committed.ok) {
     return { ok: false, error: committed.error || 'Failed to commit save transaction.' };
   }
 
-  return { ok: true, saveReport };
+  return { ok: true, saveReport: plan.saveReport };
+}
+
+function previewFileDiff(payload) {
+  const targetPath = String(payload && payload.targetPath || '').trim();
+  if (!targetPath) return { ok: false, error: 'No target file path provided.' };
+  const plan = buildSavePlan(payload || {});
+  if (!plan.ok) return plan;
+  const targetResolved = path.resolve(targetPath);
+  const write = (plan.plannedWrites || []).find((entry) => {
+    const p = String(entry && entry.path || '').trim();
+    if (!p) return false;
+    return path.resolve(p) === targetResolved;
+  });
+  if (!write) {
+    return { ok: true, found: false, error: 'No pending write for that file.' };
+  }
+  const filePath = String(write.path || '').trim();
+  const lowerPath = filePath.toLowerCase();
+  if (!lowerPath.endsWith('.txt') && !lowerPath.endsWith('.ini')) {
+    return { ok: true, found: false, error: 'Diff preview is only available for text/INI files.' };
+  }
+  const encoding = String(write && write.encoding || '').toLowerCase() === 'utf8' ? 'utf8' : 'latin1';
+  const nextText = Buffer.isBuffer(write.data)
+    ? write.data.toString(encoding)
+    : String(write.data || '');
+  let prevText = '';
+  let exists = false;
+  try {
+    if (fs.existsSync(filePath)) {
+      exists = true;
+      prevText = fs.readFileSync(filePath, encoding);
+    }
+  } catch (_err) {
+    prevText = '';
+    exists = false;
+  }
+  const diffRows = buildUnifiedDiffRows(prevText, nextText, { context: 3 });
+  return {
+    ok: true,
+    found: true,
+    path: filePath,
+    kind: String(write.kind || ''),
+    exists,
+    encoding,
+    oldText: prevText,
+    newText: nextText,
+    diffRows
+  };
+}
+
+function buildLineOpsForDiff(oldText, newText) {
+  const oldLines = String(oldText || '').replace(/\r\n/g, '\n').split('\n');
+  const newLines = String(newText || '').replace(/\r\n/g, '\n').split('\n');
+  const a = oldLines.map((line) => String(line || '').replace(/\r$/, ''));
+  const b = newLines.map((line) => String(line || '').replace(/\r$/, ''));
+  const n = a.length;
+  const m = b.length;
+  const max = n + m;
+  const offset = max;
+  const size = 2 * max + 1;
+  const trace = [];
+  let v = new Array(size).fill(0);
+  let endD = 0;
+
+  for (let d = 0; d <= max; d += 1) {
+    trace.push(v.slice());
+    for (let k = -d; k <= d; k += 2) {
+      const kIdx = k + offset;
+      let x;
+      if (k === -d || (k !== d && v[kIdx - 1] < v[kIdx + 1])) {
+        x = v[kIdx + 1];
+      } else {
+        x = v[kIdx - 1] + 1;
+      }
+      let y = x - k;
+      while (x < n && y < m && a[x] === b[y]) {
+        x += 1;
+        y += 1;
+      }
+      v[kIdx] = x;
+      if (x >= n && y >= m) {
+        endD = d;
+        trace.push(v.slice());
+        d = max + 1;
+        break;
+      }
+    }
+  }
+
+  const ops = [];
+  let x = n;
+  let y = m;
+  for (let d = endD; d > 0; d -= 1) {
+    const prevV = trace[d];
+    const k = x - y;
+    const kIdx = k + offset;
+    let prevK;
+    if (k === -d || (k !== d && prevV[kIdx - 1] < prevV[kIdx + 1])) {
+      prevK = k + 1;
+    } else {
+      prevK = k - 1;
+    }
+    const prevX = prevV[prevK + offset];
+    const prevY = prevX - prevK;
+
+    while (x > prevX && y > prevY) {
+      ops.push({ kind: 'ctx', text: oldLines[x - 1] });
+      x -= 1;
+      y -= 1;
+    }
+    if (x === prevX) {
+      if (y > 0) {
+        ops.push({ kind: 'add', text: newLines[y - 1] });
+        y -= 1;
+      }
+    } else if (x > 0) {
+      ops.push({ kind: 'del', text: oldLines[x - 1] });
+      x -= 1;
+    }
+  }
+
+  while (x > 0 && y > 0) {
+    ops.push({ kind: 'ctx', text: oldLines[x - 1] });
+    x -= 1;
+    y -= 1;
+  }
+  while (x > 0) {
+    ops.push({ kind: 'del', text: oldLines[x - 1] });
+    x -= 1;
+  }
+  while (y > 0) {
+    ops.push({ kind: 'add', text: newLines[y - 1] });
+    y -= 1;
+  }
+  return ops.reverse();
+}
+
+function buildUnifiedDiffRows(oldText, newText, options = {}) {
+  const context = Math.max(0, Number(options.context) || 3);
+  const ops = buildLineOpsForDiff(oldText, newText);
+  if (!ops.some((op) => op.kind === 'add' || op.kind === 'del')) {
+    return [{ kind: 'meta', text: 'No textual differences.' }];
+  }
+
+  const rows = [];
+  let oldNo = 1;
+  let newNo = 1;
+  ops.forEach((op) => {
+    const row = { kind: op.kind, text: String(op.text || ''), oldLine: null, newLine: null };
+    if (op.kind === 'ctx') {
+      row.oldLine = oldNo;
+      row.newLine = newNo;
+      oldNo += 1;
+      newNo += 1;
+    } else if (op.kind === 'del') {
+      row.oldLine = oldNo;
+      oldNo += 1;
+    } else if (op.kind === 'add') {
+      row.newLine = newNo;
+      newNo += 1;
+    }
+    rows.push(row);
+  });
+
+  const changed = [];
+  rows.forEach((row, idx) => {
+    if (row.kind === 'add' || row.kind === 'del') changed.push(idx);
+  });
+  if (!changed.length) return [{ kind: 'meta', text: 'No textual differences.' }];
+
+  const ranges = [];
+  let cur = { start: Math.max(0, changed[0] - context), end: Math.min(rows.length - 1, changed[0] + context) };
+  for (let i = 1; i < changed.length; i += 1) {
+    const idx = changed[i];
+    const start = Math.max(0, idx - context);
+    const end = Math.min(rows.length - 1, idx + context);
+    if (start <= cur.end + 1) cur.end = Math.max(cur.end, end);
+    else {
+      ranges.push(cur);
+      cur = { start, end };
+    }
+  }
+  ranges.push(cur);
+
+  const out = [];
+  ranges.forEach((range) => {
+    const slice = rows.slice(range.start, range.end + 1);
+    let oldStart = 1;
+    let newStart = 1;
+    const firstOld = slice.find((r) => r.oldLine != null);
+    const firstNew = slice.find((r) => r.newLine != null);
+    if (firstOld && firstOld.oldLine != null) oldStart = firstOld.oldLine;
+    if (firstNew && firstNew.newLine != null) newStart = firstNew.newLine;
+    const oldCount = slice.reduce((n, r) => n + (r.oldLine != null ? 1 : 0), 0);
+    const newCount = slice.reduce((n, r) => n + (r.newLine != null ? 1 : 0), 0);
+    out.push({ kind: 'hunk', text: `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`, oldLine: null, newLine: null });
+    slice.forEach((r) => out.push(r));
+  });
+
+  return out;
 }
 
 function isBiqPath(value) {
@@ -4144,5 +4461,7 @@ module.exports = {
   parseBiqSectionsFromBuffer,
   resolvePaths,
   loadBundle,
-  saveBundle
+  saveBundle,
+  previewFileDiff,
+  buildUnifiedDiffRows
 };

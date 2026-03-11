@@ -1,7 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
-const { loadBundle, saveBundle } = require('./src/configCore');
+const { loadBundle, saveBundle, previewFileDiff } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
 
 const APP_SETTINGS_FILE = 'settings.json';
@@ -355,6 +355,13 @@ ipcMain.handle('manager:load-bundle', async (_event, payload) => {
 
 ipcMain.handle('manager:save-bundle', async (_event, payload) => {
   return saveBundle({
+    ...(payload || {}),
+    javaPath: resolveBundledJavaPath()
+  });
+});
+
+ipcMain.handle('manager:preview-file-diff', async (_event, payload) => {
+  return previewFileDiff({
     ...(payload || {}),
     javaPath: resolveBundledJavaPath()
   });

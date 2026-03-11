@@ -116,6 +116,7 @@ const state = {
   filesReadRenderTimer: null,
   filesReadSearchInputMirror: '',
   filesReadSearchQuery: '',
+  fileDiffOpen: false,
   filesReadFilters: {
     locationCore: false,
     locationScenario: false,
@@ -261,7 +262,6 @@ const el = {
   forwardBtn: document.getElementById('forward-btn'),
   saveBtn: document.getElementById('save-btn'),
   undoBtn: document.getElementById('undo-btn'),
-  resetBtn: document.getElementById('reset-btn'),
   dirtyIndicator: document.getElementById('dirty-indicator'),
   debugLog: document.getElementById('debug-log'),
   copyDebugLog: document.getElementById('copy-debug-log'),
@@ -269,6 +269,11 @@ const el = {
   filesReadToggle: document.getElementById('files-read-toggle'),
   filesReadModalOverlay: document.getElementById('files-read-modal-overlay'),
   filesReadModalBody: document.getElementById('files-read-modal-body'),
+  fileDiffModalOverlay: document.getElementById('file-diff-modal-overlay'),
+  fileDiffModalTitle: document.getElementById('file-diff-modal-title'),
+  fileDiffModalBody: document.getElementById('file-diff-modal-body'),
+  fileDiffContent: document.getElementById('file-diff-content'),
+  fileDiffClose: document.getElementById('file-diff-close'),
   filesReadFiltersWrap: document.getElementById('files-read-filters'),
   filesReadSearchInput: document.getElementById('files-read-search'),
   filesFilterCore: document.getElementById('files-filter-core'),
@@ -332,6 +337,9 @@ const REFERENCE_PREFIX_BY_TAB = {
   governments: 'GOVT_',
   units: 'PRTO_'
 };
+const CIVILOPEDIA_TEXT_UTILS = (typeof window !== 'undefined' && window.c3xCivilopediaText)
+  ? window.c3xCivilopediaText
+  : null;
 const BIQ_TERRAIN_ATLAS_FILES = [
   'Art/Terrain/xtgc.pcx',
   'Art/Terrain/xpgc.pcx',
@@ -1004,7 +1012,7 @@ function classifyReadFilePath(filePath) {
   if (settings.civ3Path && pathIsSameOrChild(p, settings.civ3Path)) {
     return {
       scope: 'core',
-      title: 'Core Game'
+      title: 'Standard Game'
     };
   }
   return {
@@ -1093,6 +1101,7 @@ function collectPendingWritePathsFromDirtyTabs() {
 
 function getFilesEntryChangeCategory(entry, access) {
   if (!entry) return '';
+  if (!state.isDirty) return '';
   if (entry.potentialWrite) {
     return access && !access.exists ? 'new' : 'changed';
   }
@@ -1541,6 +1550,19 @@ function renderFilesReadModal() {
     }
     attachRichTooltip(pathEl, buildFilesRowTooltip(entry, classification, access));
     top.appendChild(pathEl);
+    const lowerPath = String(pathValue || '').toLowerCase();
+    if ((changeCategory === 'new' || changeCategory === 'changed')
+      && (lowerPath.endsWith('.txt') || lowerPath.endsWith('.ini'))) {
+      const diffBtn = document.createElement('button');
+      diffBtn.type = 'button';
+      diffBtn.className = 'files-read-diff-btn';
+      diffBtn.innerHTML = '<span class="btn-icon">🧾</span>View Changes';
+      diffBtn.title = 'Open line-by-line diff preview';
+      diffBtn.addEventListener('click', () => {
+        void openFileDiffModalForPath(pathValue);
+      });
+      top.appendChild(diffBtn);
+    }
     if (issue) {
       const issueBadge = document.createElement('span');
       issueBadge.className = 'files-read-badge warn';
@@ -1640,6 +1662,23 @@ function withRemoveIcon(button, label) {
   icon.textContent = 'x';
   button.appendChild(icon);
   button.appendChild(document.createTextNode(label));
+}
+
+function enableBooleanRowToggle(rowEl, checkEl) {
+  if (!rowEl || !checkEl) return;
+  if (rowEl.dataset.booleanRowToggle === '1') return;
+  rowEl.dataset.booleanRowToggle = '1';
+  rowEl.classList.add('bool-row-toggle');
+  rowEl.addEventListener('click', (ev) => {
+    if (checkEl.disabled) return;
+    const target = ev.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest('.bool-toggle')) return;
+    if (target.closest('button, a, select, textarea')) return;
+    if (target.closest('input')) return;
+    checkEl.checked = !checkEl.checked;
+    checkEl.dispatchEvent(new Event('change', { bubbles: true }));
+  });
 }
 
 function refreshDirtyUi() {
@@ -2295,8 +2334,7 @@ function setLoadingUi(isLoading, text = 'Loading configs...') {
     el.backBtn,
     el.forwardBtn,
     el.saveBtn,
-    el.undoBtn,
-    el.resetBtn
+    el.undoBtn
   ];
   controls.forEach((control) => {
     if (control) control.disabled = state.isLoading;
@@ -2312,6 +2350,7 @@ function updateScrollTopFab() {
 }
 
 function clearBundleView() {
+  closeFileDiffModal();
   state.bundle = null;
   state.trackDirty = false;
   state.baseFilter = '';
@@ -4197,6 +4236,10 @@ function renderBaseTab(tab) {
       row.value = String(newValue);
       setDirty(true);
     });
+    if (row.type === 'boolean' && input instanceof Element) {
+      const check = input.querySelector('input[type="checkbox"]');
+      if (check) enableBooleanRowToggle(r, check);
+    }
     r.appendChild(input);
 
     const groupInfo = groups.get(sectionName);
@@ -9288,6 +9331,9 @@ function getCivilopediaEntryForKey(civilopediaKey) {
 }
 
 function plainCivilopediaText(raw) {
+  if (CIVILOPEDIA_TEXT_UTILS && typeof CIVILOPEDIA_TEXT_UTILS.toPlainText === 'function') {
+    return CIVILOPEDIA_TEXT_UTILS.toPlainText(raw);
+  }
   return String(raw || '')
     .replace(/\$LINK<([^=<>]+)=([^<>]+)>/g, '$1')
     .replace(/\[([^\]]+)\]/g, '$1')
@@ -9413,53 +9459,91 @@ function showPediaLinkPreview(anchor, civilopediaKey, fallbackLabel = '') {
   }
 }
 
+const CIVILOPEDIA_LINK_PATTERN = /\$LINK<([^=<>]+)=([^<>]+)>/g;
+
+function appendCivilopediaInlineNodes(container, value) {
+  const cleaned = String(value || '').replace(/\[([^\]]+)\]/g, '$1');
+  let pos = 0;
+  for (const match of cleaned.matchAll(CIVILOPEDIA_LINK_PATTERN)) {
+    const index = match.index || 0;
+    if (index > pos) {
+      container.appendChild(document.createTextNode(cleaned.slice(pos, index)));
+    }
+    const label = match[1];
+    const key = String(match[2] || '').trim();
+    const a = document.createElement('a');
+    a.href = '#';
+    a.className = 'pedia-link';
+    a.textContent = label;
+    a.addEventListener('mouseenter', () => {
+      showPediaLinkPreview(a, key, label);
+    });
+    a.addEventListener('mouseleave', () => {
+      hidePediaLinkPreviewSoon();
+    });
+    a.addEventListener('focus', () => {
+      showPediaLinkPreview(a, key, label);
+    });
+    a.addEventListener('blur', () => {
+      hidePediaLinkPreviewSoon();
+    });
+    a.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      if (!navigateToCivilopediaKey(key)) {
+        setReferenceNotice(`No local entry for ${key}.`, true);
+      }
+    });
+    container.appendChild(a);
+    pos = index + match[0].length;
+  }
+  if (pos < cleaned.length) {
+    container.appendChild(document.createTextNode(cleaned.slice(pos)));
+  }
+}
+
 function renderCivilopediaRichText(container, text) {
-  const lines = String(text || '').split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  if (lines.length === 0) {
+  const blocks = CIVILOPEDIA_TEXT_UTILS && typeof CIVILOPEDIA_TEXT_UTILS.toReadBlocks === 'function'
+    ? CIVILOPEDIA_TEXT_UTILS.toReadBlocks(text)
+    : String(text || '')
+      .split(/\n+/)
+      .map((line) => String(line || '').trim())
+      .filter(Boolean)
+      .map((line) => ({ type: 'paragraph', text: line }));
+  if (blocks.length === 0) {
     container.textContent = '(none)';
     return;
   }
-  const linkPattern = /\$LINK<([^=<>]+)=([^<>]+)>/g;
-  lines.forEach((line) => {
+  blocks.forEach((block) => {
+    if (block && block.type === 'table' && Array.isArray(block.rows) && block.rows.length > 0) {
+      const table = document.createElement('div');
+      table.className = 'pedia-stat-table';
+      block.rows.forEach((row) => {
+        if (!row) return;
+        if (row.type === 'pair') {
+          const statRow = document.createElement('div');
+          statRow.className = 'pedia-stat-row';
+          const label = document.createElement('div');
+          label.className = 'pedia-stat-label';
+          appendCivilopediaInlineNodes(label, row.label);
+          const value = document.createElement('div');
+          value.className = 'pedia-stat-value';
+          appendCivilopediaInlineNodes(value, row.value);
+          statRow.appendChild(label);
+          statRow.appendChild(value);
+          table.appendChild(statRow);
+          return;
+        }
+        const full = document.createElement('div');
+        full.className = row.type === 'heading' ? 'pedia-stat-heading' : 'pedia-stat-note';
+        appendCivilopediaInlineNodes(full, row.text || '');
+        table.appendChild(full);
+      });
+      container.appendChild(table);
+      return;
+    }
     const p = document.createElement('p');
     p.className = 'pedia-paragraph';
-    const cleaned = line.replace(/\[([^\]]+)\]/g, '$1');
-    let pos = 0;
-    for (const match of cleaned.matchAll(linkPattern)) {
-      const index = match.index || 0;
-      if (index > pos) {
-        p.appendChild(document.createTextNode(cleaned.slice(pos, index)));
-      }
-      const label = match[1];
-      const key = String(match[2] || '').trim();
-      const a = document.createElement('a');
-      a.href = '#';
-      a.className = 'pedia-link';
-      a.textContent = label;
-      a.addEventListener('mouseenter', () => {
-        showPediaLinkPreview(a, key, label);
-      });
-      a.addEventListener('mouseleave', () => {
-        hidePediaLinkPreviewSoon();
-      });
-      a.addEventListener('focus', () => {
-        showPediaLinkPreview(a, key, label);
-      });
-      a.addEventListener('blur', () => {
-        hidePediaLinkPreviewSoon();
-      });
-      a.addEventListener('click', (ev) => {
-        ev.preventDefault();
-        if (!navigateToCivilopediaKey(key)) {
-          setReferenceNotice(`No local entry for ${key}.`, true);
-        }
-      });
-      p.appendChild(a);
-      pos = index + match[0].length;
-    }
-    if (pos < cleaned.length) {
-      p.appendChild(document.createTextNode(cleaned.slice(pos)));
-    }
+    appendCivilopediaInlineNodes(p, block && block.text ? block.text : '');
     container.appendChild(p);
   });
 }
@@ -9929,6 +10013,12 @@ function buildReferenceSectionNav({ tabKey, textCol, navCol }) {
   if (!textCol || !navCol) return;
   const sections = [];
   const usedIds = new Set();
+  const extractTextWithoutButtons = (node) => {
+    if (!node) return '';
+    const clone = node.cloneNode(true);
+    Array.from(clone.querySelectorAll('button')).forEach((btn) => btn.remove());
+    return String(clone.textContent || '').trim();
+  };
   const makeId = (base) => {
     let id = `${tabKey}-${slugifySectionId(base)}`;
     let i = 2;
@@ -9951,14 +10041,15 @@ function buildReferenceSectionNav({ tabKey, textCol, navCol }) {
     if (title.toLowerCase().startsWith('rules')) {
       const groupCards = Array.from(card.querySelectorAll('.rule-group-card'));
       groupCards.forEach((groupCard) => {
-        const groupTitle = String((groupCard.querySelector('.rule-group-title') || {}).textContent || '').trim();
+        const groupTitle = extractTextWithoutButtons(groupCard.querySelector('.rule-group-title'));
         if (!groupTitle) return;
         const groupId = makeId(`${title}-${groupTitle}`);
         groupCard.id = groupId;
         sections.push({ id: groupId, label: groupTitle, level: 1 });
         const rows = Array.from(groupCard.querySelectorAll('.rule-row'));
         rows.forEach((row) => {
-          const label = String((row.querySelector('label') || {}).textContent || '').trim();
+          const label = extractTextWithoutButtons(row.querySelector('label'));
+          if (!label || label.toLowerCase() === 'open tech tree') return;
           if (!label) return;
           const fieldId = makeId(`${groupTitle}-${label}`);
           row.id = fieldId;
@@ -11588,6 +11679,7 @@ function renderReferenceTab(tab, tabKey) {
               checkWrap.appendChild(check);
               checkWrap.appendChild(t);
               controlWrap.appendChild(checkWrap);
+              enableBooleanRowToggle(row, check);
             } else if (desiredControl === 'number' || (parseIntFromDisplayValue(field.value) != null && !/[A-Za-z]/.test(String(field.value || '').replace(/\(-?\d+\)\s*$/, '')))) {
               const num = document.createElement('input');
               num.type = 'number';
@@ -12505,6 +12597,7 @@ function renderBiqTab(tab) {
               toggle.appendChild(check);
               toggle.appendChild(text);
               controlWrap.appendChild(toggle);
+              enableBooleanRowToggle(row, check);
             } else if (desiredControl === 'number' || looksNumeric) {
               const input = document.createElement('input');
               input.type = 'number';
@@ -15680,6 +15773,10 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
     setSingleFieldValue(section, effectiveField.key, String(newValue || '').trim());
     if (onValueChange) onValueChange(effectiveField.key, String(newValue || '').trim());
   });
+  if (effectiveField.type === 'bool' && input instanceof Element) {
+    const check = input.querySelector('input[type="checkbox"]');
+    if (check) enableBooleanRowToggle(row, check);
+  }
   controlWrap.appendChild(input);
   row.appendChild(controlWrap);
 
@@ -16357,6 +16454,161 @@ async function loadBundleAndRender(options = {}) {
   }
 }
 
+function getTabsForSavePayload() {
+  const tabsToSave = {};
+  ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts', 'terrainPedia', 'workerActions', 'scenarioSettings', 'players', 'terrain', 'world', 'rules'].forEach((key) => {
+    if (state.bundle && state.bundle.tabs && state.bundle.tabs[key]) tabsToSave[key] = state.bundle.tabs[key];
+  });
+  return tabsToSave;
+}
+
+function buildQuickUnifiedDiffText(oldText, newText) {
+  const a = String(oldText || '').replace(/\r\n/g, '\n').split('\n');
+  const b = String(newText || '').replace(/\r\n/g, '\n').split('\n');
+  let prefix = 0;
+  while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) prefix += 1;
+  let aTail = a.length - 1;
+  let bTail = b.length - 1;
+  while (aTail >= prefix && bTail >= prefix && a[aTail] === b[bTail]) {
+    aTail -= 1;
+    bTail -= 1;
+  }
+  if (prefix > aTail && prefix > bTail) {
+    return 'No textual differences.';
+  }
+  const out = [];
+  out.push('--- Current');
+  out.push('+++ Pending Save');
+  out.push(`@@ -${prefix + 1},${Math.max(0, aTail - prefix + 1)} +${prefix + 1},${Math.max(0, bTail - prefix + 1)} @@`);
+  const contextBeforeStart = Math.max(0, prefix - 3);
+  for (let i = contextBeforeStart; i < prefix; i += 1) out.push(` ${a[i]}`);
+  for (let i = prefix; i <= aTail; i += 1) out.push(`-${a[i]}`);
+  for (let i = prefix; i <= bTail; i += 1) out.push(`+${b[i]}`);
+  const contextAfterEnd = Math.min(b.length, bTail + 1 + 3);
+  for (let i = bTail + 1; i < contextAfterEnd; i += 1) out.push(` ${b[i]}`);
+  if (out.length > 2400) return `${out.slice(0, 2400).join('\n')}\n... (diff truncated)`;
+  return out.join('\n');
+}
+
+function escapeHtml(raw) {
+  return String(raw || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function renderUnifiedDiffHtml(diffText) {
+  const lines = String(diffText || '').replace(/\r\n/g, '\n').split('\n');
+  const out = [];
+  let oldLine = 0;
+  let newLine = 0;
+  lines.forEach((line) => {
+    const raw = String(line || '');
+    if (!raw) return;
+    if (raw.startsWith('diff --git ') || raw.startsWith('index ') || raw.startsWith('--- ') || raw.startsWith('+++ ')) return;
+    const hunk = raw.match(/^@@\s+\-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+    if (hunk) {
+      oldLine = Number.parseInt(hunk[1], 10) || 0;
+      newLine = Number.parseInt(hunk[2], 10) || 0;
+      out.push(`<div class="file-diff-line hunk"><span class="ln old"></span><span class="ln new"></span><span class="txt">${escapeHtml(raw)}</span></div>`);
+      return;
+    }
+    if (raw.startsWith('+')) {
+      const lineNoNew = newLine;
+      newLine += 1;
+      out.push(`<div class="file-diff-line add"><span class="ln old"></span><span class="ln new">${lineNoNew}</span><span class="txt">${escapeHtml(raw)}</span></div>`);
+      return;
+    }
+    if (raw.startsWith('-')) {
+      const lineNoOld = oldLine;
+      oldLine += 1;
+      out.push(`<div class="file-diff-line del"><span class="ln old">${lineNoOld}</span><span class="ln new"></span><span class="txt">${escapeHtml(raw)}</span></div>`);
+      return;
+    }
+    if (raw.startsWith(' ')) {
+      const lineNoOld = oldLine;
+      const lineNoNew = newLine;
+      oldLine += 1;
+      newLine += 1;
+      out.push(`<div class="file-diff-line ctx"><span class="ln old">${lineNoOld}</span><span class="ln new">${lineNoNew}</span><span class="txt">${escapeHtml(raw)}</span></div>`);
+      return;
+    }
+    out.push(`<div class="file-diff-line meta"><span class="ln old"></span><span class="ln new"></span><span class="txt">${escapeHtml(raw)}</span></div>`);
+  });
+  return out.join('');
+}
+
+function renderUnifiedDiffRowsHtml(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return '';
+  return list.map((row) => {
+    const kind = String(row && row.kind || 'meta');
+    const oldLine = Number.isFinite(Number(row && row.oldLine)) ? String(Number(row.oldLine)) : '';
+    const newLine = Number.isFinite(Number(row && row.newLine)) ? String(Number(row.newLine)) : '';
+    const text = String(row && row.text || '');
+    return `<div class="file-diff-line ${kind}"><span class="ln old">${escapeHtml(oldLine)}</span><span class="ln new">${escapeHtml(newLine)}</span><span class="txt">${escapeHtml(text)}</span></div>`;
+  }).join('');
+}
+
+function closeFileDiffModal() {
+  if (!el.fileDiffModalOverlay) return;
+  state.fileDiffOpen = false;
+  el.fileDiffModalOverlay.classList.add('hidden');
+  el.fileDiffModalOverlay.setAttribute('aria-hidden', 'true');
+}
+
+async function openFileDiffModalForPath(targetPath) {
+  if (!state.bundle || !window.c3xManager || typeof window.c3xManager.previewFileDiff !== 'function') {
+    setStatus('Load configs before viewing file changes.', true);
+    return;
+  }
+  const pathValue = String(targetPath || '').trim();
+  if (!pathValue) return;
+  if (!el.fileDiffModalOverlay || !el.fileDiffContent || !el.fileDiffModalBody) return;
+  state.fileDiffOpen = true;
+  el.fileDiffModalOverlay.classList.remove('hidden');
+  el.fileDiffModalOverlay.setAttribute('aria-hidden', 'false');
+  if (el.fileDiffModalTitle) el.fileDiffModalTitle.textContent = 'File Changes';
+  el.fileDiffModalBody.textContent = `Computing pending changes for ${compactPathFromCiv3Root(pathValue) || pathValue}...`;
+  el.fileDiffContent.classList.add('loading');
+  el.fileDiffContent.innerHTML = '<div class="file-diff-loading"><span class="file-diff-loading-spinner" aria-hidden="true"></span><span>Computing diff preview...</span></div>';
+  try {
+    const res = await window.c3xManager.previewFileDiff({
+      mode: state.settings.mode,
+      c3xPath: state.settings.c3xPath,
+      civ3Path: state.settings.civ3Path,
+      scenarioPath: state.settings.scenarioPath,
+      tabs: getTabsForSavePayload(),
+      targetPath: pathValue
+    });
+    el.fileDiffContent.classList.remove('loading');
+    if (!res || !res.ok) {
+      el.fileDiffModalBody.textContent = `Could not compute diff: ${(res && res.error) || 'unknown error'}`;
+      el.fileDiffContent.textContent = '';
+      return;
+    }
+    if (!res.found) {
+      el.fileDiffModalBody.textContent = 'No pending text/INI write found for this file.';
+      el.fileDiffContent.textContent = '';
+      return;
+    }
+    const compact = compactPathFromCiv3Root(res.path) || res.path;
+    if (el.fileDiffModalTitle) el.fileDiffModalTitle.textContent = `File Changes: ${getPathTail(res.path)}`;
+    el.fileDiffModalBody.textContent = `${compact} | ${res.exists ? 'Existing file' : 'New file'} | ${String(res.kind || '').toUpperCase() || 'TEXT'}`;
+    if (Array.isArray(res.diffRows) && res.diffRows.length > 0) {
+      el.fileDiffContent.innerHTML = renderUnifiedDiffRowsHtml(res.diffRows);
+    } else if (res.diffText) {
+      el.fileDiffContent.innerHTML = renderUnifiedDiffHtml(res.diffText);
+    } else {
+      el.fileDiffContent.textContent = buildQuickUnifiedDiffText(res.oldText, res.newText);
+    }
+  } catch (err) {
+    el.fileDiffContent.classList.remove('loading');
+    el.fileDiffContent.textContent = '';
+    el.fileDiffModalBody.textContent = `Could not compute diff: ${err.message}`;
+  }
+}
+
 async function saveCurrentBundle() {
   if (!state.bundle) {
     setStatus('Load configs before saving.', true);
@@ -16373,10 +16625,7 @@ async function saveCurrentBundle() {
   await window.c3xManager.setSettings(state.settings);
 
   try {
-    const tabsToSave = {};
-    ['base', 'districts', 'wonders', 'naturalWonders', 'animations', 'civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts', 'terrainPedia', 'workerActions', 'scenarioSettings', 'players', 'terrain', 'world', 'rules'].forEach((key) => {
-      if (state.bundle.tabs[key]) tabsToSave[key] = state.bundle.tabs[key];
-    });
+    const tabsToSave = getTabsForSavePayload();
     const res = await window.c3xManager.saveBundle({
       mode: state.settings.mode,
       c3xPath: state.settings.c3xPath,
@@ -16549,18 +16798,9 @@ async function confirmResolveUnsavedChanges(actionLabel) {
   return false;
 }
 
-async function resetCurrentBundle() {
-  if (!state.bundle) {
-    setStatus('Load configs before resetting.', true);
-    return;
-  }
-  await loadBundleAndRender();
-  setStatus('Reset to last saved files.');
-}
-
 function undoOneStep() {
   if (!state.bundle || !state.undoSnapshot) {
-    setStatus('Nothing to undo.');
+    setStatus('No unsaved changes to undo.');
     return;
   }
   try {
@@ -16576,14 +16816,21 @@ function undoOneStep() {
     });
     state.bundle.tabs = mergedTabs;
     state.undoSnapshot = null;
+    state.civilopediaEditorOpen = {};
+    state.civilopediaPreviewVisible = {};
     // Undo restores the captured pre-edit snapshot (current single-step model),
     // so we can mark clean directly and avoid expensive whole-bundle diffs.
     state.isDirty = false;
     clearDirtyTabCounts();
+    markFilesReadEntriesDirty();
+    recomputeFilesReadIssueCount();
     refreshDirtyUi();
     renderTabs();
     renderActiveTab({ preserveTabScroll: true });
-    setStatus('Undid last change.');
+    if (el.filesReadModalOverlay && !el.filesReadModalOverlay.classList.contains('hidden')) {
+      renderFilesReadModal();
+    }
+    setStatus('Undid unsaved changes.');
   } catch (err) {
     setStatus('Undo failed.', true);
   }
@@ -16763,9 +17010,6 @@ async function init() {
   if (el.undoBtn) {
     el.undoBtn.addEventListener('click', undoOneStep);
   }
-  if (el.resetBtn) {
-    el.resetBtn.addEventListener('click', resetCurrentBundle);
-  }
   if (el.backBtn) {
     el.backBtn.addEventListener('click', navigateBack);
   }
@@ -16802,10 +17046,22 @@ async function init() {
       closeFilesReadModal();
     });
   }
+  if (el.fileDiffClose) {
+    el.fileDiffClose.addEventListener('click', () => {
+      closeFileDiffModal();
+    });
+  }
   if (el.filesReadModalOverlay) {
     el.filesReadModalOverlay.addEventListener('click', (ev) => {
       if (ev.target === el.filesReadModalOverlay) {
         closeFilesReadModal();
+      }
+    });
+  }
+  if (el.fileDiffModalOverlay) {
+    el.fileDiffModalOverlay.addEventListener('click', (ev) => {
+      if (ev.target === el.fileDiffModalOverlay) {
+        closeFileDiffModal();
       }
     });
   }
@@ -16908,6 +17164,12 @@ async function init() {
     }
     if (state.unsavedModal.open && ev.key === 'Escape') {
       resolveUnsavedChangesModal('cancel');
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+    if (el.fileDiffModalOverlay && !el.fileDiffModalOverlay.classList.contains('hidden') && ev.key === 'Escape') {
+      closeFileDiffModal();
       ev.preventDefault();
       ev.stopPropagation();
       return;

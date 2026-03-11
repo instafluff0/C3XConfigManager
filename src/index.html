@@ -46,8 +46,7 @@
         <button id="back-btn" class="ghost nav-btn" type="button" aria-label="Back" title="Back">←</button>
         <button id="forward-btn" class="ghost nav-btn" type="button" aria-label="Forward" title="Forward">→</button>
         <button id="save-btn" class="secondary"><span class="btn-icon">💾</span>Save</button>
-        <button id="undo-btn" class="ghost"><span class="btn-icon">↶</span>Undo</button>
-        <button id="reset-btn" class="ghost"><span class="btn-icon">⟲</span>Reset</button>
+        <button id="undo-btn" class="ghost"><span class="btn-icon">↶</span>Undo Changes</button>
       </div>
 
       <div class="path-grid-wrap" id="paths-body">
@@ -118,7 +117,7 @@
         <div id="files-read-filters" class="files-read-filters">
           <div class="files-filter-group" aria-label="Location filters">
             <div class="files-filter-group-title">Location</div>
-            <label class="files-filter-toggle"><input id="files-filter-core" type="checkbox" /><span>Core</span></label>
+            <label class="files-filter-toggle"><input id="files-filter-core" type="checkbox" /><span>Standard</span></label>
             <label class="files-filter-toggle"><input id="files-filter-scenario" type="checkbox" /><span>Scenario</span></label>
             <label class="files-filter-toggle"><input id="files-filter-c3x" type="checkbox" /><span>C3X</span></label>
             <label class="files-filter-toggle"><input id="files-filter-external" type="checkbox" /><span>External</span></label>
@@ -144,6 +143,17 @@
         <ul id="files-read-list" class="files-read-list"></ul>
         <div class="confirm-modal-actions">
           <button id="files-read-close" class="ghost" type="button"><span class="btn-icon">✕</span>Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="file-diff-modal-overlay" class="confirm-modal-overlay hidden" aria-hidden="true">
+      <div class="confirm-modal file-diff-modal" role="dialog" aria-modal="true" aria-labelledby="file-diff-modal-title" aria-describedby="file-diff-modal-body">
+        <h3 id="file-diff-modal-title">File Changes</h3>
+        <p id="file-diff-modal-body"></p>
+        <pre id="file-diff-content" class="file-diff-content"></pre>
+        <div class="confirm-modal-actions">
+          <button id="file-diff-close" class="ghost" type="button"><span class="btn-icon">✕</span>Close</button>
         </div>
       </div>
     </div>
@@ -189,6 +199,7 @@
       </div>
     </div>
 
+    <script src="./civilopediaText.js"></script>
     <script src="./mapEditorCore.js"></script>
     <script src="./renderer.js"></script>
   </body>
