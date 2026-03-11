@@ -93,6 +93,7 @@ const BIQ_SECTION_DEFS = [
 ];
 const MAX_BIQ_RECORDS_PER_SECTION = 400;
 const MAX_BIQ_BRIDGE_RECORDS_PER_SECTION = 600;
+let activeReadCollector = null;
 
 function getBiqBridgeRecordLimit(sectionCode) {
   const code = String(sectionCode || '').toUpperCase();
@@ -1406,6 +1407,22 @@ function extractScenarioSearchFolders(biqTab) {
 function resolveScenarioDirFromBiq({ scenarioPath, civ3Path, biqTab }) {
   const fallback = resolveScenarioDir(scenarioPath);
   const dirs = resolveScenarioSearchDirsFromBiq({ scenarioPath, civ3Path, biqTab });
+  if (dirs.length > 1) {
+    const fallbackResolved = path.resolve(String(fallback || ''));
+    const fallbackIsScenariosRoot = /[\\/]Conquests[\\/]Scenarios$/i.test(String(fallbackResolved || ''));
+    if (fallbackIsScenariosRoot) {
+      const preferred = dirs.find((candidate) => {
+        const resolved = path.resolve(String(candidate || ''));
+        if (!resolved || resolved === fallbackResolved) return false;
+        try {
+          return fs.existsSync(path.join(resolved, 'Art')) || fs.existsSync(path.join(resolved, 'Text'));
+        } catch (_err) {
+          return false;
+        }
+      });
+      if (preferred) return preferred;
+    }
+  }
   return dirs[0] || fallback;
 }
 
@@ -1489,6 +1506,7 @@ function readTextIfExists(filePath) {
     if (!filePath || !fs.existsSync(filePath)) {
       return null;
     }
+    if (activeReadCollector) activeReadCollector.add(path.resolve(String(filePath)));
     return fs.readFileSync(filePath, 'utf8');
   } catch (_err) {
     return null;
@@ -1541,6 +1559,7 @@ function decodeWindows1252Buffer(buffer) {
 function readWindows1252TextIfExists(filePath) {
   try {
     if (!filePath || !fs.existsSync(filePath)) return null;
+    if (activeReadCollector) activeReadCollector.add(path.resolve(String(filePath)));
     const buf = fs.readFileSync(filePath);
     if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
       return buf.toString('utf8');
@@ -1619,6 +1638,17 @@ function isProtectedBaseCiv3Path(civ3Path, targetPath) {
   if (!targetPath) return false;
   const normalized = normalizePathForCompare(path.resolve(String(targetPath)));
   return getProtectedBaseCiv3Paths(civ3Path).has(normalized);
+}
+
+function isProtectedC3xDefaultPath(c3xPath, targetPath) {
+  const c3xRoot = String(c3xPath || '').trim();
+  const target = String(targetPath || '').trim();
+  if (!c3xRoot || !target) return false;
+  const resolvedRoot = normalizePathForCompare(path.resolve(c3xRoot));
+  const resolvedTarget = normalizePathForCompare(path.resolve(target));
+  if (!resolvedTarget.startsWith(`${resolvedRoot}/`) && resolvedTarget !== resolvedRoot) return false;
+  const fileName = path.basename(target).toLowerCase();
+  return fileName.startsWith('default.');
 }
 
 function getTextLayerFiles(civ3Path, name) {
@@ -2946,91 +2976,101 @@ function resolvePaths({ c3xPath, scenarioPath, mode }) {
 }
 
 function loadBundle(payload) {
+  const readPaths = new Set();
+  activeReadCollector = readPaths;
   const mode = payload.mode === 'scenario' ? 'scenario' : 'global';
   const c3xPath = payload.c3xPath || '';
   const civ3Path = payload.civ3Path || '';
   const scenarioPath = payload.scenarioPath || '';
   const javaPath = payload.javaPath || '';
-  const biqTab = loadBiqTab({ mode, civ3Path, scenarioPath, javaPath });
-  const scenarioDir = mode === 'scenario'
-    ? resolveScenarioDirFromBiq({ scenarioPath, civ3Path, biqTab })
-    : resolveScenarioDir(scenarioPath);
-  const scenarioSearchPaths = mode === 'scenario'
-    ? resolveScenarioSearchDirsFromBiq({ scenarioPath, civ3Path, biqTab })
-    : [];
+  try {
+    const biqTab = loadBiqTab({ mode, civ3Path, scenarioPath, javaPath });
+    const scenarioDir = mode === 'scenario'
+      ? resolveScenarioDirFromBiq({ scenarioPath, civ3Path, biqTab })
+      : resolveScenarioDir(scenarioPath);
+    const scenarioSearchPaths = mode === 'scenario'
+      ? resolveScenarioSearchDirsFromBiq({ scenarioPath, civ3Path, biqTab })
+      : [];
 
-  const filePaths = resolvePaths({ c3xPath, scenarioPath: scenarioDir, mode });
-  const bundle = {
-    mode,
-    c3xPath,
-    civ3Path,
-    scenarioPath: scenarioDir,
-    scenarioInputPath: scenarioPath,
-    scenarioSearchPaths,
-    tabs: {}
-  };
+    const filePaths = resolvePaths({ c3xPath, scenarioPath: scenarioDir, mode });
+    const bundle = {
+      mode,
+      c3xPath,
+      civ3Path,
+      scenarioPath: scenarioDir,
+      scenarioInputPath: scenarioPath,
+      scenarioSearchPaths,
+      tabs: {}
+    };
 
-  bundle.biq = biqTab;
-
-  const referenceTabs = buildReferenceTabs(civ3Path, {
-    mode,
-    scenarioPath: scenarioDir,
-    scenarioPaths: scenarioSearchPaths,
-    biqTab
-  });
-  for (const spec of REFERENCE_TAB_SPECS) {
-    if (referenceTabs[spec.key]) {
-      if (spec.key === 'terrainPedia' || spec.key === 'workerActions') continue;
-      bundle.tabs[spec.key] = referenceTabs[spec.key];
+    bundle.biq = biqTab;
+    if (biqTab && biqTab.sourcePath) {
+      readPaths.add(path.resolve(String(biqTab.sourcePath)));
     }
-  }
-  bundle.tabs.map = buildMapTabFromBiq(biqTab, mode);
-  const biqStructureTabs = buildBiqStructureTabs(biqTab, mode);
-  Object.keys(biqStructureTabs).forEach((key) => {
-    bundle.tabs[key] = biqStructureTabs[key];
-  });
-  if (bundle.tabs.terrain) {
-    bundle.tabs.terrain.civilopedia = {
-      terrain: referenceTabs.terrainPedia || null,
-      workerActions: referenceTabs.workerActions || null
+
+    const referenceTabs = buildReferenceTabs(civ3Path, {
+      mode,
+      scenarioPath: scenarioDir,
+      scenarioPaths: scenarioSearchPaths,
+      biqTab
+    });
+    for (const spec of REFERENCE_TAB_SPECS) {
+      if (referenceTabs[spec.key]) {
+        if (spec.key === 'terrainPedia' || spec.key === 'workerActions') continue;
+        bundle.tabs[spec.key] = referenceTabs[spec.key];
+      }
+    }
+    bundle.tabs.map = buildMapTabFromBiq(biqTab, mode);
+    const biqStructureTabs = buildBiqStructureTabs(biqTab, mode);
+    Object.keys(biqStructureTabs).forEach((key) => {
+      bundle.tabs[key] = biqStructureTabs[key];
+    });
+    if (bundle.tabs.terrain) {
+      bundle.tabs.terrain.civilopedia = {
+        terrain: referenceTabs.terrainPedia || null,
+        workerActions: referenceTabs.workerActions || null
+      };
+    } else {
+      if (referenceTabs.terrainPedia) bundle.tabs.terrainPedia = referenceTabs.terrainPedia;
+      if (referenceTabs.workerActions) bundle.tabs.workerActions = referenceTabs.workerActions;
+    }
+
+    const defaultBaseText = readTextIfExists(filePaths.base.defaultPath) || '';
+    const scenarioBaseText = readTextIfExists(filePaths.base.scenarioPath) || '';
+    const customBaseText = readTextIfExists(filePaths.base.userPath) || '';
+    const targetBaseText = readTextIfExists(filePaths.base.targetPath) || '';
+
+    bundle.tabs.base = {
+      title: FILE_SPECS.base.title,
+      effectiveSource: filePaths.base.effectiveSource,
+      targetPath: filePaths.base.targetPath,
+      fieldDocs: parseIniFieldDocs(defaultBaseText),
+      ...parseIniSectionMap(defaultBaseText),
+      ...buildBaseModel(defaultBaseText, scenarioBaseText, customBaseText, mode, targetBaseText)
     };
-  } else {
-    if (referenceTabs.terrainPedia) bundle.tabs.terrainPedia = referenceTabs.terrainPedia;
-    if (referenceTabs.workerActions) bundle.tabs.workerActions = referenceTabs.workerActions;
+
+    for (const kind of ['districts', 'wonders', 'naturalWonders', 'animations']) {
+      const spec = FILE_SPECS[kind];
+      const defaultText = readTextIfExists(filePaths[kind].defaultPath) || '';
+      const targetText = readTextIfExists(filePaths[kind].targetPath);
+      const fallbackText = readTextIfExists(filePaths[kind].effectivePath) || '';
+      const text = targetText ?? fallbackText;
+
+      bundle.tabs[kind] = {
+        title: spec.title,
+        effectiveSource: filePaths[kind].effectiveSource,
+        targetPath: filePaths[kind].targetPath,
+        marker: spec.sectionMarker,
+        fieldDocs: parseSectionFieldDocs(defaultText),
+        model: parseSectionedConfig(text, spec.sectionMarker)
+      };
+    }
+
+    bundle.readFiles = Array.from(readPaths).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+    return bundle;
+  } finally {
+    activeReadCollector = null;
   }
-
-  const defaultBaseText = readTextIfExists(filePaths.base.defaultPath) || '';
-  const scenarioBaseText = readTextIfExists(filePaths.base.scenarioPath) || '';
-  const customBaseText = readTextIfExists(filePaths.base.userPath) || '';
-  const targetBaseText = readTextIfExists(filePaths.base.targetPath) || '';
-
-  bundle.tabs.base = {
-    title: FILE_SPECS.base.title,
-    effectiveSource: filePaths.base.effectiveSource,
-    targetPath: filePaths.base.targetPath,
-    fieldDocs: parseIniFieldDocs(defaultBaseText),
-    ...parseIniSectionMap(defaultBaseText),
-    ...buildBaseModel(defaultBaseText, scenarioBaseText, customBaseText, mode, targetBaseText)
-  };
-
-  for (const kind of ['districts', 'wonders', 'naturalWonders', 'animations']) {
-    const spec = FILE_SPECS[kind];
-    const defaultText = readTextIfExists(filePaths[kind].defaultPath) || '';
-    const targetText = readTextIfExists(filePaths[kind].targetPath);
-    const fallbackText = readTextIfExists(filePaths[kind].effectivePath) || '';
-    const text = targetText ?? fallbackText;
-
-    bundle.tabs[kind] = {
-      title: spec.title,
-      effectiveSource: filePaths[kind].effectiveSource,
-      targetPath: filePaths[kind].targetPath,
-      marker: spec.sectionMarker,
-      fieldDocs: parseSectionFieldDocs(defaultText),
-      model: parseSectionedConfig(text, spec.sectionMarker)
-    };
-  }
-
-  return bundle;
 }
 
 function buildScenarioPediaIconsEditResult({ targetPath, edits }) {
@@ -3221,8 +3261,13 @@ function saveBundle(payload) {
   const filePaths = resolvePaths({ c3xPath, scenarioPath: scenarioDir, mode });
   const failIfProtected = (candidatePath, label) => {
     if (!candidatePath) return null;
-    if (!isProtectedBaseCiv3Path(civ3Path, candidatePath)) return null;
-    return `Refusing to modify base Civilization III file (${label}): ${candidatePath}`;
+    if (isProtectedBaseCiv3Path(civ3Path, candidatePath)) {
+      return `Refusing to modify base Civilization III file (${label}): ${candidatePath}`;
+    }
+    if (isProtectedC3xDefaultPath(c3xPath, candidatePath)) {
+      return `Refusing to modify protected C3X default file (${label}): ${candidatePath}`;
+    }
+    return null;
   };
 
   const saveReport = [];

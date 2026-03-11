@@ -89,24 +89,64 @@
       </div>
     </template>
 
-    <button id="debug-toggle" class="debug-fab" title="Open Preview Debug Log">🛠</button>
-    <button id="scroll-top-fab" class="scroll-top-fab hidden" type="button" title="Back to top" aria-label="Back to top">↑</button>
-    <div class="floating-font-controls" aria-label="Font size controls">
-      <button id="font-down" class="ghost font-btn" type="button" aria-label="Decrease font size">A-</button>
-      <span id="font-scale-label" class="font-scale-label">100%</span>
-      <button id="font-up" class="ghost font-btn" type="button" aria-label="Increase font size">A+</button>
+    <div class="floating-tools" aria-label="Quick tools">
+      <button id="files-read-toggle" class="debug-fab files-read-fab" title="Show files read">📄</button>
+      <button id="debug-toggle" class="debug-fab" title="Open Debug Log">🛠</button>
+      <div class="floating-font-controls" aria-label="Font size controls">
+        <button id="font-down" class="ghost font-btn" type="button" aria-label="Decrease font size">A-</button>
+        <span id="font-scale-label" class="font-scale-label">100%</span>
+        <button id="font-up" class="ghost font-btn" type="button" aria-label="Increase font size">A+</button>
+      </div>
     </div>
+    <button id="scroll-top-fab" class="scroll-top-fab hidden" type="button" title="Back to top" aria-label="Back to top">↑</button>
     <section id="debug-drawer" class="debug-drawer hidden">
       <div class="debug-header">
-        <strong>Preview Debug Log</strong>
-        <button id="debug-close">Close</button>
+        <strong>Debug Log</strong>
+        <button id="debug-close"><span class="btn-icon">✕</span>Close</button>
       </div>
       <div class="debug-actions">
-        <button id="copy-debug-log">Copy Log</button>
-        <button id="clear-debug-log">Clear</button>
+        <button id="copy-debug-log"><span class="btn-icon">📋</span>Copy Log</button>
+        <button id="clear-debug-log"><span class="btn-icon">🧹</span>Clear</button>
       </div>
       <pre id="debug-log"></pre>
     </section>
+
+    <div id="files-read-modal-overlay" class="confirm-modal-overlay hidden" aria-hidden="true">
+      <div class="confirm-modal files-read-modal" role="dialog" aria-modal="true" aria-labelledby="files-read-modal-title" aria-describedby="files-read-modal-body">
+        <h3 id="files-read-modal-title">Files</h3>
+        <p id="files-read-modal-body"></p>
+        <div id="files-read-filters" class="files-read-filters">
+          <div class="files-filter-group" aria-label="Location filters">
+            <div class="files-filter-group-title">Location</div>
+            <label class="files-filter-toggle"><input id="files-filter-core" type="checkbox" /><span>Core</span></label>
+            <label class="files-filter-toggle"><input id="files-filter-scenario" type="checkbox" /><span>Scenario</span></label>
+            <label class="files-filter-toggle"><input id="files-filter-c3x" type="checkbox" /><span>C3X</span></label>
+            <label class="files-filter-toggle"><input id="files-filter-external" type="checkbox" /><span>External</span></label>
+          </div>
+          <div class="files-filter-group" aria-label="File type filters">
+            <div class="files-filter-group-title">File Type</div>
+            <label class="files-filter-toggle"><input id="files-filter-type-config-ini" type="checkbox" /><span>Config INI</span></label>
+            <label class="files-filter-toggle"><input id="files-filter-type-animation-ini" type="checkbox" /><span>Animation INI</span></label>
+            <label class="files-filter-toggle"><input id="files-filter-type-text" type="checkbox" /><span>Text</span></label>
+            <label class="files-filter-toggle"><input id="files-filter-type-biq" type="checkbox" /><span>BIQ</span></label>
+          </div>
+          <div class="files-filter-group" aria-label="Status filters">
+            <div class="files-filter-group-title">Status</div>
+            <label class="files-filter-toggle"><input id="files-filter-status-new" type="checkbox" /><span>New</span></label>
+            <label class="files-filter-toggle"><input id="files-filter-status-changed" type="checkbox" /><span>Changed</span></label>
+            <label class="files-filter-toggle"><input id="files-filter-status-unchanged" type="checkbox" /><span>Unchanged</span></label>
+            <label class="files-filter-toggle"><input id="files-filter-status-risk" type="checkbox" /><span>Warning</span></label>
+          </div>
+        </div>
+        <div class="files-read-search-wrap">
+          <input id="files-read-search" class="files-read-search-input app-search-input" type="search" placeholder="Search files by name, path, scope, type, status..." />
+        </div>
+        <ul id="files-read-list" class="files-read-list"></ul>
+        <div class="confirm-modal-actions">
+          <button id="files-read-close" class="ghost" type="button"><span class="btn-icon">✕</span>Close</button>
+        </div>
+      </div>
+    </div>
 
     <div id="loading-overlay" class="loading-overlay hidden" aria-live="polite">
       <div class="loading-card">

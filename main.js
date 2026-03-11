@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadBundle, saveBundle } = require('./src/configCore');
@@ -262,8 +262,74 @@ ipcMain.handle('manager:pick-file', async (_event, options) => {
   return result.filePaths[0];
 });
 
+ipcMain.handle('manager:open-file-path', async (_event, filePath) => {
+  const target = String(filePath || '').trim();
+  if (!target) return { ok: false, error: 'No file path provided.' };
+  try {
+    if (!fs.existsSync(target)) return { ok: false, error: 'File does not exist.' };
+    const openErr = await shell.openPath(target);
+    if (openErr) return { ok: false, error: openErr };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : 'Could not open file.' };
+  }
+});
+
 ipcMain.handle('manager:path-exists', async (_event, dirPath) => {
   return pathExists(dirPath);
+});
+
+ipcMain.handle('manager:get-path-access', async (_event, paths) => {
+  const out = {};
+  const list = Array.isArray(paths) ? paths : [];
+  const findNearestExistingParent = (absPath) => {
+    let cursor = path.dirname(absPath);
+    while (cursor && cursor !== path.dirname(cursor)) {
+      if (fs.existsSync(cursor)) return cursor;
+      cursor = path.dirname(cursor);
+    }
+    if (cursor && fs.existsSync(cursor)) return cursor;
+    return '';
+  };
+  list.forEach((raw) => {
+    const target = String(raw || '').trim();
+    if (!target) return;
+    try {
+      const resolved = path.resolve(target);
+      const exists = fs.existsSync(resolved);
+      let writable = false;
+      let parentPath = '';
+      let parentWritable = false;
+      if (exists) {
+        try {
+          fs.accessSync(resolved, fs.constants.W_OK);
+          writable = true;
+        } catch (_err) {
+          writable = false;
+        }
+      } else {
+        parentPath = findNearestExistingParent(resolved);
+        if (parentPath) {
+          try {
+            fs.accessSync(parentPath, fs.constants.W_OK);
+            parentWritable = true;
+          } catch (_err) {
+            parentWritable = false;
+          }
+        }
+      }
+      out[target] = {
+        exists,
+        writable,
+        readOnly: exists && !writable,
+        parentPath,
+        parentWritable
+      };
+    } catch (err) {
+      out[target] = { exists: false, writable: false, readOnly: false, error: err.message };
+    }
+  });
+  return out;
 });
 
 ipcMain.handle('manager:list-scenarios', async (_event, civ3Path) => {

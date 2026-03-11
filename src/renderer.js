@@ -54,6 +54,8 @@ const state = {
   biqMapRerenderPending: false,
   biqMapLastScrollLogTs: 0,
   biqMapZoomAnchor: null,
+  biqMapZoomAnim: null,
+  biqMapZoomAnimRaf: 0,
   biqMapSuppressClickUntilTs: 0,
   biqMapArtCache: {},
   biqMapArtLoading: {},
@@ -104,7 +106,30 @@ const state = {
   },
   settingsPersistTimer: null,
   startupPerformanceMode: 'high',
-  sectionValidationError: ''
+  sectionValidationError: '',
+  copyDebugFeedbackTimer: null,
+  filesReadAccessByPath: {},
+  filesReadIssueCount: 0,
+  filesReadAccessRequestId: 0,
+  filesReadEntriesCache: null,
+  filesReadEntriesCacheDirty: true,
+  filesReadRenderTimer: null,
+  filesReadSearchInputMirror: '',
+  filesReadSearchQuery: '',
+  filesReadFilters: {
+    locationCore: false,
+    locationScenario: false,
+    locationC3x: false,
+    locationExternal: false,
+    typeConfigIni: true,
+    typeAnimationIni: false,
+    typeText: true,
+    typeBiq: true,
+    statusNew: false,
+    statusChanged: false,
+    statusUnchanged: false,
+    statusRisk: false
+  }
 };
 const mapCore = (typeof window !== 'undefined' && window.MapEditorCore) ? window.MapEditorCore : null;
 const richTooltip = {
@@ -241,6 +266,25 @@ const el = {
   debugLog: document.getElementById('debug-log'),
   copyDebugLog: document.getElementById('copy-debug-log'),
   clearDebugLog: document.getElementById('clear-debug-log'),
+  filesReadToggle: document.getElementById('files-read-toggle'),
+  filesReadModalOverlay: document.getElementById('files-read-modal-overlay'),
+  filesReadModalBody: document.getElementById('files-read-modal-body'),
+  filesReadFiltersWrap: document.getElementById('files-read-filters'),
+  filesReadSearchInput: document.getElementById('files-read-search'),
+  filesFilterCore: document.getElementById('files-filter-core'),
+  filesFilterScenario: document.getElementById('files-filter-scenario'),
+  filesFilterC3x: document.getElementById('files-filter-c3x'),
+  filesFilterExternal: document.getElementById('files-filter-external'),
+  filesFilterTypeConfigIni: document.getElementById('files-filter-type-config-ini'),
+  filesFilterTypeAnimationIni: document.getElementById('files-filter-type-animation-ini'),
+  filesFilterTypeText: document.getElementById('files-filter-type-text'),
+  filesFilterTypeBiq: document.getElementById('files-filter-type-biq'),
+  filesFilterStatusNew: document.getElementById('files-filter-status-new'),
+  filesFilterStatusChanged: document.getElementById('files-filter-status-changed'),
+  filesFilterStatusUnchanged: document.getElementById('files-filter-status-unchanged'),
+  filesFilterStatusRisk: document.getElementById('files-filter-status-risk'),
+  filesReadList: document.getElementById('files-read-list'),
+  filesReadClose: document.getElementById('files-read-close'),
   debugToggle: document.getElementById('debug-toggle'),
   debugDrawer: document.getElementById('debug-drawer'),
   debugClose: document.getElementById('debug-close'),
@@ -307,6 +351,7 @@ const BIQ_MAP_OVERLAY_ANCHORS = {
 };
 const BIQ_MAP_ZOOM_MIN = 2;
 const BIQ_MAP_ZOOM_MAX = 18;
+const BIQ_MAP_ZOOM_LEVELS = [3, 5, 7, 9, 12, 16];
 
 const BASE_ENUM_OPTIONS = {
   draw_lines_using_gdi_plus: ['never', 'wine', 'always'],
@@ -866,6 +911,721 @@ function setStatus(text, isError = false) {
   el.status.style.color = isError ? '#a13514' : '';
 }
 
+function normalizePathForCompare(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+}
+
+function getPathBaseNameLower(pathValue) {
+  const text = String(pathValue || '').trim();
+  if (!text) return '';
+  const parts = text.split(/[\\/]/).filter(Boolean);
+  return String(parts[parts.length - 1] || '').toLowerCase();
+}
+
+function isOpenableFilesReadPath(pathValue) {
+  const p = String(pathValue || '').trim().toLowerCase();
+  return p.endsWith('.txt') || p.endsWith('.ini');
+}
+
+function pathIsSameOrChild(pathValue, rootValue) {
+  const pathNorm = normalizePathForCompare(pathValue);
+  const rootNorm = normalizePathForCompare(rootValue);
+  if (!pathNorm || !rootNorm) return false;
+  return pathNorm === rootNorm || pathNorm.startsWith(`${rootNorm}/`);
+}
+
+function collectActiveReferenceReadPaths() {
+  const out = new Set();
+  if (!state.bundle || !state.bundle.tabs) return out;
+  Object.values(state.bundle.tabs).forEach((tab) => {
+    if (!tab || tab.type !== 'reference' || !Array.isArray(tab.entries)) return;
+    tab.entries.forEach((entry) => {
+      const sourceMeta = entry && entry.sourceMeta;
+      if (!sourceMeta || typeof sourceMeta !== 'object') return;
+      Object.values(sourceMeta).forEach((meta) => {
+        const readPath = String(meta && meta.readPath || '').trim();
+        if (readPath) out.add(readPath);
+      });
+    });
+    const diplomacyActive = String((tab.sourceDetails && tab.sourceDetails.diplomacyActive) || '').trim();
+    if (diplomacyActive) out.add(diplomacyActive);
+  });
+  return out;
+}
+
+function shouldSuppressCoreFallbackEntry(pathValue, activeReadPaths) {
+  if (!state.settings || state.settings.mode !== 'scenario') return false;
+  const scope = classifyReadFilePath(pathValue).scope;
+  if (scope !== 'core') return false;
+  const baseName = getPathBaseNameLower(pathValue);
+  const fallbackTracked = new Set(['civilopedia.txt', 'pediaicons.txt', 'diplomacy.txt']);
+  if (!fallbackTracked.has(baseName)) return false;
+  const scenarioEntryExists = Array.isArray(state.bundle && state.bundle.readFiles)
+    && state.bundle.readFiles.some((candidate) => {
+      const c = String(candidate || '').trim();
+      return classifyReadFilePath(c).scope === 'scenario' && getPathBaseNameLower(c) === baseName;
+    });
+  if (!scenarioEntryExists) return false;
+  const needed = Array.from(activeReadPaths || []).some((readPath) => {
+    const r = String(readPath || '').trim();
+    return getPathBaseNameLower(r) === baseName && classifyReadFilePath(r).scope === 'core';
+  });
+  return !needed;
+}
+
+function classifyReadFilePath(filePath) {
+  const p = String(filePath || '').trim();
+  const bundle = state.bundle || {};
+  const settings = state.settings || {};
+  const scenarioRoots = [];
+  if (bundle.scenarioPath) scenarioRoots.push(bundle.scenarioPath);
+  if (Array.isArray(bundle.scenarioSearchPaths)) {
+    bundle.scenarioSearchPaths.forEach((pathValue) => {
+      if (pathValue) scenarioRoots.push(pathValue);
+    });
+  }
+  const inScenario = scenarioRoots.some((root) => pathIsSameOrChild(p, root));
+  if (inScenario) {
+    return {
+      scope: 'scenario',
+      title: 'Scenario'
+    };
+  }
+  if (settings.c3xPath && pathIsSameOrChild(p, settings.c3xPath)) {
+    return {
+      scope: 'c3x',
+      title: 'C3X'
+    };
+  }
+  if (settings.civ3Path && pathIsSameOrChild(p, settings.civ3Path)) {
+    return {
+      scope: 'core',
+      title: 'Core Game'
+    };
+  }
+  return {
+    scope: 'external',
+    title: 'External'
+  };
+}
+
+function isProtectedC3xDefaultPathLocal(filePath) {
+  const c3xRoot = String((state.settings && state.settings.c3xPath) || '').trim();
+  const target = String(filePath || '').trim();
+  if (!c3xRoot || !target) return false;
+  if (!pathIsSameOrChild(target, c3xRoot)) return false;
+  return getPathBaseNameLower(target).startsWith('default.');
+}
+
+function getFilesEntryKind(pathValue, classification) {
+  if (!classification) return 'read-only';
+  if (classification.scope === 'core') return 'read-only';
+  if (classification.scope === 'scenario') return 'write';
+  if (classification.scope === 'c3x') {
+    return isProtectedC3xDefaultPathLocal(pathValue) ? 'read-only' : 'write';
+  }
+  return 'read-only';
+}
+
+function collectPendingWritePathsFromDirtyTabs() {
+  const pending = new Set();
+  if (!state.isDirty || !state.bundle || !state.bundle.tabs) return pending;
+  const tabs = state.bundle.tabs || {};
+  const addPath = (rawPath) => {
+    const p = String(rawPath || '').trim();
+    if (p) pending.add(p);
+  };
+  ['base', 'districts', 'wonders', 'naturalWonders', 'animations'].forEach((tabKey) => {
+    if (getTabDirtyCount(tabKey) <= 0) return;
+    const tab = tabs[tabKey];
+    addPath(tab && tab.targetPath);
+  });
+
+  const normalizeRefList = (value) => (Array.isArray(value) ? value.map((v) => String(v || '')) : []);
+  const normalizeBiqFields = (fields) => (Array.isArray(fields) ? fields.map((field) => ({
+    key: String(field && (field.baseKey || field.key) || '').toLowerCase(),
+    value: String(field && field.value || ''),
+    multiValues: Array.isArray(field && field.multiValues) ? field.multiValues.map((v) => String(v || '')) : []
+  })) : []);
+  const isEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  Object.keys(tabs).forEach((tabKey) => {
+    if (getTabDirtyCount(tabKey) <= 0) return;
+    const tab = tabs[tabKey];
+    if (!tab) return;
+    if (tab.type === 'biqStructure' || tab.type === 'biq') {
+      addPath((state.bundle.biq && state.bundle.biq.sourcePath) || tab.sourcePath || (state.settings && state.settings.scenarioPath));
+      return;
+    }
+    if (tab.type !== 'reference' || !Array.isArray(tab.entries)) return;
+    tab.entries.forEach((entry) => {
+      const key = String((entry && entry.civilopediaKey) || '').toUpperCase();
+      const cleanEntry = key ? getCleanReferenceEntry(tabKey, key) : null;
+      if (!hasReferenceEntryChangedFromClean(entry, cleanEntry)) return;
+      const meta = entry && entry.sourceMeta ? entry.sourceMeta : {};
+      const changedOverview = !isEqual(String(entry && entry.overview || ''), String(cleanEntry && cleanEntry.overview || ''));
+      const changedDescription = !isEqual(String(entry && entry.description || ''), String(cleanEntry && cleanEntry.description || ''));
+      const changedIconPaths = !isEqual(normalizeRefList(entry && entry.iconPaths), normalizeRefList(cleanEntry && cleanEntry.iconPaths));
+      const changedAnimationName = !isEqual(String(entry && entry.animationName || ''), String(cleanEntry && cleanEntry.animationName || ''));
+      const changedRacePaths = !isEqual(normalizeRefList(entry && entry.racePaths), normalizeRefList(cleanEntry && cleanEntry.racePaths));
+      const changedBiq = !isEqual(normalizeBiqFields(entry && entry.biqFields), normalizeBiqFields(cleanEntry && cleanEntry.biqFields));
+
+      if (changedOverview || changedDescription) {
+        addPath(meta && meta.overview && meta.overview.writePath);
+        addPath(meta && meta.description && meta.description.writePath);
+      }
+      if (changedIconPaths || changedAnimationName || changedRacePaths) {
+        addPath(meta && meta.iconPaths && meta.iconPaths.writePath);
+        addPath(meta && meta.animationName && meta.animationName.writePath);
+      }
+      if (changedBiq) {
+        addPath(meta && meta.biq && meta.biq.writePath);
+      }
+    });
+  });
+
+  return pending;
+}
+
+function getFilesEntryChangeCategory(entry, access) {
+  if (!entry) return '';
+  if (entry.potentialWrite) {
+    return access && !access.exists ? 'new' : 'changed';
+  }
+  return String(entry.changeCategory || '').toLowerCase();
+}
+
+function collectFilesModalEntries() {
+  const out = [];
+  const byPath = new Map();
+  const activeReadPaths = collectActiveReferenceReadPaths();
+  const readFiles = Array.isArray(state.bundle && state.bundle.readFiles) ? state.bundle.readFiles : [];
+  readFiles.forEach((filePath) => {
+    const pathValue = String(filePath || '').trim();
+    if (!pathValue) return;
+    if (shouldSuppressCoreFallbackEntry(pathValue, activeReadPaths)) return;
+    const classification = classifyReadFilePath(pathValue);
+    const entry = {
+      path: pathValue,
+      kind: getFilesEntryKind(pathValue, classification),
+      note: 'Loaded during bundle read',
+      animationIni: isAnimationIniPath(pathValue)
+    };
+    out.push(entry);
+    byPath.set(pathValue, entry);
+  });
+
+  const scenarioMode = !!(state.settings && state.settings.mode === 'scenario');
+  const unitEntries = (state.bundle && state.bundle.tabs && state.bundle.tabs.units && Array.isArray(state.bundle.tabs.units.entries))
+    ? state.bundle.tabs.units.entries
+    : [];
+  if (unitEntries.length > 0) {
+    const seenAnimSource = new Set();
+    unitEntries.forEach((entry) => {
+      const animationName = String(entry && entry.animationName || '').trim();
+      if (!animationName) return;
+      const candidates = Array.from(new Set([
+        String(entry && entry.unitIniEditor && entry.unitIniEditor.iniPath || '').trim(),
+        ...getUnitIniSourceCandidates(animationName)
+      ].filter(Boolean)));
+      if (!candidates.length) return;
+      let resolved = candidates.find((candidate) => byPath.has(candidate)) || '';
+      if (!resolved) {
+        resolved = candidates.find((candidate) => {
+          const access = state.filesReadAccessByPath[String(candidate || '').trim()];
+          return !!(access && access.exists);
+        }) || '';
+      }
+      if (!resolved) resolved = candidates[0];
+      if (!resolved || seenAnimSource.has(resolved)) return;
+      seenAnimSource.add(resolved);
+      const existing = byPath.get(resolved);
+      if (existing) {
+        existing.animationIni = true;
+        if (!existing.note) existing.note = 'Animation INI source';
+        return;
+      }
+      const classification = classifyReadFilePath(resolved);
+      const sourceEntry = {
+        path: resolved,
+        kind: getFilesEntryKind(resolved, classification),
+        note: 'Animation INI source',
+        animationIni: true
+      };
+      out.push(sourceEntry);
+      byPath.set(resolved, sourceEntry);
+    });
+  }
+  if (scenarioMode && unitEntries.length > 0) {
+    const seenPotential = new Set();
+    unitEntries.forEach((entry) => {
+      const animationName = String(entry && entry.animationName || '').trim();
+      if (!animationName) return;
+      const sourceCandidates = Array.from(new Set([
+        String(entry && entry.unitIniEditor && entry.unitIniEditor.iniPath || '').trim(),
+        ...getUnitIniSourceCandidates(animationName)
+      ].filter(Boolean)));
+      const hasPendingIniChange = !!extractUnitIniDirtyPayload(entry && entry.unitIniEditor);
+      if (!hasPendingIniChange) return;
+      const targetPath = getUnitIniTargetPath(animationName);
+      if (!targetPath || seenPotential.has(targetPath)) return;
+      seenPotential.add(targetPath);
+      const existing = byPath.get(targetPath);
+      if (existing) {
+        existing.potentialWrite = true;
+        existing.kind = 'write';
+        existing.sourceCandidates = sourceCandidates;
+        existing.changeCategory = 'changed';
+        existing.animationIni = true;
+        existing.note = 'Changed Unit INI target';
+        return;
+      }
+      const potential = {
+        path: targetPath,
+        kind: 'write',
+        note: 'Changed Unit INI save target',
+        potentialWrite: true,
+        sourceCandidates,
+        changeCategory: 'changed',
+        animationIni: true
+      };
+      out.push(potential);
+      byPath.set(targetPath, potential);
+    });
+  }
+
+  collectPendingWritePathsFromDirtyTabs().forEach((pathValue) => {
+    const existing = byPath.get(pathValue);
+    if (existing) {
+      existing.changeCategory = existing.changeCategory || 'changed';
+      if (!existing.note) existing.note = 'Pending save target';
+      return;
+    }
+    const classification = classifyReadFilePath(pathValue);
+    const pendingEntry = {
+      path: pathValue,
+      kind: getFilesEntryKind(pathValue, classification),
+      note: 'Pending save target',
+      changeCategory: 'changed',
+      animationIni: isAnimationIniPath(pathValue)
+    };
+    out.push(pendingEntry);
+    byPath.set(pathValue, pendingEntry);
+  });
+
+  return out.sort((a, b) => {
+    const scopePriority = { core: 0, scenario: 1, c3x: 2, external: 3 };
+    const aScope = classifyReadFilePath(a.path).scope;
+    const bScope = classifyReadFilePath(b.path).scope;
+    const aScopePri = Object.prototype.hasOwnProperty.call(scopePriority, aScope) ? scopePriority[aScope] : 9;
+    const bScopePri = Object.prototype.hasOwnProperty.call(scopePriority, bScope) ? scopePriority[bScope] : 9;
+    if (aScopePri !== bScopePri) return aScopePri - bScopePri;
+    return String(a.path || '').localeCompare(String(b.path || ''), 'en', { sensitivity: 'base' });
+  });
+}
+
+function markFilesReadEntriesDirty() {
+  state.filesReadEntriesCacheDirty = true;
+}
+
+function getFilesModalEntriesCached() {
+  if (!state.filesReadEntriesCacheDirty && Array.isArray(state.filesReadEntriesCache)) {
+    return state.filesReadEntriesCache;
+  }
+  const next = collectFilesModalEntries();
+  state.filesReadEntriesCache = next;
+  state.filesReadEntriesCacheDirty = false;
+  return next;
+}
+
+function scheduleFilesReadModalRender(delayMs = 0) {
+  if (state.filesReadRenderTimer) {
+    window.clearTimeout(state.filesReadRenderTimer);
+    state.filesReadRenderTimer = null;
+  }
+  state.filesReadRenderTimer = window.setTimeout(() => {
+    state.filesReadRenderTimer = null;
+    renderFilesReadModal();
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
+function shouldWarnForAccessIssue(entry, classification, access) {
+  if (!classification || !access || classification.scope === 'core') return false;
+  if (isProtectedC3xDefaultPathLocal(entry && entry.path)) return false;
+  if (classification.scope !== 'scenario' && classification.scope !== 'c3x') return false;
+  if (access.exists) return !access.writable;
+  if (entry && entry.potentialWrite) return access.parentWritable === false;
+  return false;
+}
+
+function getDefaultFilesReadFiltersForMode(mode) {
+  const scenarioMode = String(mode || '').toLowerCase() === 'scenario';
+  return {
+    locationCore: !scenarioMode,
+    locationScenario: scenarioMode,
+    locationC3x: true,
+    locationExternal: false,
+    typeConfigIni: true,
+    typeAnimationIni: false,
+    typeText: true,
+    typeBiq: true,
+    statusNew: false,
+    statusChanged: false,
+    statusUnchanged: false,
+    statusRisk: false
+  };
+}
+
+function resetFilesReadFiltersForCurrentMode() {
+  const mode = state.settings && state.settings.mode ? state.settings.mode : 'global';
+  state.filesReadFilters = getDefaultFilesReadFiltersForMode(mode);
+}
+
+function buildFilesRowTooltip(entry, classification, access) {
+  const lines = [];
+  const hasExistingSource = !!(entry && entry.potentialWrite && Array.isArray(entry.sourceCandidates)
+    && entry.sourceCandidates.some((candidate) => {
+      const a = state.filesReadAccessByPath[String(candidate || '').trim()];
+      return !!(a && a.exists);
+    }));
+  lines.push(`Scope: ${classification && classification.title ? classification.title : 'Unknown'}`);
+  if (entry && entry.note) lines.push(`Note: ${entry.note}`);
+  if (classification && (classification.scope === 'core' || isProtectedC3xDefaultPathLocal(entry && entry.path))) {
+    lines.push('Access: Read-Only');
+  } else if (access && access.exists) {
+    lines.push(`Disk Access: ${access.writable ? 'Writable' : 'Read-only'}`);
+  } else if (access && !access.exists) {
+    if (entry && entry.potentialWrite && access.parentPath) {
+      lines.push(hasExistingSource
+        ? 'Target Missing: yes (will create scenario override if saved)'
+        : 'Target Missing: yes (will be created if saved)');
+      lines.push(`Create Location: ${access.parentPath}`);
+      lines.push(`Create Access: ${access.parentWritable ? 'allowed' : 'blocked (read-only)'}`);
+      if (hasExistingSource) {
+        const sourcePath = entry.sourceCandidates.find((candidate) => {
+          const a = state.filesReadAccessByPath[String(candidate || '').trim()];
+          return !!(a && a.exists);
+        });
+        if (sourcePath) lines.push(`Existing Source: ${sourcePath}`);
+      }
+    } else {
+      lines.push('Disk Access: Missing');
+    }
+  } else {
+    lines.push('Disk Access: Unknown');
+  }
+  lines.push(`Path: ${entry && entry.path ? entry.path : ''}`);
+  return lines.join('\n');
+}
+
+function syncFilesReadFilterInputs() {
+  if (el.filesFilterCore) el.filesFilterCore.checked = !!state.filesReadFilters.locationCore;
+  if (el.filesFilterScenario) el.filesFilterScenario.checked = !!state.filesReadFilters.locationScenario;
+  if (el.filesFilterC3x) el.filesFilterC3x.checked = !!state.filesReadFilters.locationC3x;
+  if (el.filesFilterExternal) el.filesFilterExternal.checked = !!state.filesReadFilters.locationExternal;
+  if (el.filesFilterTypeConfigIni) el.filesFilterTypeConfigIni.checked = !!state.filesReadFilters.typeConfigIni;
+  if (el.filesFilterTypeAnimationIni) el.filesFilterTypeAnimationIni.checked = !!state.filesReadFilters.typeAnimationIni;
+  if (el.filesFilterTypeText) el.filesFilterTypeText.checked = !!state.filesReadFilters.typeText;
+  if (el.filesFilterTypeBiq) el.filesFilterTypeBiq.checked = !!state.filesReadFilters.typeBiq;
+  if (el.filesFilterStatusNew) el.filesFilterStatusNew.checked = !!state.filesReadFilters.statusNew;
+  if (el.filesFilterStatusChanged) el.filesFilterStatusChanged.checked = !!state.filesReadFilters.statusChanged;
+  if (el.filesFilterStatusUnchanged) el.filesFilterStatusUnchanged.checked = !!state.filesReadFilters.statusUnchanged;
+  if (el.filesFilterStatusRisk) el.filesFilterStatusRisk.checked = !!state.filesReadFilters.statusRisk;
+}
+
+function getFilesEntryFileType(entry, classification) {
+  const pathValue = String(entry && entry.path || '').trim().toLowerCase();
+  if (/\.biq$/i.test(pathValue)) return 'biq';
+  if (isAnimationIniEntry(entry)) return 'animationIni';
+  if (/\.txt$/i.test(pathValue)) return 'text';
+  if (/\.ini$/i.test(pathValue) && classification && classification.scope === 'c3x') return 'configIni';
+  return 'other';
+}
+
+function getFilesEntryStatuses(entry, classification, access) {
+  const out = new Set();
+  const changeCategory = getFilesEntryChangeCategory(entry, access);
+  if (changeCategory === 'new') out.add('new');
+  else if (changeCategory === 'changed') out.add('changed');
+  else out.add('unchanged');
+  if (shouldWarnForAccessIssue(entry, classification, access)) out.add('risk');
+  return out;
+}
+
+function shouldIncludeFilesEntryByFilter(entry) {
+  if (!entry) return false;
+  const f = state.filesReadFilters || {};
+  const query = String(state.filesReadSearchQuery || '').trim().toLowerCase();
+  const access = state.filesReadAccessByPath[String(entry.path || '').trim()] || null;
+  const classification = classifyReadFilePath(entry.path);
+  const fileType = getFilesEntryFileType(entry, classification);
+  const statuses = getFilesEntryStatuses(entry, classification, access);
+
+  const selectedLocations = [];
+  if (f.locationCore) selectedLocations.push('core');
+  if (f.locationScenario) selectedLocations.push('scenario');
+  if (f.locationC3x) selectedLocations.push('c3x');
+  if (f.locationExternal) selectedLocations.push('external');
+  if (selectedLocations.length > 0 && !selectedLocations.includes(classification.scope)) return false;
+
+  const selectedTypes = [];
+  if (f.typeConfigIni) selectedTypes.push('configIni');
+  if (f.typeAnimationIni) selectedTypes.push('animationIni');
+  if (f.typeText) selectedTypes.push('text');
+  if (f.typeBiq) selectedTypes.push('biq');
+  if (selectedTypes.length > 0 && !selectedTypes.includes(fileType)) return false;
+
+  const selectedStatuses = [];
+  if (f.statusNew) selectedStatuses.push('new');
+  if (f.statusChanged) selectedStatuses.push('changed');
+  if (f.statusUnchanged) selectedStatuses.push('unchanged');
+  if (f.statusRisk) selectedStatuses.push('risk');
+  if (selectedStatuses.length > 0) {
+    const anyStatusMatch = selectedStatuses.some((status) => statuses.has(status));
+    if (!anyStatusMatch) return false;
+  }
+
+  if (query) {
+    const pathText = String(entry.path || '').toLowerCase();
+    const compactPathText = String(compactPathFromCiv3Root(entry.path) || '').toLowerCase();
+    const noteText = String(entry.note || '').toLowerCase();
+    const scopeText = String(classification.scope || '').toLowerCase();
+    const fileTypeText = String(fileType || '').toLowerCase();
+    const statusText = Array.from(statuses).join(' ').toLowerCase();
+    const haystack = `${pathText} ${compactPathText} ${noteText} ${scopeText} ${fileTypeText} ${statusText}`;
+    if (!haystack.includes(query)) return false;
+  }
+
+  return true;
+}
+
+function updateFilesReadIssueBadge() {
+  if (!el.filesReadToggle) return;
+  const count = Number(state.filesReadIssueCount || 0);
+  if (count > 0) {
+    const label = count > 99 ? '99+' : String(count);
+    el.filesReadToggle.classList.add('has-issue');
+    el.filesReadToggle.setAttribute('data-issue-count', label);
+    el.filesReadToggle.setAttribute('title', `Show files read (${count} potential save issue${count === 1 ? '' : 's'})`);
+    return;
+  }
+  el.filesReadToggle.classList.remove('has-issue');
+  el.filesReadToggle.removeAttribute('data-issue-count');
+  el.filesReadToggle.setAttribute('title', 'Show files read');
+}
+
+function recomputeFilesReadIssueCount() {
+  const files = getFilesModalEntriesCached();
+  let count = 0;
+  files.forEach((entry) => {
+    const classification = classifyReadFilePath(entry.path);
+    const access = state.filesReadAccessByPath[String(entry.path || '')];
+    if (shouldWarnForAccessIssue(entry, classification, access)) count += 1;
+  });
+  state.filesReadIssueCount = count;
+  updateFilesReadIssueBadge();
+}
+
+async function refreshFilesReadAccess() {
+  const accessTargets = new Set();
+  getFilesModalEntriesCached().forEach((entry) => {
+    const classification = classifyReadFilePath(entry.path);
+    if (classification.scope !== 'core' && !isProtectedC3xDefaultPathLocal(entry.path)) {
+      accessTargets.add(entry.path);
+    }
+    if (entry && entry.potentialWrite && Array.isArray(entry.sourceCandidates)) {
+      entry.sourceCandidates.forEach((candidate) => {
+        const p = String(candidate || '').trim();
+        if (!p) return;
+        accessTargets.add(p);
+      });
+    }
+  });
+  const unitEntries = (state.bundle && state.bundle.tabs && state.bundle.tabs.units && Array.isArray(state.bundle.tabs.units.entries))
+    ? state.bundle.tabs.units.entries
+    : [];
+  unitEntries.forEach((entry) => {
+    const animationName = String(entry && entry.animationName || '').trim();
+    if (!animationName) return;
+    getUnitIniSourceCandidates(animationName).forEach((candidate) => {
+      const p = String(candidate || '').trim();
+      if (!p) return;
+      accessTargets.add(p);
+    });
+  });
+  const files = Array.from(accessTargets);
+  if (!files.length || !window.c3xManager || typeof window.c3xManager.getPathAccess !== 'function') {
+    state.filesReadAccessByPath = {};
+    state.filesReadIssueCount = 0;
+    updateFilesReadIssueBadge();
+    return;
+  }
+  const requestId = Number(state.filesReadAccessRequestId || 0) + 1;
+  state.filesReadAccessRequestId = requestId;
+  try {
+    const accessByPath = await window.c3xManager.getPathAccess(files);
+    if (state.filesReadAccessRequestId !== requestId) return;
+    state.filesReadAccessByPath = accessByPath && typeof accessByPath === 'object' ? accessByPath : {};
+  } catch (_err) {
+    if (state.filesReadAccessRequestId !== requestId) return;
+    state.filesReadAccessByPath = {};
+  }
+  markFilesReadEntriesDirty();
+  recomputeFilesReadIssueCount();
+  if (el.filesReadModalOverlay && !el.filesReadModalOverlay.classList.contains('hidden')) {
+    scheduleFilesReadModalRender();
+  }
+}
+
+function renderFilesReadModal() {
+  if (!el.filesReadList || !el.filesReadModalBody) return;
+  syncFilesReadFilterInputs();
+  if (el.filesReadSearchInput) {
+    const nextSearch = String(state.filesReadSearchInputMirror || state.filesReadSearchQuery || '');
+    if (el.filesReadSearchInput.value !== nextSearch) el.filesReadSearchInput.value = nextSearch;
+  }
+  const entries = getFilesModalEntriesCached();
+  const filteredEntries = entries.filter((entry) => shouldIncludeFilesEntryByFilter(entry));
+  const shownCount = filteredEntries.length;
+  const totalCount = entries.length;
+  const readCount = entries.filter((entry) => {
+    const classification = classifyReadFilePath(entry.path);
+    return classification.scope === 'core' || isProtectedC3xDefaultPathLocal(entry.path);
+  }).length;
+  const writeCount = entries.length - readCount;
+  const modeLabel = (state.settings && state.settings.mode === 'scenario') ? 'Scenario' : 'Standard game';
+  const issueCount = Number(state.filesReadIssueCount || 0);
+  const shownPrefix = `Showing ${shownCount} of ${totalCount} file${totalCount === 1 ? '' : 's'}. `;
+  if (!state.bundle) {
+    el.filesReadModalBody.textContent = 'Load configs to view files read.';
+  } else if (issueCount > 0) {
+    el.filesReadModalBody.textContent = `${shownPrefix}${modeLabel} loaded ${readCount} read-only file${readCount === 1 ? '' : 's'}${writeCount > 0 ? ` and ${writeCount} write target${writeCount === 1 ? '' : 's'}` : ''}. ${issueCount} potential save issue${issueCount === 1 ? '' : 's'} detected (read-only on disk).`;
+  } else {
+    el.filesReadModalBody.textContent = `${shownPrefix}${modeLabel} loaded ${readCount} read-only file${readCount === 1 ? '' : 's'}${writeCount > 0 ? ` and ${writeCount} write target${writeCount === 1 ? '' : 's'}` : ''}.`;
+  }
+  el.filesReadList.innerHTML = '';
+  if (filteredEntries.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'files-read-empty';
+    empty.textContent = state.bundle ? 'No files match current filters.' : 'No loaded bundle yet.';
+    el.filesReadList.appendChild(empty);
+    return;
+  }
+  filteredEntries.forEach((entry) => {
+    const li = document.createElement('li');
+    const pathValue = String(entry.path || '');
+    const access = state.filesReadAccessByPath[pathValue] || null;
+    const classification = classifyReadFilePath(pathValue);
+    const issue = shouldWarnForAccessIssue(entry, classification, access);
+    const changeCategory = getFilesEntryChangeCategory(entry, access);
+    li.className = `files-read-item scope-${classification.scope}${issue ? ' has-issue' : ''}${changeCategory === 'new' ? ' change-new' : ''}${changeCategory === 'changed' ? ' change-changed' : ''}`;
+
+    const top = document.createElement('div');
+    top.className = 'files-read-item-top';
+    const pathEl = document.createElement('code');
+    pathEl.className = 'files-read-path';
+    pathEl.textContent = compactPathFromCiv3Root(pathValue) || pathValue;
+    if (isOpenableFilesReadPath(pathValue) && window.c3xManager && typeof window.c3xManager.openFilePath === 'function') {
+      pathEl.classList.add('clickable');
+      pathEl.title = 'Open file';
+      pathEl.addEventListener('click', async () => {
+        const opened = await window.c3xManager.openFilePath(pathValue);
+        if (!opened || !opened.ok) {
+          setStatus(`Could not open file: ${(opened && opened.error) || 'unknown error'}`, true);
+        }
+      });
+    }
+    attachRichTooltip(pathEl, buildFilesRowTooltip(entry, classification, access));
+    top.appendChild(pathEl);
+    if (issue) {
+      const issueBadge = document.createElement('span');
+      issueBadge.className = 'files-read-badge warn';
+      issueBadge.textContent = 'Save Risk';
+      top.appendChild(issueBadge);
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'files-read-item-meta';
+    const scopeBadge = document.createElement('span');
+    scopeBadge.className = `files-read-badge scope-${classification.scope}`;
+    scopeBadge.textContent = classification.title;
+    meta.appendChild(scopeBadge);
+
+    const changeBadge = document.createElement('span');
+    if (changeCategory === 'new' || changeCategory === 'changed') {
+      const isNew = changeCategory === 'new';
+      changeBadge.className = `files-read-badge ${isNew ? 'change-new' : 'change-changed'}`;
+      changeBadge.textContent = isNew ? 'New' : 'Changed';
+      meta.appendChild(changeBadge);
+    }
+
+    const accessBadge = document.createElement('span');
+    const hasExistingSource = !!(entry && entry.potentialWrite && Array.isArray(entry.sourceCandidates)
+      && entry.sourceCandidates.some((candidate) => {
+        const a = state.filesReadAccessByPath[String(candidate || '').trim()];
+        return !!(a && a.exists);
+      }));
+    if (classification.scope === 'core' || isProtectedC3xDefaultPathLocal(pathValue)) {
+      accessBadge.className = 'files-read-badge neutral';
+      accessBadge.textContent = 'Read-Only';
+    } else if (access && access.exists) {
+      accessBadge.className = `files-read-badge ${access.writable ? 'ok' : 'warn'}`;
+      accessBadge.textContent = access.writable ? 'Writable' : 'Read-only on disk';
+    } else if (access && !access.exists) {
+      if (entry.potentialWrite && access.parentPath) {
+        accessBadge.className = `files-read-badge ${access.parentWritable ? 'ok' : 'warn'}`;
+        if (hasExistingSource) {
+          accessBadge.textContent = access.parentWritable ? 'Creates override on save' : 'Cannot create override';
+        } else {
+          accessBadge.textContent = access.parentWritable ? 'Will create on save' : 'Cannot create (read-only)';
+        }
+      } else {
+        accessBadge.className = 'files-read-badge neutral';
+        accessBadge.textContent = 'Missing';
+      }
+    } else {
+      accessBadge.className = 'files-read-badge neutral';
+      accessBadge.textContent = 'Access unknown';
+    }
+    meta.appendChild(accessBadge);
+
+    li.appendChild(top);
+    li.appendChild(meta);
+    el.filesReadList.appendChild(li);
+  });
+}
+
+function openFilesReadModal() {
+  if (!el.filesReadModalOverlay) return;
+  renderFilesReadModal();
+  el.filesReadModalOverlay.classList.remove('hidden');
+  el.filesReadModalOverlay.setAttribute('aria-hidden', 'false');
+}
+
+function closeFilesReadModal() {
+  if (!el.filesReadModalOverlay) return;
+  el.filesReadModalOverlay.classList.add('hidden');
+  el.filesReadModalOverlay.setAttribute('aria-hidden', 'true');
+}
+
+function animateCopyDebugLogButton() {
+  if (!el.copyDebugLog) return;
+  el.copyDebugLog.classList.remove('copied');
+  void el.copyDebugLog.offsetWidth;
+  el.copyDebugLog.classList.add('copied');
+  if (state.copyDebugFeedbackTimer) {
+    window.clearTimeout(state.copyDebugFeedbackTimer);
+  }
+  state.copyDebugFeedbackTimer = window.setTimeout(() => {
+    if (el.copyDebugLog) el.copyDebugLog.classList.remove('copied');
+    state.copyDebugFeedbackTimer = null;
+  }, 950);
+}
+
 function setReferenceNotice(text, isError = false, rerender = true) {
   state.referenceNotice = text ? { text, isError } : null;
   if (rerender && state.bundle && state.bundle.tabs && state.activeTab && state.bundle.tabs[state.activeTab] && state.bundle.tabs[state.activeTab].type === 'reference') {
@@ -922,6 +1682,7 @@ function captureCleanSnapshot() {
 }
 
 function setDirty(next) {
+  markFilesReadEntriesDirty();
   if (state.isRendering || !state.trackDirty || state.suppressDirtyUntilInteraction) return;
   if (!next) {
     state.isDirty = false;
@@ -1565,6 +2326,12 @@ function clearBundleView() {
   if (el.workspace) el.workspace.classList.add('hidden');
   state.navHistory = [];
   state.navHistoryIndex = -1;
+  state.filesReadAccessByPath = {};
+  state.filesReadIssueCount = 0;
+  state.filesReadEntriesCache = null;
+  state.filesReadEntriesCacheDirty = true;
+  updateFilesReadIssueBadge();
+  renderFilesReadModal();
   updateNavButtons();
   updateScrollTopFab();
 }
@@ -2030,6 +2797,7 @@ function queueAutoReload(reason, delayMs = 320) {
 
 function setMode(mode) {
   state.settings.mode = mode;
+  resetFilesReadFiltersForCurrentMode();
   el.modeGlobal.classList.toggle('active', mode === 'global');
   if (el.modeScenarioSelect) {
     el.modeScenarioSelect.classList.toggle('active', mode === 'scenario');
@@ -3959,14 +4727,59 @@ function isAbsoluteSlashPath(value) {
   return /^([a-zA-Z]:\/|\/)/.test(s);
 }
 
+function getScenarioBiqStemFromState() {
+  const raw = toSlashPath((state.bundle && state.bundle.scenarioInputPath)
+    || (state.settings && state.settings.scenarioPath)
+    || '').trim();
+  if (!/\.biq$/i.test(raw)) return '';
+  const base = raw.split('/').pop() || '';
+  return base.replace(/\.biq$/i, '').trim();
+}
+
+function getActiveScenarioDir() {
+  const bundlePath = toSlashPath(state.bundle && state.bundle.scenarioPath || '').trim();
+  if (bundlePath) return bundlePath.replace(/\/+$/, '');
+  const inferred = inferScenarioDirFromInput(state.settings && state.settings.scenarioPath || '');
+  if (!inferred) return '';
+  const stem = getScenarioBiqStemFromState();
+  if (stem && /\/conquests\/scenarios$/i.test(inferred)) return `${inferred}/${stem}`;
+  return inferred;
+}
+
+function isAnimationIniPath(filePath) {
+  const p = toSlashPath(filePath).trim().toLowerCase();
+  return p.endsWith('.ini') && p.includes('/art/units/');
+}
+
+function isAnimationIniEntry(entry) {
+  if (!entry) return false;
+  if (entry.animationIni) return true;
+  return isAnimationIniPath(entry.path);
+}
+
 function getUnitIniTargetPath(animationName) {
   const name = String(animationName || '').trim();
   if (!name) return '';
-  const scenarioDir = inferScenarioDirFromInput(state.settings && state.settings.scenarioPath || '');
+  const scenarioDir = getActiveScenarioDir();
   if (scenarioDir) return `${scenarioDir.replace(/\/+$/, '')}/Art/Units/${name}/${name}.ini`;
   const civ3 = toSlashPath(state.settings && state.settings.civ3Path || '').replace(/\/+$/, '');
   if (civ3) return `${civ3}/Conquests/Art/Units/${name}/${name}.ini`;
   return '';
+}
+
+function getUnitIniSourceCandidates(animationName) {
+  const name = String(animationName || '').trim();
+  if (!name) return [];
+  const out = [];
+  const scenarioDir = getActiveScenarioDir();
+  const civ3 = toSlashPath(state.settings && state.settings.civ3Path || '').replace(/\/+$/, '');
+  if (scenarioDir) out.push(`${scenarioDir.replace(/\/+$/, '')}/Art/Units/${name}/${name}.ini`);
+  if (civ3) {
+    out.push(`${civ3}/Conquests/Art/Units/${name}/${name}.ini`);
+    out.push(`${civ3}/civ3PTW/Art/Units/${name}/${name}.ini`);
+    out.push(`${civ3}/Art/Units/${name}/${name}.ini`);
+  }
+  return Array.from(new Set(out.filter(Boolean)));
 }
 
 function resolveUnitIniValuePath(iniPath, value, fallbackIniPath = '') {
@@ -4926,7 +5739,7 @@ function toPediaRelativeAssetPath(absPath) {
   const full = toSlashPath(absPath).trim();
   if (!full) return '';
   const civ3Root = toSlashPath(state.settings && state.settings.civ3Path || '');
-  const scenarioDir = inferScenarioDirFromInput(state.settings && state.settings.scenarioPath || '');
+  const scenarioDir = getActiveScenarioDir();
   const roots = [];
   if (scenarioDir) roots.push(scenarioDir);
   if (civ3Root) {
@@ -4964,7 +5777,7 @@ async function resolveExistingAssetPath(assetPath) {
   const rel = normalizeRelativePath(assetPath);
   if (!rel) return '';
   const roots = [];
-  const scenarioDir = inferScenarioDirFromInput(state.settings && state.settings.scenarioPath || '');
+  const scenarioDir = getActiveScenarioDir();
   const civ3Root = toSlashPath(state.settings && state.settings.civ3Path || '');
   if (scenarioDir) roots.push(scenarioDir);
   if (civ3Root) {
@@ -8325,6 +9138,11 @@ function renderMapModalBody() {
 }
 
 function closeMapModal() {
+  if (state.biqMapZoomAnimRaf) {
+    window.cancelAnimationFrame(state.biqMapZoomAnimRaf);
+    state.biqMapZoomAnimRaf = 0;
+  }
+  state.biqMapZoomAnim = null;
   const overlay = ensureMapModalNode();
   overlay.classList.add('hidden');
   overlay.setAttribute('aria-hidden', 'true');
@@ -11955,7 +12773,29 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     state.biqMapSelectedTile = Math.floor(maxIdx / 2);
   }
   const selectedTile = tiles[state.biqMapSelectedTile] || null;
-  const clampZoom = (z) => Math.max(BIQ_MAP_ZOOM_MIN, Math.min(BIQ_MAP_ZOOM_MAX, Number(z) || state.biqMapZoom || 6));
+  const clampZoom = (z) => {
+    const raw = Math.max(BIQ_MAP_ZOOM_MIN, Math.min(BIQ_MAP_ZOOM_MAX, Number(z) || state.biqMapZoom || 6));
+    let best = BIQ_MAP_ZOOM_LEVELS[0];
+    let bestDist = Math.abs(raw - best);
+    for (let i = 1; i < BIQ_MAP_ZOOM_LEVELS.length; i += 1) {
+      const candidate = BIQ_MAP_ZOOM_LEVELS[i];
+      const dist = Math.abs(raw - candidate);
+      if (dist < bestDist) {
+        best = candidate;
+        bestDist = dist;
+      }
+    }
+    return best;
+  };
+  const stepZoomLevel = (currentZoom, direction) => {
+    const current = clampZoom(currentZoom);
+    const idx = BIQ_MAP_ZOOM_LEVELS.indexOf(current);
+    const safeIdx = idx >= 0 ? idx : 0;
+    if (direction > 0) {
+      return BIQ_MAP_ZOOM_LEVELS[Math.min(BIQ_MAP_ZOOM_LEVELS.length - 1, safeIdx + 1)];
+    }
+    return BIQ_MAP_ZOOM_LEVELS[Math.max(0, safeIdx - 1)];
+  };
 
   const controls = document.createElement('div');
   controls.className = 'biq-map-toolbar';
@@ -11982,6 +12822,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     rerenderMapView();
   });
   layerLabel.appendChild(layerSelect);
+  const layerIconByValue = {
+    terrain: { glyph: '🗺', tone: 'natural' },
+    resource: { glyph: '💎', tone: 'resource' },
+    owner: { glyph: '👑', tone: 'civ' },
+    continent: { glyph: '🌍', tone: 'world' }
+  };
+  attachMapSelectIcon(layerLabel, layerSelect, (value) => {
+    const spec = layerIconByValue[value] || { glyph: '•', tone: 'neutral' };
+    return makeMapGlyphIcon(spec.glyph, `Layer: ${value}`, spec.tone);
+  });
   controls.appendChild(layerLabel);
 
   const gridWrap = document.createElement('label');
@@ -12053,6 +12903,70 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   if (!Number.isFinite(Number(tool.owner))) tool.owner = 0;
   if (!Number.isFinite(Number(tool.unitType))) tool.unitType = 0;
 
+  function makeMapGlyphIcon(glyph, title = '', tone = '') {
+    const icon = document.createElement('span');
+    icon.className = 'map-select-icon map-select-icon-glyph';
+    if (tone) icon.dataset.tone = tone;
+    icon.textContent = glyph || '•';
+    if (title) icon.title = title;
+    return icon;
+  }
+  function makeMapColorIcon(seed, title = '') {
+    const icon = document.createElement('span');
+    icon.className = 'map-select-icon map-select-icon-color';
+    icon.style.background = colorFromNumber(seed);
+    if (title) icon.title = title;
+    return icon;
+  }
+  function makeMapAtlasSpriteIcon(assetKey, spriteW, spriteH, spriteIndex, title = '') {
+    const holder = document.createElement('span');
+    holder.className = 'map-select-icon map-select-icon-atlas';
+    if (title) holder.title = title;
+    const atlas = state.biqMapArtCache && state.biqMapArtCache[assetKey];
+    if (!atlas || !Number.isFinite(spriteIndex) || spriteIndex < 0) {
+      holder.appendChild(makeMapGlyphIcon('?', title || '', 'neutral'));
+      return holder;
+    }
+    const cols = Math.max(1, Math.floor(atlas.width / spriteW));
+    const row = Math.floor(spriteIndex / cols);
+    const col = spriteIndex % cols;
+    const sx = col * spriteW;
+    const sy = row * spriteH;
+    if (sx + spriteW > atlas.width || sy + spriteH > atlas.height) {
+      holder.appendChild(makeMapGlyphIcon('?', title || '', 'neutral'));
+      return holder;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.className = 'entry-thumb-canvas';
+    canvas.width = 14;
+    canvas.height = 14;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(atlas, sx, sy, spriteW, spriteH, 0, 0, canvas.width, canvas.height);
+    }
+    holder.innerHTML = '';
+    holder.appendChild(canvas);
+    return holder;
+  }
+  function attachMapSelectIcon(labelWrap, select, iconRenderer) {
+    if (!labelWrap || !select || typeof iconRenderer !== 'function') return;
+    const iconHost = document.createElement('span');
+    iconHost.className = 'map-select-icon-host';
+    const refresh = () => {
+      iconHost.innerHTML = '';
+      const iconNode = iconRenderer(String(select.value || '')) || makeMapGlyphIcon('•');
+      iconHost.appendChild(iconNode);
+    };
+    if (select.parentNode === labelWrap) {
+      labelWrap.insertBefore(iconHost, select);
+    } else {
+      labelWrap.appendChild(iconHost);
+    }
+    refresh();
+    select.addEventListener('change', refresh);
+  }
+
   const toolRow = document.createElement('div');
   toolRow.className = 'biq-map-toolbar map-tool-row';
 
@@ -12080,6 +12994,19 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     rerenderMapView();
   });
   modeWrap.appendChild(modeSelect);
+  const toolIconByValue = {
+    select: { glyph: '🖱', tone: 'neutral' },
+    terrain: { glyph: '🗺', tone: 'natural' },
+    overlay: { glyph: '🛠', tone: 'resource' },
+    fog: { glyph: '🌫', tone: 'world' },
+    district: { glyph: '🏙', tone: 'civ' },
+    city: { glyph: '🏛', tone: 'civ' },
+    unit: { glyph: '⚔', tone: 'resource' }
+  };
+  attachMapSelectIcon(modeWrap, modeSelect, (value) => {
+    const spec = toolIconByValue[value] || { glyph: '•', tone: 'neutral' };
+    return makeMapGlyphIcon(spec.glyph, `Tool: ${value}`, spec.tone);
+  });
   toolRow.appendChild(modeWrap);
 
   const sizeWrap = document.createElement('label');
@@ -12116,6 +13043,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     state.mapEditorTool.terrainCode = parseIntLoose(terrainSelect.value, 0);
   });
   terrainWrap.appendChild(terrainSelect);
+  attachMapSelectIcon(terrainWrap, terrainSelect, (value) => {
+    const idx = parseIntLoose(value, -1);
+    const record = terrainRecordsForPicker[idx] || null;
+    if (record) return makeTerrainOptionPreviewIcon(String(record.name || `Terrain ${idx}`));
+    return makeMapGlyphIcon('🗺', 'Terrain', 'natural');
+  });
   toolRow.appendChild(terrainWrap);
 
   const overlayWrap = document.createElement('label');
@@ -12151,6 +13084,26 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     state.mapEditorTool.overlayType = overlaySelect.value;
   });
   overlayWrap.appendChild(overlaySelect);
+  const overlayIconByValue = {
+    road: '🛣',
+    railroad: '🚆',
+    mine: '⛏',
+    irrigation: '💧',
+    fort: '🛡',
+    barricade: '🚧',
+    barbariancamp: '⚑',
+    goodyhut: '🎁',
+    pollution: '☣',
+    crater: '🕳',
+    airfield: '🛩',
+    radartower: '📡',
+    outpost: '🏕',
+    colony: '🏴',
+    victorypoint: '⭐',
+    ruins: '🏚',
+    startinglocation: '📍'
+  };
+  attachMapSelectIcon(overlayWrap, overlaySelect, (value) => makeMapGlyphIcon(overlayIconByValue[value] || '🧱', `Overlay: ${value}`, 'resource'));
   toolRow.appendChild(overlayWrap);
 
   const fogWrap = document.createElement('label');
@@ -12168,6 +13121,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     state.mapEditorTool.fogMode = fogSelect.value;
   });
   fogWrap.appendChild(fogSelect);
+  attachMapSelectIcon(fogWrap, fogSelect, (value) => makeMapGlyphIcon(value === 'remove' ? '☀' : '🌫', `Fog: ${value}`, 'world'));
   toolRow.appendChild(fogWrap);
 
   const districtWrap = document.createElement('label');
@@ -12196,6 +13150,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     state.mapEditorTool.districtType = parseIntLoose(districtSelect.value, 0);
   });
   districtWrap.appendChild(districtSelect);
+  attachMapSelectIcon(districtWrap, districtSelect, (value) => {
+    const idx = parseIntLoose(value, -1);
+    const entry = districtEntries[idx] || null;
+    if (entry && entry.name) return makeDistrictOptionPreviewIcon(entry.name);
+    return makeMapGlyphIcon('🏙', 'District', 'civ');
+  });
   toolRow.appendChild(districtWrap);
 
   const ownerWrap = document.createElement('label');
@@ -12221,6 +13181,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     state.mapEditorTool.owner = parseIntLoose(ownerSelect.value, 0);
   });
   ownerWrap.appendChild(ownerSelect);
+  attachMapSelectIcon(ownerWrap, ownerSelect, (value) => {
+    const idx = parseIntLoose(value, 0);
+    const rec = leadRecordsForOwner[idx] || null;
+    const title = rec ? String(rec.name || `Owner ${idx}`) : `Owner ${idx}`;
+    return makeMapColorIcon(idx + 1, title);
+  });
   toolRow.appendChild(ownerWrap);
 
   const ownerTypeWrap = document.createElement('label');
@@ -12243,6 +13209,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     state.mapEditorTool.ownerType = parseIntLoose(ownerTypeSelect.value, 1);
   });
   ownerTypeWrap.appendChild(ownerTypeSelect);
+  const ownerTypeIconByValue = {
+    '0': { glyph: '∅', tone: 'neutral' },
+    '1': { glyph: '⚔', tone: 'resource' },
+    '3': { glyph: '👤', tone: 'civ' },
+    '2': { glyph: '🏛', tone: 'civ' }
+  };
+  attachMapSelectIcon(ownerTypeWrap, ownerTypeSelect, (value) => {
+    const spec = ownerTypeIconByValue[value] || { glyph: '?', tone: 'neutral' };
+    return makeMapGlyphIcon(spec.glyph, `Owner type: ${value}`, spec.tone);
+  });
   toolRow.appendChild(ownerTypeWrap);
 
   const unitWrap = document.createElement('label');
@@ -12251,23 +13227,36 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const unitSelect = document.createElement('select');
   const unitSectionForPicker = (tab.sections || []).find((s) => s.code === 'PRTO');
   const unitRecordsForPicker = unitSectionForPicker && Array.isArray(unitSectionForPicker.records) ? unitSectionForPicker.records : [];
+  const mapToolUnitIconById = {};
   unitRecordsForPicker.forEach((record, idx) => {
     const o = document.createElement('option');
     o.value = String(idx);
     o.textContent = String(record && record.name || `Unit ${idx}`);
     unitSelect.appendChild(o);
+    mapToolUnitIconById[idx] = parseIntLoose(getFieldByBaseKey(record, 'iconindex')?.value, -1);
   });
   if (unitRecordsForPicker.length === 0) {
     const o = document.createElement('option');
     o.value = '0';
     o.textContent = 'Unit 0';
     unitSelect.appendChild(o);
+    mapToolUnitIconById[0] = -1;
   }
   unitSelect.value = String(Number(tool.unitType) || 0);
   unitSelect.addEventListener('change', () => {
     state.mapEditorTool.unitType = parseIntLoose(unitSelect.value, 0);
   });
   unitWrap.appendChild(unitSelect);
+  attachMapSelectIcon(unitWrap, unitSelect, (value) => {
+    const idx = parseIntLoose(value, 0);
+    const rec = unitRecordsForPicker[idx] || null;
+    const title = rec ? String(rec.name || `Unit ${idx}`) : `Unit ${idx}`;
+    const iconIdx = mapToolUnitIconById[idx];
+    if (Number.isFinite(iconIdx) && iconIdx >= 0) {
+      return makeMapAtlasSpriteIcon('units32', 32, 32, iconIdx, title);
+    }
+    return makeMapGlyphIcon('⚔', title, 'resource');
+  });
   toolRow.appendChild(unitWrap);
 
   const removeToggle = document.createElement('label');
@@ -12453,20 +13442,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const setMapZoom = (nextZoom, source, paneX, paneY, anchorContent) => {
     const fromZoom = Number(state.biqMapZoom || 6);
     const clamped = clampZoom(nextZoom);
-    if (clamped === fromZoom) return;
+    if (Math.abs(clamped - fromZoom) < 0.001) return;
     const safePaneX = Number.isFinite(paneX) ? paneX : Math.floor(mapPane.clientWidth / 2);
     const safePaneY = Number.isFinite(paneY) ? paneY : Math.floor(mapPane.clientHeight / 2);
-    state.biqMapZoomAnchor = {
-      fromZoom,
-      paneX: safePaneX,
-      paneY: safePaneY,
-      contentX: anchorContent && Number.isFinite(anchorContent.x)
-        ? anchorContent.x
-        : mapPane.scrollLeft + safePaneX,
-      contentY: anchorContent && Number.isFinite(anchorContent.y)
-        ? anchorContent.y
-        : mapPane.scrollTop + safePaneY
-    };
+    const contentX = anchorContent && Number.isFinite(anchorContent.x)
+      ? anchorContent.x
+      : mapPane.scrollLeft + safePaneX;
+    const contentY = anchorContent && Number.isFinite(anchorContent.y)
+      ? anchorContent.y
+      : mapPane.scrollTop + safePaneY;
+    state.biqMapZoomAnchor = { fromZoom, paneX: safePaneX, paneY: safePaneY, contentX, contentY };
     state.biqMapZoom = clamped;
     appendDebugLog('biq-map:zoom-change', { zoom: state.biqMapZoom, source });
     rerenderMapView();
@@ -12482,10 +13467,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const hovered = typeof findTileAtCanvasPx === 'function'
       ? findTileAtCanvasPx(canvasX, canvasY, false)
       : null;
-    const anchorContent = hovered
-      ? { x: hovered.centerX, y: hovered.centerY }
-      : null;
-    const delta = ev.deltaY > 0 ? -1 : 1;
+    const anchorContent = {
+      x: mapPane.scrollLeft + paneX,
+      y: mapPane.scrollTop + paneY
+    };
+    const direction = ev.deltaY < 0 ? 1 : -1;
     if (hovered) {
       appendDebugLog('biq-map:zoom-anchor', {
         index: hovered.index,
@@ -12494,7 +13480,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         centerY: Math.round(hovered.centerY)
       });
     }
-    setMapZoom(Number(state.biqMapZoom || 6) + delta, 'wheel', paneX, paneY, anchorContent);
+    const target = stepZoomLevel(Number(state.biqMapZoom || 6), direction);
+    setMapZoom(target, 'wheel', paneX, paneY, anchorContent);
   }, { passive: false });
 
   const zoomControls = document.createElement('div');
@@ -12507,7 +13494,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   zoomInBtn.addEventListener('click', (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
-    setMapZoom(Number(state.biqMapZoom || 6) + 1, 'button+');
+    setMapZoom(stepZoomLevel(Number(state.biqMapZoom || 6), 1), 'button+');
   });
   const zoomOutBtn = document.createElement('button');
   zoomOutBtn.className = 'biq-map-zoom-btn';
@@ -12517,7 +13504,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   zoomOutBtn.addEventListener('click', (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
-    setMapZoom(Number(state.biqMapZoom || 6) - 1, 'button-');
+    setMapZoom(stepZoomLevel(Number(state.biqMapZoom || 6), -1), 'button-');
   });
   zoomControls.appendChild(zoomInBtn);
   zoomControls.appendChild(zoomOutBtn);
@@ -12577,12 +13564,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     if (key === '+' || key === '=') {
       ev.preventDefault();
-      setMapZoom(Number(state.biqMapZoom || 6) + 1, 'hotkey+');
+      setMapZoom(stepZoomLevel(Number(state.biqMapZoom || 6), 1), 'hotkey+');
       return;
     }
     if (key === '-' || key === '_') {
       ev.preventDefault();
-      setMapZoom(Number(state.biqMapZoom || 6) - 1, 'hotkey-');
+      setMapZoom(stepZoomLevel(Number(state.biqMapZoom || 6), -1), 'hotkey-');
     }
   });
 
@@ -13493,7 +14480,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const anchorContent = hovered
       ? { x: hovered.centerX, y: hovered.centerY }
       : null;
-    setMapZoom(Number(state.biqMapZoom || 6) + 1, 'double-click', paneX, paneY, anchorContent);
+    setMapZoom(stepZoomLevel(Number(state.biqMapZoom || 6), 1), 'double-click', paneX, paneY, anchorContent);
   });
   mapPane.appendChild(canvas);
   mapFrame.appendChild(mapPane);
@@ -13809,6 +14796,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       row.appendChild(label);
       const controls = document.createElement('div');
       controls.className = 'inline-btn-row';
+      const unitTypeSelectWrap = document.createElement('div');
+      unitTypeSelectWrap.className = 'map-inline-select';
       const typeSelect = document.createElement('select');
       prtoRecords.forEach((prto, i) => {
         const o = document.createElement('option');
@@ -13824,7 +14813,18 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         setMapFieldValue(unitRecord, 'prtonumber', typeSelect.value, 'Unit');
         setDirty(true);
       });
-      controls.appendChild(typeSelect);
+      unitTypeSelectWrap.appendChild(typeSelect);
+      attachMapSelectIcon(unitTypeSelectWrap, typeSelect, (value) => {
+        const unitIdx = parseIntLoose(value, 0);
+        const rec = prtoRecords[unitIdx] || null;
+        const title = rec ? String(rec.name || `Unit ${unitIdx}`) : `Unit ${unitIdx}`;
+        const iconIdx = parseIntLoose(getFieldByBaseKey(rec, 'iconindex')?.value, -1);
+        if (Number.isFinite(iconIdx) && iconIdx >= 0) {
+          return makeMapAtlasSpriteIcon('units32', 32, 32, iconIdx, title);
+        }
+        return makeMapGlyphIcon('⚔', title, 'resource');
+      });
+      controls.appendChild(unitTypeSelectWrap);
       const del = document.createElement('button');
       del.type = 'button';
       del.className = 'danger';
@@ -15292,6 +16292,8 @@ async function loadBundleAndRender(options = {}) {
     const shouldUsePersistedView = options && options.usePersistedView === true;
     const persistedView = shouldUsePersistedView ? loadPersistedViewSnapshot() : null;
     state.bundle = bundle;
+    state.filesReadEntriesCache = null;
+    state.filesReadEntriesCacheDirty = true;
     state.isDirty = false;
     state.undoSnapshot = null;
     clearDirtyTabCounts();
@@ -15337,6 +16339,8 @@ async function loadBundleAndRender(options = {}) {
       state.hasAutoCollapsedPaths = true;
     }
     updateModeState(bundle);
+    renderFilesReadModal();
+    void refreshFilesReadAccess();
     setReferenceNotice('Configs loaded.');
     setStatus('Configs loaded. Changes to mode or paths reload automatically.');
   } catch (err) {
@@ -15644,6 +16648,8 @@ async function init() {
   state.trackDirty = false;
   state.suppressDirtyUntilInteraction = true;
   refreshDirtyUi();
+  updateFilesReadIssueBadge();
+  renderFilesReadModal();
   updateNavButtons();
   fillInputsFromSettings();
   setPathsCollapsed(false);
@@ -15786,10 +16792,55 @@ async function init() {
       el.debugLog.textContent = '';
     });
   }
+  if (el.filesReadToggle) {
+    el.filesReadToggle.addEventListener('click', () => {
+      openFilesReadModal();
+    });
+  }
+  if (el.filesReadClose) {
+    el.filesReadClose.addEventListener('click', () => {
+      closeFilesReadModal();
+    });
+  }
+  if (el.filesReadModalOverlay) {
+    el.filesReadModalOverlay.addEventListener('click', (ev) => {
+      if (ev.target === el.filesReadModalOverlay) {
+        closeFilesReadModal();
+      }
+    });
+  }
+  [
+    ['locationCore', el.filesFilterCore],
+    ['locationScenario', el.filesFilterScenario],
+    ['locationC3x', el.filesFilterC3x],
+    ['locationExternal', el.filesFilterExternal],
+    ['typeConfigIni', el.filesFilterTypeConfigIni],
+    ['typeAnimationIni', el.filesFilterTypeAnimationIni],
+    ['typeText', el.filesFilterTypeText],
+    ['typeBiq', el.filesFilterTypeBiq],
+    ['statusNew', el.filesFilterStatusNew],
+    ['statusChanged', el.filesFilterStatusChanged],
+    ['statusUnchanged', el.filesFilterStatusUnchanged],
+    ['statusRisk', el.filesFilterStatusRisk]
+  ].forEach(([key, checkbox]) => {
+    if (!checkbox) return;
+    checkbox.addEventListener('change', () => {
+      state.filesReadFilters[key] = !!checkbox.checked;
+      scheduleFilesReadModalRender(0);
+    });
+  });
+  if (el.filesReadSearchInput) {
+    el.filesReadSearchInput.addEventListener('input', () => {
+      state.filesReadSearchInputMirror = String(el.filesReadSearchInput.value || '');
+      state.filesReadSearchQuery = state.filesReadSearchInputMirror;
+      scheduleFilesReadModalRender(70);
+    });
+  }
   if (el.copyDebugLog) {
     el.copyDebugLog.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(el.debugLog.textContent || '');
+        animateCopyDebugLogButton();
         setStatus('Debug log copied.');
       } catch (_err) {
         setStatus('Could not copy debug log.', true);
@@ -15857,6 +16908,23 @@ async function init() {
     }
     if (state.unsavedModal.open && ev.key === 'Escape') {
       resolveUnsavedChangesModal('cancel');
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+    if (el.filesReadModalOverlay && !el.filesReadModalOverlay.classList.contains('hidden') && ev.key === 'Escape') {
+      if (document.activeElement === el.filesReadSearchInput && el.filesReadSearchInput) {
+        if (el.filesReadSearchInput.value) {
+          el.filesReadSearchInput.value = '';
+          state.filesReadSearchInputMirror = '';
+          state.filesReadSearchQuery = '';
+          scheduleFilesReadModalRender(0);
+        }
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+      closeFilesReadModal();
       ev.preventDefault();
       ev.stopPropagation();
       return;
