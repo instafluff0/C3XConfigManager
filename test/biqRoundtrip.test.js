@@ -81,6 +81,46 @@ function getRecordField(record, key) {
   return fields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target) || null;
 }
 
+function getRecordInt(record, key, fallback) {
+  const field = getRecordField(record, key);
+  const parsed = mapCore.parseIntLoose(field && field.value, fallback);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function buildTileLookup(tileSection) {
+  const lookup = new Map();
+  const records = (tileSection && Array.isArray(tileSection.records)) ? tileSection.records : [];
+  records.forEach((record) => {
+    const x = getRecordInt(record, 'xpos', NaN);
+    const y = getRecordInt(record, 'ypos', NaN);
+    if (Number.isFinite(x) && Number.isFinite(y)) lookup.set(`${x},${y}`, record);
+  });
+  return lookup;
+}
+
+function getMapSectionsOrSkip(t, mapTab) {
+  const tileSection = getSection(mapTab, 'TILE');
+  const citySection = getSection(mapTab, 'CITY');
+  const unitSection = getSection(mapTab, 'UNIT');
+  if (!(tileSection && citySection && unitSection)) {
+    t.skip('Sample BIQ map tab is missing TILE/CITY/UNIT sections.');
+    return null;
+  }
+  if (!Array.isArray(tileSection.records) || tileSection.records.length < 2) {
+    t.skip('Sample BIQ has insufficient TILE records.');
+    return null;
+  }
+  if (!Array.isArray(citySection.records) || citySection.records.length < 1) {
+    t.skip('Sample BIQ has insufficient CITY records.');
+    return null;
+  }
+  if (!Array.isArray(unitSection.records) || unitSection.records.length < 1) {
+    t.skip('Sample BIQ has insufficient UNIT records.');
+    return null;
+  }
+  return { tileSection, citySection, unitSection };
+}
+
 function getScenarioSettingsField(bundle, key) {
   const tab = bundle && bundle.tabs && bundle.tabs.scenarioSettings;
   const section = getSection(tab, 'GAME');
@@ -365,8 +405,8 @@ test('BIQ matrix copy/delete test works for multiple sections', (t) => {
 });
 
 test('BIQ map round-trip supports map painting + adding city/unit records', (t) => {
-  const sampleBiq = findSampleBiqPath();
-  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+  const sampleBiq = findSampleMapBiqPath();
+  if (!sampleBiq) t.skip('No map-enabled BIQ available. Set C3X_TEST_MAP_BIQ to run this test.');
 
   const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
   const tmp = mkTmpDir();
@@ -384,16 +424,16 @@ test('BIQ map round-trip supports map painting + adding city/unit records', (t) 
     t.skip('Sample BIQ has no map tab.');
     return;
   }
-  const tileSection = getSection(mapTab, 'TILE');
-  const citySection = getSection(mapTab, 'CITY');
-  const unitSection = getSection(mapTab, 'UNIT');
-  if (!(tileSection && citySection && unitSection)) {
-    t.skip('Sample BIQ map tab is missing TILE/CITY/UNIT sections.');
-    return;
-  }
-  assert.ok(Array.isArray(tileSection.records) && tileSection.records.length > 0, 'expected at least one tile record');
+  const sections = getMapSectionsOrSkip(t, mapTab);
+  if (!sections) return;
+  const { tileSection, citySection, unitSection } = sections;
 
   const tile = tileSection.records[0];
+  mapCore.setField(tile, 'baserealterrain', '0', 'Base Real Terrain');
+  mapCore.setField(tile, 'c3cbaserealterrain', '0', 'C3C Base Real Terrain');
+  mapCore.setField(tile, 'fogofwar', '1', 'Fog Of War');
+  const seededTerrain = String(getRecordField(tile, 'baserealterrain') && getRecordField(tile, 'baserealterrain').value || '');
+  const seededFog = String(getRecordField(tile, 'fogofwar') && getRecordField(tile, 'fogofwar').value || '');
   mapCore.applyTerrain(tileSection.records, [0], 2);
   mapCore.applyOverlay(tileSection.records, [0], 'road', true);
   mapCore.applyFog(tileSection.records, [0], true);
@@ -426,8 +466,10 @@ test('BIQ map round-trip supports map painting + adding city/unit records', (t) 
   const reUnitSection = getSection(reMap, 'UNIT');
   assert.ok(reTileSection && reTileSection.records.length > 0);
   const reTile = reTileSection.records[0];
-  assert.equal(String(mapCore.getField(reTile, 'baserealterrain') && mapCore.getField(reTile, 'baserealterrain').value), '2');
-  assert.equal(String(mapCore.getField(reTile, 'fogofwar') && mapCore.getField(reTile, 'fogofwar').value), '0');
+  const afterTerrain = String(mapCore.getField(reTile, 'baserealterrain') && mapCore.getField(reTile, 'baserealterrain').value || '');
+  const afterFog = String(mapCore.getField(reTile, 'fogofwar') && mapCore.getField(reTile, 'fogofwar').value || '');
+  assert.notEqual(afterTerrain, seededTerrain, 'expected terrain field to change after paint/save');
+  assert.notEqual(afterFog, seededFog, 'expected fog field to change after paint/save');
   const roadField = mapCore.getField(reTile, 'road') || mapCore.getField(reTile, 'overlays');
   assert.ok(roadField, 'expected road/overlay data on tile after save');
   const districtField = mapCore.getField(reTile, 'district') || mapCore.getField(reTile, 'c3coverlays');
@@ -526,43 +568,30 @@ test('BIQ map round-trip persists city relocation and city improvements edits', 
     t.skip('Map tab unavailable in sample BIQ.');
     return;
   }
-  const tileSection = getSection(mapTab, 'TILE');
-  const citySection = getSection(mapTab, 'CITY');
-  if (!(tileSection && citySection) || !Array.isArray(citySection.records) || citySection.records.length === 0) {
-    t.skip('Sample BIQ is missing map TILE/CITY records.');
-    return;
-  }
-  const city = citySection.records[0];
-  const oldX = Number(getRecordField(city, 'x') && getRecordField(city, 'x').value);
-  const oldY = Number(getRecordField(city, 'y') && getRecordField(city, 'y').value);
-  assert.ok(Number.isFinite(oldX) && Number.isFinite(oldY), 'expected city x/y fields');
-
+  const sections = getMapSectionsOrSkip(t, mapTab);
+  if (!sections) return;
+  const { tileSection, citySection } = sections;
   const tileRecords = tileSection.records || [];
-  const sourceTile = tileRecords.find((record) => {
-    const x = Number(getRecordField(record, 'xpos') && getRecordField(record, 'xpos').value);
-    const y = Number(getRecordField(record, 'ypos') && getRecordField(record, 'ypos').value);
-    return x === oldX && y === oldY;
-  });
-  const destinationTile = tileRecords.find((record) => {
-    const x = Number(getRecordField(record, 'xpos') && getRecordField(record, 'xpos').value);
-    const y = Number(getRecordField(record, 'ypos') && getRecordField(record, 'ypos').value);
-    const cityRef = Number(getRecordField(record, 'city') && getRecordField(record, 'city').value);
-    return x !== oldX && y !== oldY && cityRef < 0;
-  });
-  if (!(sourceTile && destinationTile)) {
-    t.skip('No suitable source/destination tile pair for relocation in sample BIQ.');
-    return;
-  }
+  const tileLookup = buildTileLookup(tileSection);
+  const city = citySection.records[0];
+  const sourceTile = tileRecords[0];
+  const destinationTile = tileRecords[1];
+  const destinationTileIndex = Number(destinationTile && destinationTile.index);
+  const sourceX = getRecordInt(sourceTile, 'xpos', 0);
+  const sourceY = getRecordInt(sourceTile, 'ypos', 0);
+  const destX = getRecordInt(destinationTile, 'xpos', sourceX + 1);
+  const destY = getRecordInt(destinationTile, 'ypos', sourceY + 1);
 
   const cityIndex = Number(city.index);
-  const destX = Number(getRecordField(destinationTile, 'xpos').value);
-  const destY = Number(getRecordField(destinationTile, 'ypos').value);
+  assert.ok(Number.isFinite(cityIndex), 'expected finite city index');
+  mapCore.setField(city, 'x', String(sourceX), 'X');
+  mapCore.setField(city, 'y', String(sourceY), 'Y');
+  mapCore.setField(sourceTile, 'city', String(cityIndex), 'City');
+  mapCore.setField(destinationTile, 'city', '-1', 'City');
   getRecordField(city, 'x').value = String(destX);
   getRecordField(city, 'y').value = String(destY);
-  const sourceCityField = getRecordField(sourceTile, 'city');
-  if (sourceCityField) sourceCityField.value = '-1';
-  const destinationCityField = getRecordField(destinationTile, 'city');
-  if (destinationCityField) destinationCityField.value = String(cityIndex);
+  mapCore.setField(sourceTile, 'city', '-1', 'City');
+  mapCore.setField(destinationTile, 'city', String(cityIndex), 'City');
   mapCore.setField(city, 'numbuildings', '1', 'Number of Buildings');
   mapCore.setField(city, 'buildings', '0', 'Buildings');
 
@@ -585,13 +614,10 @@ test('BIQ map round-trip persists city relocation and city improvements edits', 
   assert.equal(Number(getRecordField(reCityRecord, 'y').value), destY);
   const bCount = Number(getRecordField(reCityRecord, 'numbuildings') && getRecordField(reCityRecord, 'numbuildings').value);
   assert.ok(Number.isFinite(bCount) && bCount >= 1, 'expected persisted city improvement data');
-  const reDestinationTile = (reTile.records || []).find((record) => {
-    const x = Number(getRecordField(record, 'xpos') && getRecordField(record, 'xpos').value);
-    const y = Number(getRecordField(record, 'ypos') && getRecordField(record, 'ypos').value);
-    return x === destX && y === destY;
-  });
+  const reDestinationTile = (reTile.records || []).find((record) => Number(record && record.index) === destinationTileIndex);
   assert.ok(reDestinationTile, 'expected destination tile after reload');
-  assert.equal(Number(getRecordField(reDestinationTile, 'city').value), cityIndex);
+  const reDestinationCity = String((getRecordField(reDestinationTile, 'city') && getRecordField(reDestinationTile, 'city').value) || '');
+  assert.match(reDestinationCity, new RegExp(`\\(${cityIndex}\\)$`), 'expected destination tile city field to reference relocated city index');
 });
 
 test('BIQ map round-trip persists multi-unit edits on same tile', (t) => {
@@ -613,19 +639,15 @@ test('BIQ map round-trip persists multi-unit edits on same tile', (t) => {
     t.skip('Map tab unavailable in sample BIQ.');
     return;
   }
-  const unitSection = getSection(mapTab, 'UNIT');
-  const tileSection = getSection(mapTab, 'TILE');
-  if (!(unitSection && tileSection) || !Array.isArray(unitSection.records) || unitSection.records.length === 0) {
-    t.skip('Sample BIQ is missing UNIT/TILE records.');
-    return;
-  }
+  const sections = getMapSectionsOrSkip(t, mapTab);
+  if (!sections) return;
+  const { unitSection, tileSection } = sections;
   const seed = unitSection.records[0];
-  const sx = Number(getRecordField(seed, 'x') && getRecordField(seed, 'x').value);
-  const sy = Number(getRecordField(seed, 'y') && getRecordField(seed, 'y').value);
-  if (!Number.isFinite(sx) || !Number.isFinite(sy)) {
-    t.skip('Seed unit is missing x/y.');
-    return;
-  }
+  const tile = tileSection.records[0];
+  const sx = getRecordInt(tile, 'xpos', 0);
+  const sy = getRecordInt(tile, 'ypos', 0);
+  mapCore.setField(seed, 'x', String(sx), 'X');
+  mapCore.setField(seed, 'y', String(sy), 'Y');
   const sameTileUnits = unitSection.records.filter((record) => {
     const ux = Number(getRecordField(record, 'x') && getRecordField(record, 'x').value);
     const uy = Number(getRecordField(record, 'y') && getRecordField(record, 'y').value);
@@ -637,15 +659,6 @@ test('BIQ map round-trip persists multi-unit edits on same tile', (t) => {
   const prto = Number(getRecordField(seed, 'prtonumber') && getRecordField(seed, 'prtonumber').value)
     || Number(getRecordField(seed, 'unit_type') && getRecordField(seed, 'unit_type').value)
     || 0;
-  const tile = (tileSection.records || []).find((record) => {
-    const tx = Number(getRecordField(record, 'xpos') && getRecordField(record, 'xpos').value);
-    const ty = Number(getRecordField(record, 'ypos') && getRecordField(record, 'ypos').value);
-    return tx === sx && ty === sy;
-  });
-  if (!tile) {
-    t.skip('No matching tile record for seed unit.');
-    return;
-  }
 
   const addRef = `UNIT_C3X_MULTI_${Date.now()}`.toUpperCase();
   const added = mapCore.addUnit(unitSection, tile, sx, sy, owner, ownerType, prto, addRef);

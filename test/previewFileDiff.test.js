@@ -361,3 +361,152 @@ test('previewFileDiff does not remove duplicate unrelated sections when editing 
   assert.equal(delRows.some((row) => /Bamboo_Warrior|Blood_Cult/i.test(row.text)), false);
   assert.equal(addRows.some((row) => /Bamboo_Warrior|Blood_Cult/i.test(row.text)), false);
 });
+
+test('previewFileDiff does not trim untouched trailing spaces in Civilopedia lines', () => {
+  const root = mkTmpDir();
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  seedDefaultFiles(root);
+
+  const civPath = path.join(textDir, 'Civilopedia.txt');
+  const initial = [
+    '#RACE_ENGLISH',
+    '^In this scenario the nations are strong.',
+    'and New Zealand Army Corps, was often used when referring to troops from both countries. ',
+    '',
+    '#DESC_RACE_ENGLISH',
+    '^',
+    ''
+  ].join('\n');
+  fs.writeFileSync(civPath, Buffer.from(initial, 'latin1'));
+
+  const tabs = {
+    civilizations: {
+      title: 'Civs',
+      type: 'reference',
+      entries: [
+        {
+          civilopediaKey: 'RACE_ENGLISH',
+          overview: [
+            '^In CHANGE HERE this scenario the nations are strong.',
+            'and New Zealand Army Corps, was often used when referring to troops from both countries. '
+          ].join('\n'),
+          originalOverview: [
+            '^In this scenario the nations are strong.',
+            'and New Zealand Army Corps, was often used when referring to troops from both countries. '
+          ].join('\n'),
+          description: '^',
+          originalDescription: '^',
+          iconPaths: [],
+          originalIconPaths: [],
+          racePaths: [],
+          originalRacePaths: [],
+          animationName: '',
+          originalAnimationName: '',
+          biqFields: []
+        }
+      ],
+      sourceDetails: {
+        civilopediaScenario: civPath
+      }
+    }
+  };
+
+  const res = previewFileDiff({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: '',
+    scenarioPath: scenario,
+    tabs,
+    targetPath: civPath
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.found, true);
+  const delRows = res.diffRows.filter((row) => row.kind === 'del');
+  const addRows = res.diffRows.filter((row) => row.kind === 'add');
+  assert.equal(delRows.length, 1);
+  assert.equal(addRows.length, 1);
+  assert.equal(delRows[0].text, '^In this scenario the nations are strong.');
+  assert.equal(addRows[0].text, '^In CHANGE HERE this scenario the nations are strong.');
+});
+
+test('previewFileDiff for new scenario diplomacy target shows full-file additions', () => {
+  const root = mkTmpDir();
+  const civ3 = mkTmpDir();
+  const scenario = mkTmpDir();
+  const conquestsTextDir = path.join(civ3, 'Conquests', 'Text');
+  const scenarioTextDir = path.join(scenario, 'Text');
+  fs.mkdirSync(conquestsTextDir, { recursive: true });
+  fs.mkdirSync(scenarioTextDir, { recursive: true });
+  seedDefaultFiles(root);
+
+  const sourceDiplomacyPath = path.join(conquestsTextDir, 'diplomacy.txt');
+  const scenarioDiplomacyPath = path.join(scenarioTextDir, 'diplomacy.txt');
+  const source = [
+    '; source fixture',
+    '#AIFIRSTCONTACT',
+    '#CIV 1',
+    '#POWER 0',
+    '#MOOD 0',
+    '#RANDOM 1',
+    '"Contact 0 old"',
+    '',
+    '#AIFIRSTDEAL',
+    '#CIV 1',
+    '#POWER 0',
+    '#MOOD 0',
+    '#RANDOM 1',
+    '"Deal 0 old"',
+    '',
+    '#AIDEMANDTRIBUTE',
+    '#CIV 1',
+    '#POWER 0',
+    '#MOOD 0',
+    '#RANDOM 3',
+    '"Unrelated text kept."',
+    ''
+  ].join('\n');
+  fs.writeFileSync(sourceDiplomacyPath, Buffer.from(source, 'latin1'));
+  assert.equal(fs.existsSync(scenarioDiplomacyPath), false);
+
+  const tabs = {
+    civilizations: {
+      title: 'Civilizations',
+      type: 'reference',
+      entries: [],
+      diplomacySlots: [
+        {
+          index: 0,
+          firstContact: 'Contact 0 new',
+          originalFirstContact: 'Contact 0 old',
+          firstDeal: 'Deal 0 old',
+          originalFirstDeal: 'Deal 0 old'
+        }
+      ],
+      sourceDetails: {
+        diplomacyScenarioWrite: scenarioDiplomacyPath,
+        diplomacyActive: sourceDiplomacyPath
+      }
+    }
+  };
+
+  const res = previewFileDiff({
+    mode: 'scenario',
+    c3xPath: root,
+    civ3Path: civ3,
+    scenarioPath: scenario,
+    tabs,
+    targetPath: scenarioDiplomacyPath
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.found, true);
+  assert.equal(res.kind, 'diplomacy');
+  assert.equal(res.exists, false);
+  const addRows = res.diffRows.filter((row) => row.kind === 'add');
+  assert.equal(res.diffRows.some((row) => row.kind === 'del'), false);
+  assert.ok(addRows.some((row) => row.text === '"Contact 0 new"'));
+  assert.ok(addRows.some((row) => row.text === '#AIDEMANDTRIBUTE'));
+});

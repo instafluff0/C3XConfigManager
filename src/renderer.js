@@ -1137,6 +1137,16 @@ function collectPendingWritePathsFromDirtyTabs() {
         addPath(meta && meta.biq && meta.biq.writePath);
       }
     });
+    if (tabKey === 'civilizations') {
+      const cleanTabs = getCleanTabsObject();
+      const cleanTab = cleanTabs && cleanTabs.civilizations ? cleanTabs.civilizations : null;
+      const currentRaw = String(tab && tab.diplomacyText || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      const cleanRaw = String(cleanTab && cleanTab.diplomacyText || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      if (currentRaw !== cleanRaw) {
+        const sourceDetails = (tab && tab.sourceDetails) || {};
+        addPath(sourceDetails.diplomacyScenarioWrite || sourceDetails.diplomacyScenario || sourceDetails.diplomacyActive || '');
+      }
+    }
   });
 
   return pending;
@@ -1685,7 +1695,7 @@ function renderFilesReadModal() {
     } else if (access && !access.exists) {
       if (entry.potentialWrite && changeCategory === 'new' && access.parentPath) {
         accessBadge.className = `files-read-badge ${access.parentWritable ? 'ok' : 'warn'}`;
-        accessBadge.textContent = access.parentWritable ? 'New' : 'Cannot create';
+        accessBadge.textContent = access.parentWritable ? 'Can create' : 'Cannot create';
       } else if (entry.isPrimaryBaseTarget) {
         accessBadge.className = 'files-read-badge neutral';
         accessBadge.textContent = 'Not created yet';
@@ -1695,7 +1705,7 @@ function renderFilesReadModal() {
       }
     } else {
       accessBadge.className = 'files-read-badge neutral';
-      accessBadge.textContent = 'Access unknown';
+      accessBadge.textContent = 'Checking access';
     }
     meta.appendChild(accessBadge);
 
@@ -1710,6 +1720,7 @@ function openFilesReadModal() {
   renderFilesReadModal();
   el.filesReadModalOverlay.classList.remove('hidden');
   el.filesReadModalOverlay.setAttribute('aria-hidden', 'false');
+  void refreshFilesReadAccess();
 }
 
 function updateSaveButtonLabel() {
@@ -8986,6 +8997,20 @@ function quoteDiplomacyDialogueLineForUi(value) {
   return `"${text.replace(/"/g, '\\"')}"`;
 }
 
+const DIPLOMACY_EOF_SENTINEL_FOR_UI = '; THIS LINE MUST REMAIN AT END OF FILE';
+
+function isDiplomacyEofSentinelKeyForUi(value) {
+  const normalized = String(value || '')
+    .replace(/^#+/, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+  if (!normalized) return false;
+  const withSemicolon = String(DIPLOMACY_EOF_SENTINEL_FOR_UI).trim().replace(/\s+/g, ' ').toUpperCase();
+  const withoutSemicolon = withSemicolon.replace(/^;\s*/, '');
+  return normalized === withSemicolon || normalized === withoutSemicolon;
+}
+
 function parseDiplomacyDocumentWithOrderForUi(text) {
   const src = String(text || '');
   const doc = { preamble: [], sections: [], hadTrailingNewline: /\r\n$|\n$|\r$/.test(src) };
@@ -9387,6 +9412,7 @@ function renderCivilizationDiplomacySectionsCard(tab, referenceEditable) {
   sections.forEach((section, sectionIdx) => {
     const key = String(section && section.key || '').trim().toUpperCase();
     if (!key) return;
+    if (isDiplomacyEofSentinelKeyForUi(key) || isDiplomacyEofSentinelKeyForUi(section && section.header)) return;
     const editorKey = `DIPLOMACY_SECTION:${key}:${sectionIdx}`;
     const sectionLines = Array.isArray(section && section.lines) ? section.lines : [];
     const parsed = parseDiplomacySectionBlocksForUi(sectionLines);
@@ -11347,9 +11373,16 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   editor.rows = 7;
   editor.placeholder = emptyText || '';
   editor.value = String(entry[fieldKey] || '');
+  let livePreview = null;
+  const refreshLivePreview = () => {
+    if (!livePreview) return;
+    livePreview.innerHTML = '';
+    renderCivilopediaRichText(livePreview, String(entry[fieldKey] || ''));
+  };
   editor.addEventListener('input', () => {
     rememberUndoSnapshot();
     entry[fieldKey] = editor.value;
+    refreshLivePreview();
     setDirty(true);
   });
   block.appendChild(editor);
@@ -11439,10 +11472,10 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   });
 
   if (state.civilopediaPreviewVisible[editorKey]) {
-    const preview = document.createElement('div');
-    preview.className = 'civilopedia-preview';
-    renderCivilopediaRichText(preview, String(entry[fieldKey] || '').trim());
-    block.appendChild(preview);
+    livePreview = document.createElement('div');
+    livePreview.className = 'civilopedia-preview';
+    refreshLivePreview();
+    block.appendChild(livePreview);
   }
   return block;
 }

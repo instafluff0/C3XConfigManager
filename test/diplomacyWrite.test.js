@@ -93,6 +93,54 @@ test('saveBundle writes scenario diplomacy slot edits and preserves unrelated se
   assert.match(saved, /#AIDEMANDTRIBUTE/);
 });
 
+test('saveBundle uses active diplomacy source as fallback when scenario target does not exist', () => {
+  const civ3 = mkTmpDir();
+  const scenario = mkTmpDir();
+  const sourceTextDir = path.join(civ3, 'Conquests', 'Text');
+  fs.mkdirSync(sourceTextDir, { recursive: true });
+  const sourceDiplomacyPath = path.join(sourceTextDir, 'diplomacy.txt');
+  writeDiplomacy(sourceDiplomacyPath);
+  const scenarioTextDir = path.join(scenario, 'Text');
+  fs.mkdirSync(scenarioTextDir, { recursive: true });
+  const scenarioDiplomacyPath = path.join(scenarioTextDir, 'diplomacy.txt');
+  assert.equal(fs.existsSync(scenarioDiplomacyPath), false);
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: civ3,
+    civ3Path: civ3,
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: {
+        title: 'Civilizations',
+        type: 'reference',
+        entries: [],
+        diplomacySlots: [
+          {
+            index: 0,
+            firstContact: 'Contact 0 fallback new',
+            originalFirstContact: 'Contact 0 old',
+            firstDeal: 'Deal 0 fallback new',
+            originalFirstDeal: 'Deal 0 old'
+          }
+        ],
+        sourceDetails: {
+          diplomacyScenarioWrite: scenarioDiplomacyPath,
+          diplomacyActive: sourceDiplomacyPath
+        }
+      }
+    }
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  assert.equal(fs.existsSync(scenarioDiplomacyPath), true);
+  const saved = fs.readFileSync(scenarioDiplomacyPath).toString('latin1');
+  assert.match(saved, /"Contact 0 fallback new"/);
+  assert.match(saved, /"Deal 0 fallback new"/);
+  assert.match(saved, /"Unrelated text kept\."/);
+  assert.match(saved, /#AIDEMANDTRIBUTE/);
+});
+
 test('saveBundle writes full diplomacy text when raw diplomacy editor content changes', () => {
   const civ3 = mkTmpDir();
   const scenario = mkTmpDir();
@@ -141,7 +189,10 @@ test('saveBundle writes full diplomacy text when raw diplomacy editor content ch
 
   assert.equal(result.ok, true, String(result.error || 'save failed'));
   const saved = fs.readFileSync(diplomacyPath).toString('latin1');
-  assert.equal(saved.replace(/\r\n/g, '\n').replace(/\r/g, '\n'), replacement.replace(/\r\n/g, '\n').replace(/\r/g, '\n'));
+  const normalizedSaved = saved.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const normalizedExpected = replacement.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  assert.equal(normalizedSaved.startsWith(normalizedExpected), true);
+  assert.match(normalizedSaved, /; THIS LINE MUST REMAIN AT END OF FILE\s*$/);
   assert.match(saved, /#AIGREET/);
 });
 
@@ -327,4 +378,101 @@ test('saveBundle diplomacy slot edit preserves section header casing and trailin
   assert.match(saved, /^\#aifirstdeal\t$/m);
   assert.match(saved, /"hello new"/);
   assert.match(saved, /"deal new"/);
+});
+
+test('saveBundle diplomacy raw replace enforces end-of-file sentinel comment', () => {
+  const civ3 = mkTmpDir();
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  const diplomacyPath = path.join(textDir, 'diplomacy.txt');
+  writeDiplomacy(diplomacyPath);
+
+  const replacement = [
+    '#AIFIRSTCONTACT',
+    '#CIV 1',
+    '#POWER 0',
+    '#MOOD 0',
+    '#RANDOM 1',
+    '"Only one line."'
+  ].join('\n');
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: civ3,
+    civ3Path: civ3,
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: {
+        title: 'Civilizations',
+        type: 'reference',
+        entries: [],
+        diplomacyText: replacement,
+        originalDiplomacyText: fs.readFileSync(diplomacyPath, 'latin1'),
+        diplomacySlots: [],
+        sourceDetails: {
+          diplomacyScenarioWrite: diplomacyPath
+        }
+      }
+    }
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const saved = fs.readFileSync(diplomacyPath, 'latin1');
+  assert.match(saved, /; THIS LINE MUST REMAIN AT END OF FILE\s*$/);
+});
+
+test('saveBundle diplomacy slot edit adds end-of-file sentinel comment when missing', () => {
+  const civ3 = mkTmpDir();
+  const scenario = mkTmpDir();
+  const textDir = path.join(scenario, 'Text');
+  fs.mkdirSync(textDir, { recursive: true });
+  const diplomacyPath = path.join(textDir, 'diplomacy.txt');
+  const sourceWithoutSentinel = [
+    '#AIFIRSTCONTACT',
+    '#CIV 1',
+    '#POWER 0',
+    '#MOOD 0',
+    '#RANDOM 1',
+    '"hello old"',
+    '',
+    '#AIFIRSTDEAL',
+    '#CIV 1',
+    '#POWER 0',
+    '#MOOD 0',
+    '#RANDOM 1',
+    '"deal old"'
+  ].join('\n');
+  fs.writeFileSync(diplomacyPath, Buffer.from(sourceWithoutSentinel, 'latin1'));
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: civ3,
+    civ3Path: civ3,
+    scenarioPath: scenario,
+    tabs: {
+      civilizations: {
+        title: 'Civilizations',
+        type: 'reference',
+        entries: [],
+        diplomacySlots: [
+          {
+            index: 0,
+            firstContact: 'hello new',
+            originalFirstContact: 'hello old',
+            firstDeal: 'deal old',
+            originalFirstDeal: 'deal old'
+          }
+        ],
+        sourceDetails: {
+          diplomacyScenarioWrite: diplomacyPath
+        }
+      }
+    }
+  });
+
+  assert.equal(result.ok, true, String(result.error || 'save failed'));
+  const saved = fs.readFileSync(diplomacyPath, 'latin1');
+  assert.match(saved, /"hello new"/);
+  assert.match(saved, /; THIS LINE MUST REMAIN AT END OF FILE\s*$/);
 });

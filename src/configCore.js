@@ -1645,6 +1645,17 @@ function readWindows1252TextIfExists(filePath) {
   }
 }
 
+function readWindows1252TextWithFallback(primaryPath, fallbackPath) {
+  const primary = String(primaryPath || '').trim();
+  const fallback = String(fallbackPath || '').trim();
+  const candidates = [primary, fallback].filter(Boolean);
+  for (const candidate of candidates) {
+    const text = readWindows1252TextIfExists(candidate);
+    if (text != null) return text;
+  }
+  return '';
+}
+
 const WINDOWS_1252_ENCODE_MAP = Object.fromEntries(
   Object.entries(WINDOWS_1252_DECODE_MAP).map(([byte, codePoint]) => [codePoint, Number(byte)])
 );
@@ -2256,6 +2267,37 @@ function parseDiplomacySlotOptions(text) {
   return options;
 }
 
+const DIPLOMACY_EOF_SENTINEL = '; THIS LINE MUST REMAIN AT END OF FILE';
+
+function normalizeDiplomacySentinelLine(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+}
+
+function isDiplomacyEofSentinelLine(line) {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return false;
+  const withoutHash = trimmed.startsWith('#') ? trimmed.slice(1).trim() : trimmed;
+  const normalized = normalizeDiplomacySentinelLine(withoutHash);
+  if (!normalized) return false;
+  const withSemicolon = normalizeDiplomacySentinelLine(DIPLOMACY_EOF_SENTINEL);
+  const withoutSemicolon = normalizeDiplomacySentinelLine(DIPLOMACY_EOF_SENTINEL.replace(/^;\s*/, ''));
+  return normalized === withSemicolon || normalized === withoutSemicolon;
+}
+
+function ensureDiplomacyEofSentinel(text) {
+  const lines = String(text == null ? '' : text)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .filter((line) => !isDiplomacyEofSentinelLine(line));
+  while (lines.length > 0 && !String(lines[lines.length - 1] || '').trim()) lines.pop();
+  lines.push(DIPLOMACY_EOF_SENTINEL);
+  return ensureTrailingNewline(lines.join('\n'));
+}
+
 function normalizeDiplomacyDialogueLine(value) {
   return String(value == null ? '' : value)
     .replace(/\r\n/g, '\n')
@@ -2567,7 +2609,7 @@ function normalizeCivilopediaTextValue(value) {
   return String(value == null ? '' : value)
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
-    .trimEnd();
+    .replace(/\n+$/g, '');
 }
 
 function textToCivilopediaLines(value) {
@@ -3200,7 +3242,8 @@ function parseCivilopediaDocumentWithOrder(text) {
   const order = [];
   const sections = {};
   const items = [];
-  if (!text) return { order, sections, hadTrailingNewline: false };
+  const preamble = [];
+  if (!text) return { order, sections, items, preamble, hadTrailingNewline: false };
   const lines = src.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
   let currentKey = '';
   let currentHeader = '';
@@ -3226,17 +3269,20 @@ function parseCivilopediaDocumentWithOrder(text) {
       return;
     }
     if (currentKey) currentLines.push(line);
+    else preamble.push(line);
   });
   flush();
-  return { order, sections, items, hadTrailingNewline: /\r\n$|\n$|\r$/.test(src) };
+  return { order, sections, items, preamble, hadTrailingNewline: /\r\n$|\n$|\r$/.test(src) };
 }
 
 function serializeCivilopediaDocumentWithOrder(doc) {
   const order = Array.isArray(doc && doc.order) ? doc.order : [];
   const sections = (doc && doc.sections) || {};
   const items = Array.isArray(doc && doc.items) ? doc.items : null;
+  const preamble = Array.isArray(doc && doc.preamble) ? doc.preamble : [];
   const hadTrailingNewline = !!(doc && doc.hadTrailingNewline);
   const lines = [];
+  preamble.forEach((line) => lines.push(String(line || '')));
   if (items && items.length > 0) {
     items.forEach((sectionItem) => {
       const key = String(sectionItem && sectionItem.key || '').trim().toUpperCase();
@@ -3625,6 +3671,10 @@ function serializeSectionedConfig(model, marker, options = null) {
   for (let i = 0; i < model.sections.length; i += 1) {
     const section = model.sections[i];
     lines.push(marker);
+    const sectionComments = Array.isArray(section && section.comments) ? section.comments : [];
+    sectionComments.forEach((line) => {
+      lines.push(String(line || ''));
+    });
     for (const field of section.fields) {
       if (!field.key) {
         continue;
@@ -3926,16 +3976,17 @@ function buildScenarioCivilopediaEditResult({ targetPath, edits }) {
   }
 }
 
-function buildScenarioDiplomacyEditResult({ targetPath, edits }) {
+function buildScenarioDiplomacyEditResult({ targetPath, sourcePath, edits }) {
   if (!targetPath || !Array.isArray(edits) || edits.length === 0) {
     return { ok: true, applied: 0, buffer: null };
   }
   try {
-    const existing = readWindows1252TextIfExists(targetPath) || '';
+    const existing = readWindows1252TextWithFallback(targetPath, sourcePath);
+    const normalizedExisting = ensureDiplomacyEofSentinel(existing);
     const replaceEdit = edits.find((edit) => String(edit && edit.op || '').toLowerCase() === 'replace');
     if (replaceEdit) {
-      const nextText = String(replaceEdit.text || '');
-      if (nextText.replace(/\r\n/g, '\n').replace(/\r/g, '\n') === existing.replace(/\r\n/g, '\n').replace(/\r/g, '\n')) {
+      const nextText = ensureDiplomacyEofSentinel(String(replaceEdit.text || ''));
+      if (nextText.replace(/\r\n/g, '\n').replace(/\r/g, '\n') === normalizedExisting.replace(/\r\n/g, '\n').replace(/\r/g, '\n')) {
         return { ok: true, applied: 0, buffer: null };
       }
       return { ok: true, applied: 1, buffer: encodeWindows1252Text(nextText) };
@@ -3997,7 +4048,7 @@ function buildScenarioDiplomacyEditResult({ targetPath, edits }) {
     if (applyDiplomacySectionSlotLines(dealSection, nextDeal)) applied += 1;
     if (applied === 0) return { ok: true, applied: 0, buffer: null };
 
-    const serialized = serializeDiplomacyDocumentWithOrder(doc);
+    const serialized = ensureDiplomacyEofSentinel(serializeDiplomacyDocumentWithOrder(doc));
     return { ok: true, applied, buffer: encodeWindows1252Text(serialized) };
   } catch (err) {
     return { ok: false, error: `Failed to save diplomacy edits: ${err.message}` };
@@ -4299,12 +4350,14 @@ function buildSavePlan(payload) {
 
     const diplomacyEdits = collectDiplomacyReferenceEdits(payload.tabs || {});
     if (diplomacyEdits.length > 0) {
-      const explicitTarget = ((((payload.tabs || {}).civilizations || {}).sourceDetails || {}).diplomacyScenarioWrite || '').trim()
-        || ((((payload.tabs || {}).civilizations || {}).sourceDetails || {}).diplomacyScenario || '').trim();
+      const civSourceDetails = (((payload.tabs || {}).civilizations || {}).sourceDetails || {});
+      const explicitTarget = String(civSourceDetails.diplomacyScenarioWrite || '').trim()
+        || String(civSourceDetails.diplomacyScenario || '').trim();
+      const sourcePath = String(civSourceDetails.diplomacyActive || '').trim();
       const targetPath = explicitTarget || path.join(scenarioContext.contentWriteRoot || scenarioDir, 'Text', 'diplomacy.txt');
       const protectErr = failIfProtected(targetPath, 'diplomacy target');
       if (protectErr) return { ok: false, error: protectErr };
-      const diplomacySave = buildScenarioDiplomacyEditResult({ targetPath, edits: diplomacyEdits });
+      const diplomacySave = buildScenarioDiplomacyEditResult({ targetPath, sourcePath, edits: diplomacyEdits });
       if (!diplomacySave.ok) {
         return { ok: false, error: diplomacySave.error || 'Failed to save diplomacy edits.' };
       }
@@ -4312,6 +4365,7 @@ function buildSavePlan(payload) {
         plannedWrites.push({
           kind: 'diplomacy',
           path: targetPath,
+          sourcePath,
           data: diplomacySave.buffer
         });
         saveReport.push({ kind: 'diplomacy', path: targetPath, applied: diplomacySave.applied });

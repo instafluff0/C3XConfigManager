@@ -1,7 +1,7 @@
 # agents.md
 
 ## Scope
-This folder contains an Electron app (`Civ 3 | C3X Modern Configuration Manager`) for managing C3X config files in a UI. As you learn new key elements and fundamental quirks of Civ 3, C3X, BIQ & text files, summarize them here and keep this document alive so future agents don't need to relearn them. If this document becomes out of data based on new information, or long, unwieldy, or contradictory, be sure to update it.
+This folder contains an Electron app (`Civ 3 | C3X Modern Configuration Manager`) for managing C3X config files in a UI. As you learn new key elements and fundamental quirks of Civ 3, C3X, BIQ & text files, summarize them here and keep this document alive so future agents don't need to relearn them. If this document becomes out of data based on new information, or long, unwieldy, or contradictory, be sure to update it. The goal of the app is to vastly simplify the process of editing and creating scenarios and configurations. Otherwise users are forced to edit across multiple files and applications which are not testable and very complicated. The app marries all of these and is designed to full manage and validate files while staying simple and intuitive, but also fully transparent, for users who need to understand details.
 
 ## Ground Truth From C3X Parsing
 Behavior is based on `injected_code.c`:
@@ -145,6 +145,10 @@ Scenario scope writes:
 - Terrain structure safety:
   - `Terrain -> Terrain Types` (`TERR`) must be treated as structurally immutable in the UI (no add/copy/import/delete).
   - Rationale: map tile terrain values are packed/index-coded (`baserealterrain`/`c3cbaserealterrain` use 4-bit terrain IDs), and BIQ bridge structural mutation support/cascades are not implemented for `TERR`, so changing record count/order can desync or corrupt terrain interpretation.
+- BIQ map-data quirks in stock Conquests scenario BIQs:
+  - Some map-enabled BIQs have `CITY`/`UNIT` record coordinates that do not directly match `TILE` `xpos`/`ypos` records, so tests/tools must not assume first city/unit coordinates resolve to a tile row.
+  - `TILE` `city` field values may serialize as display strings (for example `Roma (0)`) rather than plain numeric IDs in some round-trip paths, so strict numeric assertions are brittle.
+  - Reliable map integration tests should establish deterministic local preconditions (seed known tile/city/unit links in-memory before save) rather than relying on stock scenario data layout.
 
 ## Art Preview Behavior
 - Supported previews:

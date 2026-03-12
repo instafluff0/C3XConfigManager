@@ -6,6 +6,8 @@ const os = require('node:os');
 
 const {
   buildBaseModel,
+  parseCivilopediaDocumentWithOrder,
+  serializeCivilopediaDocumentWithOrder,
   parseSectionedConfig,
   serializeSectionedConfig,
   parseBiqSectionsFromBuffer,
@@ -51,6 +53,43 @@ test('sectioned config parsing round-trips marker blocks', () => {
   assert.match(serialized, /#District/);
   assert.match(serialized, /name = Encampment/);
   assert.ok(serialized.endsWith('\n'));
+});
+
+test('sectioned config serialization preserves section comments', () => {
+  const text = [
+    '; header',
+    '#District',
+    '; keep this comment',
+    'name = Encampment',
+    '[LegacyTag]',
+    'tooltip = Build Encampment',
+    '',
+    '#District',
+    '; keep second',
+    'name = Campus'
+  ].join('\n');
+
+  const parsed = parseSectionedConfig(text, '#District');
+  const serialized = serializeSectionedConfig(parsed, '#District');
+  assert.match(serialized, /; keep this comment/);
+  assert.match(serialized, /\[LegacyTag\]/);
+  assert.match(serialized, /; keep second/);
+});
+
+test('Civilopedia parse/serialize preserves preamble comments before first section', () => {
+  const input = [
+    '; Civilopedia.txt',
+    '; Notes: test preamble',
+    '',
+    '#RACE_TEST',
+    'Legacy overview',
+    ''
+  ].join('\n');
+  const parsed = parseCivilopediaDocumentWithOrder(input);
+  const serialized = serializeCivilopediaDocumentWithOrder(parsed);
+  assert.match(serialized, /^; Civilopedia\.txt$/m);
+  assert.match(serialized, /^; Notes: test preamble$/m);
+  assert.match(serialized, /^#RACE_TEST$/m);
 });
 
 test('resolvePaths applies replacement precedence for sectioned configs', () => {
