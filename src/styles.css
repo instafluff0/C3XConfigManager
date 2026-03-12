@@ -4388,6 +4388,56 @@ details > summary:focus-visible {
   overflow: hidden;
 }
 
+.app-version {
+  position: fixed;
+  top: 8px;
+  right: 12px;
+  z-index: 12;
+  margin: 0;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(36, 25, 64, 0.12);
+  background: rgba(255, 255, 255, 0.58);
+  backdrop-filter: blur(3px);
+  color: #5a6487;
+  font-size: 0.58rem;
+  line-height: 1;
+  letter-spacing: 0.03em;
+  user-select: none;
+}
+
+.app-credit {
+  position: fixed;
+  left: 14px;
+  bottom: 12px;
+  z-index: 12;
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(36, 25, 64, 0.14);
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(4px);
+  font-size: 0.6rem;
+  line-height: 1.2;
+  color: #5b668b;
+}
+
+.app-credit-heart {
+  color: #d3162b;
+  font-size: 0.66rem;
+}
+
+.app-credit a {
+  color: #355fba;
+  font-weight: 700;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 1px;
+}
+
+.app-credit a:hover {
+  color: #244a9b;
+}
+
 .structured-list {
   display: grid;
   gap: 6px;
@@ -4484,6 +4534,16 @@ details > summary:focus-visible {
     right: 10px;
     bottom: 10px;
     gap: 6px;
+  }
+
+  .app-credit {
+    left: 10px;
+    bottom: 64px;
+  }
+
+  .app-version {
+    top: 6px;
+    right: 10px;
   }
 
   .actions {

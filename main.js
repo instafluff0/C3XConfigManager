@@ -5,9 +5,12 @@ const { loadBundle, saveBundle, previewFileDiff, createScenario } = require('./s
 const { getPreview } = require('./src/artPreview');
 
 const APP_SETTINGS_FILE = 'settings.json';
+const APP_NAME = 'Civ 3 C3X Modern Configuration Manager';
 const JAVA_BIN_RELATIVE_PATHS = process.platform === 'win32'
   ? [path.join('bin', 'javaw.exe'), path.join('bin', 'java.exe')]
   : [path.join('bin', 'java')];
+
+app.setName(APP_NAME);
 
 function getSettingsPathUnsafe() {
   try {
@@ -194,6 +197,24 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false
+    }
+  });
+
+  const openExternalUrl = (url) => {
+    const target = String(url || '').trim();
+    if (!/^https?:\/\//i.test(target)) return false;
+    shell.openExternal(target).catch(() => {});
+    return true;
+  };
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalUrl(url);
+    return { action: 'deny' };
+  });
+
+  win.webContents.on('will-navigate', (event, url) => {
+    if (openExternalUrl(url)) {
+      event.preventDefault();
     }
   });
 
