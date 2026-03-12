@@ -1,7 +1,7 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
-const { loadBundle, saveBundle, previewFileDiff, createScenario } = require('./src/configCore');
+const { loadBundle, saveBundle, previewSavePlan, previewFileDiff, createScenario } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
 
 const APP_SETTINGS_FILE = 'settings.json';
@@ -455,6 +455,13 @@ ipcMain.handle('manager:load-bundle', async (_event, payload) => {
 
 ipcMain.handle('manager:save-bundle', async (_event, payload) => {
   return saveBundle({
+    ...(payload || {}),
+    javaPath: resolveBundledJavaPath()
+  });
+});
+
+ipcMain.handle('manager:preview-save-plan', async (_event, payload) => {
+  return previewSavePlan({
     ...(payload || {}),
     javaPath: resolveBundledJavaPath()
   });

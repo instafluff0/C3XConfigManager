@@ -21,7 +21,7 @@ function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-config-manager-'));
 }
 
-test('base config precedence is default -> scenario -> custom', () => {
+test('base config precedence is default -> custom -> scenario', () => {
   const defaultText = 'a = 1\nb = 2\n';
   const scenarioText = 'b = 20\nc = 30\n';
   const customText = 'c = 300\n';
@@ -29,8 +29,8 @@ test('base config precedence is default -> scenario -> custom', () => {
   const model = buildBaseModel(defaultText, scenarioText, customText, 'scenario', '');
   assert.equal(model.effectiveMap.a, '1');
   assert.equal(model.effectiveMap.b, '20');
-  assert.equal(model.effectiveMap.c, '300');
-  assert.deepEqual(model.sourceOrder, ['default', 'scenario', 'custom']);
+  assert.equal(model.effectiveMap.c, '30');
+  assert.deepEqual(model.sourceOrder, ['default', 'custom', 'scenario']);
 });
 
 test('sectioned config parsing round-trips marker blocks', () => {
@@ -189,6 +189,48 @@ test('loadBundle does not write target files before save', () => {
   assert.ok(bundle && bundle.tabs && bundle.tabs.base);
   assert.equal(fs.existsSync(customBase), false);
   assert.equal(fs.existsSync(userDistricts), false);
+});
+
+test('saving new sectioned override file does not copy default docs/comments', () => {
+  const root = mkTmpDir();
+  const scenario = mkTmpDir();
+  fs.writeFileSync(path.join(root, 'default.c3x_config.ini'), 'flag = true\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_config.txt'), [
+    '[======================================================================= NOTE =======================================================================]',
+    '[Instead of editing this file, changes should be placed in user/scenario files.]',
+    '',
+    '#District',
+    '; default comment that should not be copied',
+    'name = Base',
+    'tooltip = Build Base',
+    'img_paths = Base.pcx'
+  ].join('\n') + '\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_wonders_config.txt'), '#Wonder\nname = W\nimg_row = 0\nimg_column = 0\nimg_construct_row = 0\nimg_construct_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.districts_natural_wonders_config.txt'), '#Wonder\nname = N\nterrain_type = grassland\nimg_row = 0\nimg_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'default.tile_animations.txt'), '#Animation\nname = A\nini_path = X\\Y.ini\ntype = terrain\nterrain_types = grassland\n', 'utf8');
+
+  const bundle = loadBundle({ mode: 'global', c3xPath: root, scenarioPath: scenario });
+  const section = bundle.tabs.districts.model.sections[0];
+  const nameField = section.fields.find((f) => String(f && f.key || '').trim().toLowerCase() === 'name');
+  assert.ok(nameField);
+  nameField.value = 'Changed Name';
+
+  const saveResult = saveBundle({
+    mode: 'global',
+    c3xPath: root,
+    scenarioPath: scenario,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true);
+
+  const userDistrictsPath = path.join(root, 'user.districts_config.txt');
+  const saved = fs.readFileSync(userDistrictsPath, 'utf8');
+  assert.match(saved, /Managed by Civ 3 \| C3X Modern Configuration Manager/);
+  assert.match(saved, /Mode: global/);
+  assert.doesNotMatch(saved, /\[======================================================================= NOTE/);
+  assert.doesNotMatch(saved, /default comment that should not be copied/);
+  assert.match(saved, /#District/);
+  assert.match(saved, /name = "Changed Name"/);
 });
 
 test('scenario Civilopedia save preserves windows-1252 text while applying edits', () => {

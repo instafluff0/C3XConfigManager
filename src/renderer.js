@@ -124,9 +124,14 @@ const state = {
   filesReadSearchInputMirror: '',
   filesReadSearchQuery: '',
   fileDiffOpen: false,
-  baseCreateConfirmSeen: {
-    global: false,
-    scenario: false
+  saveUi: {
+    toastTimer: null,
+    toastPhase: 'idle',
+    detailOpen: false,
+    detailItems: [],
+    detailSummary: '',
+    rollbackSummary: '',
+    rollbackHasWarning: false
   },
   filesReadFilters: {
     locationCore: false,
@@ -285,6 +290,16 @@ const el = {
   fileDiffModalBody: document.getElementById('file-diff-modal-body'),
   fileDiffContent: document.getElementById('file-diff-content'),
   fileDiffClose: document.getElementById('file-diff-close'),
+  saveToast: document.getElementById('save-toast'),
+  saveToastButton: document.getElementById('save-toast-button'),
+  saveToastIcon: document.getElementById('save-toast-icon'),
+  saveToastTitle: document.getElementById('save-toast-title'),
+  saveToastBody: document.getElementById('save-toast-body'),
+  saveProgressModalOverlay: document.getElementById('save-progress-modal-overlay'),
+  saveProgressModalBody: document.getElementById('save-progress-modal-body'),
+  saveProgressList: document.getElementById('save-progress-list'),
+  saveProgressRollback: document.getElementById('save-progress-rollback'),
+  saveProgressClose: document.getElementById('save-progress-close'),
   filesReadFiltersWrap: document.getElementById('files-read-filters'),
   filesReadSearchInput: document.getElementById('files-read-search'),
   filesFilterCore: document.getElementById('files-filter-core'),
@@ -546,13 +561,68 @@ const C3X_RELEASE_BY_KEY = Object.freeze({
   show_armies_performing_defensive_bombard: 'R27',
   exclude_types_from_units_per_tile_limit: 'R27',
   limit_defensive_retreat_on_water_to_types: 'R27',
-  enable_custom_animations: 'R27'
+  enable_custom_animations: 'R27',
+  day_night_cycle_mode: 'R25',
+  elapsed_minutes_per_day_night_hour_transition: 'R25',
+  fixed_hours_per_turn_for_day_night_cycle: 'R25',
+  pinned_hour_for_day_night_cycle: 'R25',
+  seasonal_cycle_mode: 'R28',
+  enabled_seasons: 'R28',
+  pinned_season_for_seasonal_cycle: 'R28',
+  elapsed_minutes_per_season_transition: 'R28',
+  fixed_turns_per_season: 'R28',
+  transition_season_on_day_night_hour: 'R28',
+  add_natural_wonders_to_scenarios_if_none: 'R27',
+  show_natural_wonder_name_on_map: 'R26',
+  enable_neighborhood_districts: 'R26',
+  enable_wonder_districts: 'R26',
+  enable_distribution_hub_districts: 'R26',
+  enable_aerodrome_districts: 'R26',
+  enable_port_districts: 'R27',
+  enable_bridge_districts: 'R27',
+  enable_canal_districts: 'R27',
+  enable_central_rail_hub_districts: 'R27',
+  enable_energy_grid_districts: 'R27',
+  enable_great_wall_districts: 'R27',
+  cities_with_mutual_district_receive_buildings: 'R26',
+  cities_with_mutual_district_receive_wonders: 'R26',
+  show_message_when_building_lost_to_destroyed_district: 'R26',
+  air_units_use_aerodrome_districts_not_cities: 'R26',
+  naval_units_use_port_districts_not_cities: 'R27',
+  maximum_pop_before_neighborhood_needed: 'R26',
+  per_neighborhood_pop_growth_enabled: 'R26',
+  destroying_neighborhood_reduces_pop: 'R27',
+  completed_wonder_districts_can_be_destroyed: 'R26',
+  destroyed_wonders_can_be_built_again: 'R26',
+  distribution_hub_yield_division_mode: 'R27',
+  ai_distribution_hub_build_strategy: 'R27',
+  distribution_hub_food_yield_divisor: 'R26',
+  distribution_hub_shield_yield_divisor: 'R26',
+  ai_ideal_distribution_hub_count_per_100_cities: 'R26',
+  max_distribution_hub_count_per_100_cities: 'R27',
+  central_rail_hub_distribution_food_bonus_percent: 'R27',
+  central_rail_hub_distribution_shield_bonus_percent: 'R27',
+  expand_water_tile_checks_to_city_work_area: 'R27',
+  workers_can_enter_coast: 'R27',
+  max_contiguous_bridge_districts: 'R27',
+  max_contiguous_canal_districts: 'R27',
+  ai_canal_eval_min_bisected_land_tiles: 'R27',
+  ai_bridge_canal_eval_block_size: 'R27',
+  ai_bridge_eval_lake_tile_threshold: 'R27',
+  ai_can_replace_existing_districts_with_canals: 'R27',
+  ai_builds_bridges: 'R27',
+  ai_builds_canals: 'R27',
+  ai_defends_districts: 'R26',
+  ai_city_district_max_build_wait_turns: 'R27',
+  disable_great_wall_city_defense_bonus: 'R27',
+  great_wall_districts_impassible_by_others: 'R27',
+  auto_build_great_wall_around_territory: 'R27',
+  great_wall_auto_build_wonder_name: 'R27',
+  ai_auto_build_great_wall_strategy: 'R27',
+  enable_city_work_radii_highlights: 'R26',
+  enable_named_tiles: 'R27',
+  enable_custom_animations: 'R28'
 });
-const C3X_RELEASE_PREFIX_RULES = [
-  { re: /^(day_night_cycle_mode|elapsed_minutes_per_day_night_hour_transition|fixed_hours_per_turn_for_day_night_cycle|pinned_hour_for_day_night_cycle|seasonal_cycle_mode|enabled_seasons|pinned_season_for_seasonal_cycle|elapsed_minutes_per_season_transition|fixed_turns_per_season|transition_season_on_day_night_hour)$/, release: 'R25', confidence: 'inferred' },
-  { re: /^(enable_natural_wonders|add_natural_wonders_to_scenarios_if_none|show_natural_wonder_name_on_map|minimum_natural_wonder_separation)$/, release: 'R26', confidence: 'inferred' },
-  { re: /^(enable_(neighborhood_districts|wonder_districts|distribution_hub_districts|aerodrome_districts|port_districts|bridge_districts|canal_districts|central_rail_hub_districts|energy_grid_districts|great_wall_districts)|cities_with_mutual_district_receive_buildings|cities_with_mutual_district_receive_wonders|show_message_when_building_lost_to_destroyed_district|air_units_use_aerodrome_districts_not_cities|naval_units_use_port_districts_not_cities|maximum_pop_before_neighborhood_needed|per_neighborhood_pop_growth_enabled|destroying_neighborhood_reduces_pop|completed_wonder_districts_can_be_destroyed|destroyed_wonders_can_be_built_again|distribution_hub_yield_division_mode|ai_distribution_hub_build_strategy|distribution_hub_food_yield_divisor|distribution_hub_shield_yield_divisor|ai_ideal_distribution_hub_count_per_100_cities|max_distribution_hub_count_per_100_cities|central_rail_hub_distribution_food_bonus_percent|central_rail_hub_distribution_shield_bonus_percent|expand_water_tile_checks_to_city_work_area|workers_can_enter_coast|max_contiguous_bridge_districts|max_contiguous_canal_districts|ai_canal_eval_min_bisected_land_tiles|ai_bridge_canal_eval_block_size|ai_bridge_eval_lake_tile_threshold|ai_can_replace_existing_districts_with_canals|ai_builds_bridges|ai_builds_canals|ai_defends_districts|ai_city_district_max_build_wait_turns|disable_great_wall_city_defense_bonus|great_wall_districts_impassible_by_others|auto_build_great_wall_around_territory|great_wall_auto_build_wonder_name|ai_auto_build_great_wall_strategy|enable_city_work_radii_highlights)$/, release: 'R26', confidence: 'inferred' }
-];
 const EDITABLE_TAB_KEYS = [
   'base',
   'districts',
@@ -1310,6 +1380,19 @@ function collectFilesModalEntries() {
   }
 
   return out.sort((a, b) => {
+    const aAccess = state.filesReadAccessByPath[String(a && a.path || '').trim()] || null;
+    const bAccess = state.filesReadAccessByPath[String(b && b.path || '').trim()] || null;
+    const aChange = getFilesEntryChangeCategory(a, aAccess);
+    const bChange = getFilesEntryChangeCategory(b, bAccess);
+    const changePriority = (value) => {
+      if (value === 'new') return 0;
+      if (value === 'changed') return 1;
+      return 2;
+    };
+    const aChangePri = changePriority(aChange);
+    const bChangePri = changePriority(bChange);
+    if (aChangePri !== bChangePri) return aChangePri - bChangePri;
+
     const scopePriority = { core: 0, scenario: 1, c3x: 2, external: 3 };
     const aScope = classifyReadFilePath(a.path).scope;
     const bScope = classifyReadFilePath(b.path).scope;
@@ -1686,6 +1769,7 @@ function renderFilesReadModal() {
     }
 
     const accessBadge = document.createElement('span');
+    let showAccessBadge = true;
     if (classification.scope === 'core' || isProtectedC3xDefaultPathLocal(pathValue)) {
       accessBadge.className = 'files-read-badge neutral';
       accessBadge.textContent = 'Read-Only';
@@ -1694,8 +1778,12 @@ function renderFilesReadModal() {
       accessBadge.textContent = access.writable ? 'Writable' : 'Read-only on disk';
     } else if (access && !access.exists) {
       if (entry.potentialWrite && changeCategory === 'new' && access.parentPath) {
-        accessBadge.className = `files-read-badge ${access.parentWritable ? 'ok' : 'warn'}`;
-        accessBadge.textContent = access.parentWritable ? 'Can create' : 'Cannot create';
+        if (access.parentWritable) {
+          showAccessBadge = false;
+        } else {
+          accessBadge.className = 'files-read-badge warn';
+          accessBadge.textContent = 'Cannot create';
+        }
       } else if (entry.isPrimaryBaseTarget) {
         accessBadge.className = 'files-read-badge neutral';
         accessBadge.textContent = 'Not created yet';
@@ -1707,7 +1795,7 @@ function renderFilesReadModal() {
       accessBadge.className = 'files-read-badge neutral';
       accessBadge.textContent = 'Checking access';
     }
-    meta.appendChild(accessBadge);
+    if (showAccessBadge) meta.appendChild(accessBadge);
 
     li.appendChild(top);
     li.appendChild(meta);
@@ -1725,10 +1813,7 @@ function openFilesReadModal() {
 
 function updateSaveButtonLabel() {
   if (!el.saveBtn) return;
-  const label = (state.bundle && state.activeTab === 'base')
-    ? `Save to ${getActiveBaseTargetName()}`
-    : 'Save';
-  el.saveBtn.innerHTML = `<span class="btn-icon">💾</span>${label}`;
+  el.saveBtn.innerHTML = '<span class="btn-icon">💾</span>Save';
 }
 
 function closeFilesReadModal() {
@@ -2100,7 +2185,7 @@ function updateActiveDirtyCaches() {
   }
 
   if (EDITABLE_TAB_KEYS.includes(tabKey)) {
-    setTabDirtyCount(tabKey, isTabDirty(tabKey) ? 1 : 0);
+    setTabDirtyCount(tabKey, computeTabDirtyCount(tabKey));
   }
 }
 
@@ -2133,7 +2218,7 @@ function rebuildDirtyTabCounts() {
       setTabDirtyCount(tabKey, set.size);
       return;
     }
-    setTabDirtyCount(tabKey, isTabDirty(tabKey) ? 1 : 0);
+    setTabDirtyCount(tabKey, computeTabDirtyCount(tabKey));
   });
 }
 
@@ -2172,9 +2257,33 @@ function appendDirtyBadge(target, label = 'Modified', count = null) {
   target.appendChild(badge);
 }
 
+function appendWarningCountBadge(target, label = 'Warnings', count = 0) {
+  if (!target) return;
+  const n = Number(count) || 0;
+  if (n <= 0) return;
+  const badge = document.createElement('span');
+  badge.className = 'tab-warning-badge';
+  badge.textContent = String(n);
+  badge.title = label;
+  target.appendChild(badge);
+}
+
 function applyDirtyBadgeToTabButton(button, key, tab) {
   if (!button) return;
   Array.from(button.querySelectorAll('.dirty-dot-badge')).forEach((node) => node.remove());
+  Array.from(button.querySelectorAll('.tab-warning-badge')).forEach((node) => node.remove());
+
+  if (key === 'districts') {
+    const warningCount = collectDistrictIssueIndexes(tab).size;
+    if (warningCount > 0) {
+      appendWarningCountBadge(
+        button,
+        `Districts has ${warningCount} warning${warningCount === 1 ? '' : 's'}`,
+        warningCount
+      );
+    }
+  }
+
   const dirtyCount = getTabDirtyCount(key);
   if (dirtyCount > 0) {
     appendDirtyBadge(button, `${tab.title} has ${dirtyCount} unsaved edit${dirtyCount === 1 ? '' : 's'}`, dirtyCount);
@@ -3243,6 +3352,28 @@ function collectGlobalSearchItems() {
       });
     }
 
+    if (tabKey === 'base' && Array.isArray(tab.rows)) {
+      tab.rows.forEach((row) => {
+        const rawKey = String(row && row.key || '').trim();
+        if (!rawKey) return;
+        const friendlyName = toFriendlyKey(rawKey);
+        const docs = String((tab.fieldDocs && tab.fieldDocs[rawKey]) || '').trim();
+        const rowValue = String(row && row.value || '').trim();
+        items.push({
+          kind: 'C3X Field',
+          title: `${tabTitle}: ${friendlyName}`,
+          subtitle: rawKey,
+          search: `${tabTitle} c3x base field setting ${friendlyName} ${rawKey} ${docs} ${rowValue}`,
+          action: () => {
+            navigateWithHistory(() => {
+              state.activeTab = tabKey;
+              state.baseFilter = rawKey;
+            }, { preserveTabScroll: false });
+          }
+        });
+      });
+    }
+
     if (tab.type === 'biqStructure' && Array.isArray(tab.sections)) {
       tab.sections.forEach((section, sectionIndex) => {
         const sectionTitle = getFriendlyBiqSectionTitle(section);
@@ -3536,15 +3667,6 @@ function getC3xReleaseInfo(rawKey) {
   if (exact) {
     return { label: exact, confidence: 'exact', note: `Introduced in ${exact} (changelog/direct mapping).` };
   }
-  for (const rule of C3X_RELEASE_PREFIX_RULES) {
-    if (rule.re.test(key)) {
-      return {
-        label: rule.release,
-        confidence: (rule.release === 'R25' || rule.release === 'R26') ? 'exact' : (rule.confidence || 'inferred'),
-        note: `Likely introduced in ${rule.release} (inferred from related feature group in changelog).`
-      };
-    }
-  }
   return {
     label: 'R1',
     confidence: 'assumed',
@@ -3621,7 +3743,8 @@ function parseStructuredEntries(value) {
     v = v.slice(1, -1).trim();
   }
   if (!v) return [];
-  return tokenizeListPreservingQuotes(v);
+  if (/[,\r\n]/.test(v)) return tokenizeListPreservingQuotes(v);
+  return tokenizeWhitespacePreservingQuotes(v);
 }
 
 function serializeStructuredEntries(entries) {
@@ -3635,6 +3758,24 @@ function serializeQuotedStructuredEntries(entries) {
     .filter(Boolean)
     .map((token) => quoteConfigToken(token));
   return cleaned.length > 0 ? `[${cleaned.join(', ')}]` : '';
+}
+
+function tokenizeWhitespacePreservingQuotes(text) {
+  const input = String(text || '').trim();
+  if (!input) return [];
+  const parts = input.match(/"[^"]*"|\S+/g) || [];
+  return parts.map((part) => String(part || '').trim()).filter(Boolean);
+}
+
+function parseBracketedOptionTokens(value) {
+  let raw = String(value || '').trim();
+  if (raw.startsWith('[') && raw.endsWith(']')) raw = raw.slice(1, -1).trim();
+  if (!raw) return [];
+  const hasCommaOrNewline = /[,\r\n]/.test(raw);
+  const tokens = hasCommaOrNewline
+    ? tokenizeListPreservingQuotes(raw)
+    : tokenizeWhitespacePreservingQuotes(raw);
+  return tokens.map((token) => normalizeConfigToken(token)).filter(Boolean);
 }
 
 function isStructuredBaseField(row) {
@@ -3839,12 +3980,25 @@ function serializeLeaderAliasesByEra(items) {
 function getNamedReferenceOptionsForTab(tabKey) {
   const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
   if (!tab || !Array.isArray(tab.entries)) return [];
+  const normalizedTabKey = String(tabKey || '').trim();
+  const getEntryLabel = (entry) => {
+    if (normalizedTabKey === 'improvements') {
+      const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+      const nameField = fields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === 'name');
+      const biqName = normalizeConfigToken(nameField && nameField.value);
+      if (biqName) return biqName;
+    }
+    return String(entry && entry.name || '').trim();
+  };
   return tab.entries
-    .map((entry) => ({
-      value: String(entry && entry.name || '').trim(),
-      label: String(entry && entry.name || '').trim(),
-      entry
-    }))
+    .map((entry) => {
+      const label = getEntryLabel(entry);
+      return {
+        value: label,
+        label,
+        entry
+      };
+    })
     .filter((opt) => !!opt.value)
     .sort((a, b) => String(a.label).localeCompare(String(b.label), 'en', { sensitivity: 'base' }));
 }
@@ -4053,17 +4207,13 @@ function makeInputForBaseRow(row, onChange) {
     wrap.className = 'structured-list';
     const raw = String(row.value || '').trim();
 
-    const mode = document.createElement('select');
-    [
-      { value: 'false', label: 'No Limit' },
-      { value: 'single', label: 'Single Value' },
-      { value: 'triple', label: 'Land / Sea / Air' }
-    ].forEach((m) => {
-      const o = document.createElement('option');
-      o.value = m.value;
-      o.textContent = m.label;
-      mode.appendChild(o);
-    });
+    const MODE_OPTIONS = ['false', 'single', 'triple'];
+    const MODE_LABELS = {
+      false: 'No Limit',
+      single: 'Single Value',
+      triple: 'Land / Sea / Air'
+    };
+    let modeValue = 'false';
 
     const inputA = document.createElement('input');
     inputA.placeholder = 'value';
@@ -4075,30 +4225,39 @@ function makeInputForBaseRow(row, onChange) {
     inputD.placeholder = 'air';
 
     if (raw.startsWith('[') && raw.endsWith(']')) {
-      mode.value = 'triple';
+      modeValue = 'triple';
       const tokens = raw.slice(1, -1).trim().split(/\s+/);
       inputB.value = tokens[0] || '';
       inputC.value = tokens[1] || '';
       inputD.value = tokens[2] || '';
     } else if (raw === 'false' || raw === '') {
-      mode.value = 'false';
+      modeValue = 'false';
     } else {
-      mode.value = 'single';
+      modeValue = 'single';
       inputA.value = raw;
     }
 
     const recalc = () => {
-      if (mode.value === 'false') onChange('false');
-      else if (mode.value === 'single') onChange(String(inputA.value || '').trim());
+      if (modeValue === 'false') onChange('false');
+      else if (modeValue === 'single') onChange(String(inputA.value || '').trim());
       else onChange(`[${String(inputB.value || '').trim()} ${String(inputC.value || '').trim()} ${String(inputD.value || '').trim()}]`);
       rerender();
     };
 
     const rerender = () => {
       wrap.innerHTML = '';
-      wrap.appendChild(mode);
-      if (mode.value === 'single') wrap.appendChild(inputA);
-      if (mode.value === 'triple') {
+      const segmented = makeSegmentedChoiceControl(MODE_OPTIONS, modeValue, (next) => {
+        modeValue = String(next || '').trim();
+        recalc();
+      });
+      const buttons = Array.from(segmented.querySelectorAll('.segmented-control-btn'));
+      buttons.forEach((btn) => {
+        const key = String(btn.textContent || '').trim();
+        if (MODE_LABELS[key]) btn.textContent = MODE_LABELS[key];
+      });
+      wrap.appendChild(segmented);
+      if (modeValue === 'single') wrap.appendChild(inputA);
+      if (modeValue === 'triple') {
         const rowWrap = document.createElement('div');
         rowWrap.className = 'kv-row';
         rowWrap.appendChild(inputB);
@@ -4108,7 +4267,6 @@ function makeInputForBaseRow(row, onChange) {
       }
     };
 
-    mode.addEventListener('change', recalc);
     inputA.addEventListener('input', recalc);
     inputB.addEventListener('input', recalc);
     inputC.addEventListener('input', recalc);
@@ -4394,7 +4552,14 @@ function makeInputForBaseRow(row, onChange) {
     const wrap = document.createElement('div');
     wrap.className = 'segmented-multi-list';
     const options = BASE_MULTI_CHOICE_LIST_OPTIONS[row.key];
-    const selected = new Set(parseStructuredEntries(row.value).map((v) => normalizeConfigToken(v).toLowerCase()).filter(Boolean));
+    const normalizedOptions = options.map((opt) => String(opt || '').trim().toLowerCase()).filter(Boolean);
+    const parsed = parseBracketedOptionTokens(row.value).map((v) => String(v || '').trim().toLowerCase()).filter(Boolean);
+    const selected = new Set(parsed.filter((token) => normalizedOptions.includes(token)));
+    const sourceMisconfigured = parsed.length > 0 && selected.size === 0;
+    if (!sourceMisconfigured && selected.size === 0 && normalizedOptions.length > 0) {
+      if (normalizedOptions.includes('all')) selected.add('all');
+      else selected.add(normalizedOptions[0]);
+    }
     options.forEach((opt) => {
       const token = String(opt || '').trim();
       const key = token.toLowerCase();
@@ -4404,8 +4569,10 @@ function makeInputForBaseRow(row, onChange) {
       btn.textContent = token;
       btn.classList.toggle('active', selected.has(key));
       btn.addEventListener('click', () => {
-        if (selected.has(key)) selected.delete(key);
-        else selected.add(key);
+        if (selected.has(key)) {
+          if (selected.size <= 1) return;
+          selected.delete(key);
+        } else selected.add(key);
         btn.classList.toggle('active', selected.has(key));
         const ordered = options.filter((x) => selected.has(String(x || '').trim().toLowerCase()));
         onChange(serializeStructuredEntries(ordered));
@@ -4604,6 +4771,30 @@ function makeInputForBaseRow(row, onChange) {
     };
     rerender();
     return wrap;
+  }
+
+  if (row.key === 'great_wall_auto_build_wonder_name') {
+    const normalizedCurrent = normalizeConfigToken(row.value);
+    const normalizeWonderLookup = (value) => normalizeConfigToken(value).toLowerCase().replace(/^the\s+/i, '').replace(/\s+/g, ' ').trim();
+    const currentLookup = normalizeWonderLookup(normalizedCurrent);
+    const wonderOpts = getFilteredImprovementOptions(['wonder']);
+    const matched = currentLookup
+      ? wonderOpts.find((opt) => normalizeWonderLookup(opt.value) === currentLookup)
+      : null;
+    if (normalizedCurrent && !matched) {
+      wonderOpts.unshift({ value: normalizedCurrent, label: normalizedCurrent, entry: null });
+    }
+    return createReferencePicker({
+      options: wonderOpts,
+      targetTabKey: 'improvements',
+      currentValue: (matched && matched.value) || normalizedCurrent || '-1',
+      searchPlaceholder: 'Search Wonder...',
+      noneLabel: '(none)',
+      onSelect: (next) => {
+        const normalized = String(next || '').trim();
+        onChange(normalized === '-1' ? '' : quoteConfigToken(normalized));
+      }
+    });
   }
 
   if (row.key === 'building_prereqs_for_units') {
@@ -4809,29 +5000,39 @@ function makeInputForBaseRow(row, onChange) {
 
 function renderBaseTab(tab) {
   const wrap = document.createElement('div');
+  const cleanTabs = getCleanTabsObject();
+  const cleanBaseTab = cleanTabs && cleanTabs.base && Array.isArray(cleanTabs.base.rows) ? cleanTabs.base : null;
+  const cleanValueByKey = new Map(
+    (cleanBaseTab && Array.isArray(cleanBaseTab.rows) ? cleanBaseTab.rows : [])
+      .map((row) => [String(row && row.key || ''), String(row && row.value || '')])
+  );
+  const initialValueByKey = new Map(
+    (tab && Array.isArray(tab.rows) ? tab.rows : [])
+      .map((row) => [String(row && row.key || ''), String(row && row.value || '')])
+  );
+  const activeOverrideSource = isScenarioMode() ? 'scenario' : 'custom';
+  const isBaseRowDirty = (row) => {
+    const key = String(row && row.key || '');
+    if (!key) return false;
+    if (cleanValueByKey.has(key)) {
+      return String(row && row.value || '') !== String(cleanValueByKey.get(key) || '');
+    }
+    if (initialValueByKey.has(key)) {
+      return String(row && row.value || '') !== String(initialValueByKey.get(key) || '');
+    }
+    return false;
+  };
+  const getDisplaySourceKey = (row) => {
+    const dirty = isBaseRowDirty(row);
+    if (dirty) return activeOverrideSource;
+    return String(row && row.source || '').trim().toLowerCase();
+  };
 
   const header = document.createElement('div');
   header.className = 'section-editor-header sticky';
   header.appendChild(createIcon(TAB_ICONS.base));
   header.insertAdjacentHTML('beforeend', `<h3>${tab.title}</h3><span class="source-tag">editing: ${getActiveBaseTargetName()}</span>`);
   wrap.appendChild(header);
-
-  const targetCard = document.createElement('div');
-  targetCard.className = 'c3x-active-file-card';
-  const targetPath = getActiveBaseTargetPath();
-  const targetPathLabel = targetPath ? (compactPathFromCiv3Root(targetPath) || targetPath) : '(not available)';
-  targetCard.innerHTML = `
-    <div class="c3x-active-file-title">Active C3X File: <code>${getActiveBaseTargetName()}</code></div>
-    <div class="c3x-active-file-path">${targetPathLabel}</div>
-    <div class="c3x-active-file-chain">${getActiveBaseChainLine()}</div>
-  `;
-  if (isScenarioMode()) {
-    const scenarioNote = document.createElement('div');
-    scenarioNote.className = 'c3x-active-file-note';
-    scenarioNote.textContent = 'Scenario mode writes scenario.c3x_config.ini in the active scenario folder.';
-    targetCard.appendChild(scenarioNote);
-  }
-  wrap.appendChild(targetCard);
 
   const helper = document.createElement('p');
   helper.className = 'hint';
@@ -4881,12 +5082,31 @@ function renderBaseTab(tab) {
     const keyName = document.createElement('span');
     keyName.textContent = toFriendlyKey(row.key);
     keyHead.appendChild(keyName);
+    const dirtyBadge = document.createElement('span');
+    dirtyBadge.className = 'base-dirty-badge';
+    dirtyBadge.textContent = '•';
+    dirtyBadge.title = 'Unsaved change';
+    dirtyBadge.classList.toggle('hidden', !isBaseRowDirty(row));
+    keyHead.appendChild(dirtyBadge);
     const releaseInfo = getC3xReleaseInfo(row.key);
     const releaseBadge = document.createElement('span');
     releaseBadge.className = `c3x-release-badge ${releaseInfo.confidence}`;
     releaseBadge.textContent = releaseInfo.label;
     releaseBadge.title = `${releaseInfo.note}\nField: ${row.key}`;
+    releaseBadge.classList.toggle('hidden', releaseInfo.label === 'R1');
     keyHead.appendChild(releaseBadge);
+    const sourceBadge = document.createElement('span');
+    const refreshSourceBadge = () => {
+      const sourceKey = getDisplaySourceKey(row);
+      sourceBadge.className = `c3x-source-pill source-${sourceKey || 'unknown'}`;
+      sourceBadge.textContent = sourceKey || 'unknown';
+      sourceBadge.classList.toggle('hidden', sourceKey === 'default' || !sourceKey || sourceKey === 'unknown');
+      if (sourceKey === 'custom') sourceBadge.title = 'Value shown from custom.c3x_config.ini';
+      else if (sourceKey === 'scenario') sourceBadge.title = 'Value shown from scenario.c3x_config.ini';
+      else sourceBadge.title = `Value shown from ${getBaseFieldSource(row)}`;
+    };
+    refreshSourceBadge();
+    keyHead.appendChild(sourceBadge);
     keyTitle.appendChild(keyHead);
     keyWrap.appendChild(keyTitle);
     keyWrap.appendChild(createBaseMeta(row, tab.fieldDocs));
@@ -4896,6 +5116,8 @@ function renderBaseTab(tab) {
     const input = makeInputForBaseRow(row, (newValue) => {
       rememberUndoSnapshot();
       row.value = String(newValue);
+      dirtyBadge.classList.toggle('hidden', !isBaseRowDirty(row));
+      refreshSourceBadge();
       setDirty(true);
     });
     if (row.type === 'boolean' && input instanceof Element) {
@@ -4907,14 +5129,19 @@ function renderBaseTab(tab) {
     const groupInfo = groups.get(sectionName);
     groupInfo.rowsWrap.appendChild(r);
     groupInfo.rowCount += 1;
-    rowElements.push({ key: row.key.toLowerCase(), el: r, group: groupInfo.group });
+    const rawKey = String(row && row.key || '').trim();
+    const friendlyName = toFriendlyKey(rawKey);
+    const docs = String((tab.fieldDocs && tab.fieldDocs[rawKey]) || '').trim();
+    const searchText = `${rawKey} ${friendlyName} ${docs}`.toLowerCase();
+    rowElements.push({ key: rawKey.toLowerCase(), searchText, el: r, group: groupInfo.group });
   }
 
   const applyFilter = () => {
     const needle = filterInput.value.trim().toLowerCase();
     state.baseFilter = filterInput.value;
     rowElements.forEach((entry) => {
-      entry.el.style.display = !needle || entry.key.includes(needle) ? '' : 'none';
+      const hay = String(entry.searchText || entry.key || '');
+      entry.el.style.display = !needle || hay.includes(needle) ? '' : 'none';
     });
     groups.forEach((g) => {
       const hasVisible = Array.from(g.rowsWrap.children).some((child) => child.style.display !== 'none');
@@ -6257,10 +6484,11 @@ function getSectionTitle(section, schema, index) {
 
 function getSectionTabSourceMeta(tab) {
   const src = String(tab && tab.effectiveSource || '').trim() || 'effective';
+  const readPath = String(tab && tab.sourceDetails && tab.sourceDetails.effectivePath || '').trim();
   const writePath = String(tab && tab.targetPath || '').trim();
   return {
     source: `C3X ${src}`,
-    readPath: '',
+    readPath,
     writePath
   };
 }
@@ -6379,6 +6607,167 @@ function orderSectionFieldsByDocs(schemaFields, fieldDocs) {
   });
 }
 
+const DISTRICT_DEPENDENCY_RULES = [
+  { key: 'advance_prereqs', label: 'Tech Prerequisites', setKey: 'technologies' },
+  { key: 'obsoleted_by', label: 'Obsoleted By', setKey: 'technologies' },
+  { key: 'dependent_improvs', label: 'Dependent Improvements', setKey: 'improvements' },
+  { key: 'wonder_prereqs', label: 'Wonder Prerequisites', setKey: 'improvements' },
+  { key: 'resource_prereqs', label: 'Resource Prerequisites', setKey: 'resources' },
+  { key: 'buildable_by_civs', label: 'Allowed Civs', setKey: 'civilizations' },
+  { key: 'buildable_by_civ_govs', label: 'Allowed Governments', setKey: 'governments' },
+  { key: 'natural_wonder_prereqs', label: 'Natural Wonder Prerequisites', setKey: 'naturalWonders' },
+  { key: 'buildable_on_districts', label: 'Buildable On Districts', setKey: 'districts' },
+  { key: 'buildable_adjacent_to_districts', label: 'Adjacent Districts', setKey: 'districts' }
+];
+
+function getReferenceEntryDisplayName(tabKey, entry) {
+  const normalizedTabKey = String(tabKey || '').trim();
+  if (normalizedTabKey === 'improvements') {
+    const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+    const nameField = fields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === 'name');
+    const biqName = normalizeConfigToken(nameField && nameField.value);
+    if (biqName) return biqName;
+  }
+  return String(entry && entry.name || '').trim();
+}
+
+function toNormalizedLookupSet(values) {
+  const out = new Set();
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const normalized = normalizeConfigToken(value).toLowerCase();
+    if (normalized) out.add(normalized);
+  });
+  return out;
+}
+
+function buildDistrictCompatibilityContext(bundle, districtSectionsOverride = null) {
+  const sourceBundle = bundle || state.bundle || {};
+  const tabs = sourceBundle.tabs || {};
+  const getReferenceSet = (tabKey) => {
+    const tab = tabs[tabKey];
+    if (!tab || !Array.isArray(tab.entries)) return new Set();
+    return toNormalizedLookupSet(tab.entries.map((entry) => getReferenceEntryDisplayName(tabKey, entry)));
+  };
+  const naturalWonderSections = (((tabs.naturalWonders || {}).model || {}).sections || []);
+  const districtSections = Array.isArray(districtSectionsOverride)
+    ? districtSectionsOverride
+    : ((((tabs.districts || {}).model || {}).sections || []));
+  const naturalWonders = toNormalizedLookupSet(naturalWonderSections.map((section) => getFieldValue(section, 'name')));
+  const districts = toNormalizedLookupSet(districtSections.map((section) => getFieldValue(section, 'name')));
+  return {
+    technologies: getReferenceSet('technologies'),
+    improvements: getReferenceSet('improvements'),
+    resources: getReferenceSet('resources'),
+    civilizations: getReferenceSet('civilizations'),
+    governments: getReferenceSet('governments'),
+    naturalWonders,
+    districts
+  };
+}
+
+function collectDistrictDependencyIssues(section, index, context, districtNameOverrideSet = null) {
+  const issues = [];
+  const ctx = context || buildDistrictCompatibilityContext();
+  DISTRICT_DEPENDENCY_RULES.forEach((rule) => {
+    const tokenValues = tokenizeListPreservingQuotes(getFieldValue(section, rule.key))
+      .map((value) => normalizeConfigToken(value))
+      .filter(Boolean);
+    if (tokenValues.length <= 0) return;
+    const allowedSet = rule.setKey === 'districts'
+      ? (districtNameOverrideSet || ctx.districts || new Set())
+      : (ctx[rule.setKey] || new Set());
+    if (!(allowedSet instanceof Set) || allowedSet.size <= 0) return;
+    const invalidValues = tokenValues.filter((value) => !allowedSet.has(normalizeConfigToken(value).toLowerCase()));
+    if (invalidValues.length <= 0) return;
+    issues.push({
+      key: rule.key,
+      label: rule.label,
+      invalidValues
+    });
+  });
+  return issues;
+}
+
+function collectDistrictCompatibilityIssuesForTab(tab) {
+  const districtTab = tab || (state.bundle && state.bundle.tabs && state.bundle.tabs.districts);
+  const sections = districtTab && districtTab.model && Array.isArray(districtTab.model.sections)
+    ? districtTab.model.sections
+    : [];
+  const context = buildDistrictCompatibilityContext(state.bundle, sections);
+  const bySection = new Map();
+  let totalIssues = 0;
+  sections.forEach((section, idx) => {
+    const issues = collectDistrictDependencyIssues(section, idx, context, context.districts);
+    if (issues.length > 0) {
+      bySection.set(idx, issues);
+      totalIssues += issues.reduce((sum, issue) => sum + issue.invalidValues.length, 0);
+    }
+  });
+  return {
+    bySection,
+    totalIssues,
+    sectionCount: bySection.size
+  };
+}
+
+function collectDistrictIssueIndexes(tab, compatibility = null) {
+  const districtTab = tab || (state.bundle && state.bundle.tabs && state.bundle.tabs.districts);
+  const sections = districtTab && districtTab.model && Array.isArray(districtTab.model.sections)
+    ? districtTab.model.sections
+    : [];
+  const out = new Set();
+  const bySection = compatibility && compatibility.bySection instanceof Map ? compatibility.bySection : null;
+  sections.forEach((section, idx) => {
+    if (bySection && bySection.has(idx)) {
+      out.add(idx);
+      return;
+    }
+    const validationError = validateDistrictSection(section, idx);
+    if (validationError) out.add(idx);
+  });
+  return out;
+}
+
+function filterDistrictSectionsForScenarioFallback(bundle) {
+  const b = bundle || state.bundle;
+  if (!b || b.mode !== 'scenario' || !b.tabs || !b.tabs.districts) return;
+  const districtTab = b.tabs.districts;
+  const sourceDetails = districtTab.sourceDetails || {};
+  const effectiveSource = String(districtTab.effectiveSource || '').toLowerCase();
+  if (effectiveSource !== 'default' || sourceDetails.hasScenario) return;
+  const sections = districtTab.model && Array.isArray(districtTab.model.sections)
+    ? districtTab.model.sections
+    : [];
+  if (sections.length <= 0) return;
+
+  let working = sections.slice();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const districtNameSet = toNormalizedLookupSet(working.map((section) => getFieldValue(section, 'name')));
+    const context = buildDistrictCompatibilityContext(b, working);
+    const next = [];
+    working.forEach((section, idx) => {
+      const issues = collectDistrictDependencyIssues(section, idx, context, districtNameSet);
+      if (issues.length > 0) {
+        changed = true;
+      } else {
+        next.push(section);
+      }
+    });
+    working = next;
+  }
+
+  if (working.length === sections.length) return;
+  districtTab.model.sections = working;
+  districtTab.filteredFromDefault = {
+    applied: true,
+    removedCount: sections.length - working.length,
+    keptCount: working.length,
+    originalCount: sections.length
+  };
+}
+
 function validateDistrictSection(section, index) {
   const paths = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths')).map((p) => String(p || '').trim()).filter(Boolean);
   const label = getDistrictSectionDisplay(section, index).primary;
@@ -6400,6 +6789,7 @@ function validateDistrictSection(section, index) {
 
 function getSectionValidationError() {
   if (!state.bundle || !state.bundle.tabs) return '';
+  if (getTabDirtyCount('districts') <= 0) return '';
   const districtTab = state.bundle.tabs.districts;
   if (!districtTab || !districtTab.model || !Array.isArray(districtTab.model.sections)) return '';
   for (let i = 0; i < districtTab.model.sections.length; i += 1) {
@@ -9874,10 +10264,36 @@ function findOptionByValue(options, value) {
   return options.find((opt) => normalizeConfigToken(opt && opt.value) === normalized) || null;
 }
 
+function resolveReferenceEntryForPicker(targetTabKey, rawValue, options = []) {
+  const tabKey = String(targetTabKey || '').trim();
+  if (!tabKey) return null;
+  const normalized = normalizeConfigToken(rawValue);
+  if (!normalized || normalized === '-1') return null;
+  const direct = findOptionByValue(options, normalized);
+  if (direct && direct.entry) return direct.entry;
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+  if (!tab || !Array.isArray(tab.entries)) return null;
+  const parsed = parseIntFromDisplayValue(normalized);
+  if (parsed != null) {
+    const byIndex = tab.entries.find((entry, fallbackIdx) => {
+      const biqIdx = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
+      return biqIdx === parsed;
+    });
+    if (byIndex) return byIndex;
+  }
+  const needle = String(normalized).toLowerCase();
+  return tab.entries.find((entry) => {
+    const name = String((entry && entry.name) || '').trim().toLowerCase();
+    const key = String((entry && entry.civilopediaKey) || '').trim().toLowerCase();
+    return (name && name === needle) || (key && key === needle);
+  }) || null;
+}
+
 function createReferencePicker(config) {
   const opts = config || {};
   const options = Array.isArray(opts.options) ? opts.options : [];
   const targetTabKey = String(opts.targetTabKey || '').trim();
+  const readOnly = !!opts.readOnly;
   const noneLabel = String(opts.noneLabel || '(none)');
   const searchPlaceholder = String(opts.searchPlaceholder || 'Search...');
   const showOptionThumbs = opts.showOptionThumbs !== false;
@@ -9901,6 +10317,7 @@ function createReferencePicker(config) {
 
   const wrap = document.createElement('div');
   wrap.className = 'tech-picker';
+  if (readOnly) wrap.classList.add('read-only');
   const head = document.createElement('div');
   head.className = 'tech-picker-head';
   const button = document.createElement('button');
@@ -9917,6 +10334,7 @@ function createReferencePicker(config) {
   const buttonText = document.createElement('span');
   buttonText.className = 'tech-picker-btn-label';
   let selectedJumpTarget = null;
+  let selectedJumpLabel = '';
   const renderButton = (value) => {
     const normalizedValue = (() => {
       const parsed = parseIntFromDisplayValue(value);
@@ -9924,25 +10342,79 @@ function createReferencePicker(config) {
     })();
     const selected = findOptionByValue(normalizedOptions, normalizedValue) || normalizedOptions[0];
     const selectedLabel = selected ? String(selected.label || noneLabel) : noneLabel;
+    selectedJumpLabel = selectedLabel;
     buttonText.textContent = selectedLabel;
     buttonText.title = selectedLabel;
     buttonThumb.innerHTML = '';
     selectedJumpTarget = null;
     selectedJumpBtn.classList.add('hidden');
-    if (selected && selected.entry && targetTabKey) {
-      loadReferenceListThumbnail(targetTabKey, selected.entry, buttonThumb);
-      selectedJumpTarget = selected.entry;
-      selectedJumpBtn.classList.remove('hidden');
-      selectedJumpBtn.title = `Open ${selectedLabel}`;
-      selectedJumpBtn.setAttribute('aria-label', `Open ${selectedLabel}`);
+    if (selected && targetTabKey) {
+      selectedJumpTarget = selected.entry || resolveReferenceEntryForPicker(targetTabKey, normalizedValue, normalizedOptions);
+      if (selectedJumpTarget) {
+        loadReferenceListThumbnail(targetTabKey, selectedJumpTarget, buttonThumb);
+      }
+      if (!readOnly) {
+        if (selectedJumpTarget) {
+          selectedJumpBtn.classList.remove('hidden');
+          selectedJumpBtn.title = `Open ${selectedLabel}`;
+          selectedJumpBtn.setAttribute('aria-label', `Open ${selectedLabel}`);
+        }
+      }
+      button.title = readOnly ? `Open ${selectedLabel}` : selectedLabel;
+      button.setAttribute('aria-label', readOnly ? `Open ${selectedLabel}` : selectedLabel);
+      if (readOnly) {
+        appendDebugLog('ref-picker:readonly:resolve', {
+          tab: targetTabKey,
+          value: normalizedValue,
+          label: selectedLabel,
+          hasOptionEntry: !!(selected && selected.entry),
+          hasResolvedTarget: !!selectedJumpTarget,
+          targetKey: selectedJumpTarget ? String(selectedJumpTarget.civilopediaKey || '') : ''
+        });
+      }
     }
   };
   renderButton(currentValue);
   button.appendChild(buttonThumb);
   button.appendChild(buttonText);
   head.appendChild(button);
-  head.appendChild(selectedJumpBtn);
+  if (!readOnly) head.appendChild(selectedJumpBtn);
   wrap.appendChild(head);
+
+  if (readOnly) {
+    button.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      appendDebugLog('ref-picker:readonly:click', {
+        tab: targetTabKey,
+        label: selectedJumpLabel,
+        hasTarget: !!selectedJumpTarget,
+        targetKey: selectedJumpTarget ? String(selectedJumpTarget.civilopediaKey || '') : ''
+      });
+      if (!selectedJumpTarget || !targetTabKey) return;
+      navigateToReferenceEntry(targetTabKey, selectedJumpTarget);
+    });
+    button.addEventListener('mouseenter', () => {
+      appendDebugLog('ref-picker:readonly:hover', {
+        tab: targetTabKey,
+        label: selectedJumpLabel,
+        hasTarget: !!selectedJumpTarget,
+        targetKey: selectedJumpTarget ? String(selectedJumpTarget.civilopediaKey || '') : ''
+      });
+      if (!selectedJumpTarget || !selectedJumpTarget.civilopediaKey) return;
+      showPediaLinkPreview(button, selectedJumpTarget.civilopediaKey, selectedJumpLabel);
+    });
+    button.addEventListener('mouseleave', () => {
+      hidePediaLinkPreviewSoon();
+    });
+    button.addEventListener('focus', () => {
+      if (!selectedJumpTarget || !selectedJumpTarget.civilopediaKey) return;
+      showPediaLinkPreview(button, selectedJumpTarget.civilopediaKey, selectedJumpLabel);
+    });
+    button.addEventListener('blur', () => {
+      hidePediaLinkPreviewSoon();
+    });
+    return wrap;
+  }
 
   const menu = document.createElement('div');
   menu.className = 'tech-picker-menu hidden';
@@ -10401,7 +10873,15 @@ function createTechLinkPills({ title, ids, byId, onJump }) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'tech-link-pill';
-    btn.textContent = target ? String(target.entry && target.entry.name || `Tech ${id}`) : `Tech ${id}`;
+    const thumb = document.createElement('span');
+    thumb.className = 'entry-thumb';
+    if (target && target.entry) {
+      loadReferenceListThumbnail('technologies', target.entry, thumb);
+    }
+    const label = document.createElement('span');
+    label.textContent = target ? String(target.entry && target.entry.name || `Tech ${id}`) : `Tech ${id}`;
+    btn.appendChild(thumb);
+    btn.appendChild(label);
     btn.addEventListener('click', () => {
       if (typeof onJump === 'function') onJump(id);
     });
@@ -10472,6 +10952,10 @@ function createTechTreePanel({
     ? 'Click to select. Drag the selected tech to update BIQ X/Y.'
     : 'Read-only preview of prerequisites and unlock paths.';
   controls.appendChild(dragHint);
+  const alignmentHint = document.createElement('span');
+  alignmentHint.className = 'hint hint-compact';
+  alignmentHint.textContent = 'Note: this layout approximates Civ III and may not match exact in-game positions at every resolution.';
+  controls.appendChild(alignmentHint);
   const coordsChip = document.createElement('span');
   coordsChip.className = 'tech-tree-live-coords';
   coordsChip.textContent = 'X: -, Y: -';
@@ -11166,6 +11650,8 @@ function drawPediaLinkPreviewPlaceholder() {
 }
 
 function showPediaLinkPreview(anchor, civilopediaKey, fallbackLabel = '') {
+  richTooltip.active = false;
+  hideRichTooltip();
   const node = ensurePediaLinkPreviewNode();
   const found = getCivilopediaEntryForKey(civilopediaKey);
   const key = String(civilopediaKey || '').trim().toUpperCase();
@@ -13519,9 +14005,64 @@ function renderReferenceTab(tab, tabKey) {
     const identityValues = formatIdentityTechValues(techCtx);
     const hasIdentityTechInfo = techCtx.fields.length > 0 || identityValues.length > 0;
     if (hasIdentityTechInfo) {
-      depsLine.innerHTML = `<strong>${techCtx.label}:</strong>${referenceEditable && techCtx.fields.length > 0 ? '' : ` ${formatReferenceList(identityValues)}`}`;
-      attachRichTooltip(depsLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
-      identityGrid.appendChild(depsLine);
+      if (!referenceEditable) {
+        const techData = getTechTreeData(getTechEntries());
+        const ids = (techCtx.fields.length > 0 ? techCtx.fields : identityValues.map((value) => ({ value })))
+          .map((fieldOrValue) => resolveTechIndexFromValue(fieldOrValue && fieldOrValue.value != null ? fieldOrValue.value : fieldOrValue))
+          .filter((id, idx, arr) => Number.isFinite(id) && id >= 0 && arr.indexOf(id) === idx);
+        if (ids.length > 0) {
+          const links = createTechLinkPills({
+            title: techCtx.label,
+            ids,
+            byId: techData.byId,
+            onJump: (id) => {
+              const node = techData.byId.get(id);
+              appendDebugLog('identity-tech:click', {
+                tab: tabKey,
+                label: techCtx.label,
+                id,
+                targetKey: node && node.entry ? String(node.entry.civilopediaKey || '') : ''
+              });
+              if (node && node.entry) navigateToReferenceEntry('technologies', node.entry);
+            }
+          });
+          const pills = Array.from(links.querySelectorAll('.tech-link-pill'));
+          pills.forEach((btn, idx) => {
+            const id = ids[idx];
+            const node = techData.byId.get(id);
+            btn.addEventListener('mouseenter', () => {
+              appendDebugLog('identity-tech:hover', {
+                tab: tabKey,
+                label: techCtx.label,
+                id,
+                targetKey: node && node.entry ? String(node.entry.civilopediaKey || '') : ''
+              });
+              if (!node || !node.entry || !node.entry.civilopediaKey) return;
+              showPediaLinkPreview(btn, node.entry.civilopediaKey, String(node.entry.name || ''));
+            });
+            btn.addEventListener('mouseleave', () => {
+              hidePediaLinkPreviewSoon();
+            });
+            btn.addEventListener('focus', () => {
+              if (!node || !node.entry || !node.entry.civilopediaKey) return;
+              showPediaLinkPreview(btn, node.entry.civilopediaKey, String(node.entry.name || ''));
+            });
+            btn.addEventListener('blur', () => {
+              hidePediaLinkPreviewSoon();
+            });
+          });
+          attachRichTooltip(links, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
+          identityGrid.appendChild(links);
+        } else {
+          depsLine.innerHTML = `<strong>${techCtx.label}:</strong> ${formatReferenceList(identityValues)}`;
+          attachRichTooltip(depsLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
+          identityGrid.appendChild(depsLine);
+        }
+      } else {
+        depsLine.innerHTML = `<strong>${techCtx.label}:</strong>${techCtx.fields.length > 0 ? '' : ` ${formatReferenceList(identityValues)}`}`;
+        attachRichTooltip(depsLine, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
+        identityGrid.appendChild(depsLine);
+      }
     }
     if (referenceEditable && techCtx.editable && techCtx.fields.length > 0) {
       const techEditRow = document.createElement('div');
@@ -13809,10 +14350,34 @@ function renderReferenceTab(tab, tabKey) {
               controlWrap.appendChild(input);
             }
           } else {
-            const text = document.createElement('div');
-            text.className = 'field-meta';
-            text.textContent = formatFieldValueForDisplay(tabKey, field);
-            controlWrap.appendChild(text);
+            const hasEnumOptions = enumOptions.length > 0;
+            const hasRefOptions = refOptions.length > 0;
+            const useReferencePicker = hasRefOptions && (desiredControl === 'reference' || (!desiredControl && !hasEnumOptions));
+            if (useReferencePicker) {
+              const labelText = String(field.label || field.key || 'value').trim();
+              const isTechPrereqField = tabKey === 'technologies' && /^prerequisite/i.test(String(field.baseKey || field.key || ''));
+              const normalizedCurrentValue = isTechPrereqField
+                ? (() => {
+                    const idx = resolveTechIndexFromValue(field.value);
+                    return idx == null ? '-1' : String(idx);
+                  })()
+                : field.value;
+              const picker = createReferencePicker({
+                options: refOptions,
+                targetTabKey: (BIQ_FIELD_REFS[tabKey] || {})[String(field.baseKey || field.key || '').toLowerCase()] || '',
+                currentValue: normalizedCurrentValue,
+                searchPlaceholder: `Search ${labelText}...`,
+                noneLabel: '(none)',
+                showOptionThumbs: false,
+                readOnly: true
+              });
+              controlWrap.appendChild(picker);
+            } else {
+              const text = document.createElement('div');
+              text.className = 'field-meta';
+              text.textContent = formatFieldValueForDisplay(tabKey, field);
+              controlWrap.appendChild(text);
+            }
           }
           row.appendChild(controlWrap);
           groupCard.appendChild(row);
@@ -19466,6 +20031,10 @@ function addSection(tab, tabKey) {
 
 function renderSectionTab(tab, tabKey) {
   const schema = SECTION_SCHEMAS[tabKey];
+  const sourceMeta = getSectionTabSourceMeta(tab);
+  const sourceFile = compactPathFromCiv3Root(sourceMeta.readPath || sourceMeta.writePath) || '(not found)';
+  const districtCompatibility = tabKey === 'districts' ? collectDistrictCompatibilityIssuesForTab(tab) : null;
+  const districtIssueIndexes = tabKey === 'districts' ? collectDistrictIssueIndexes(tab, districtCompatibility) : null;
   const wrap = document.createElement('div');
   wrap.className = 'section-editor';
 
@@ -19484,8 +20053,21 @@ function renderSectionTab(tab, tabKey) {
 
   const helper = document.createElement('p');
   helper.className = 'hint';
-  helper.textContent = `${tab.title} editor. Saving writes ${isScenarioMode() ? 'scenario.*' : 'user.*'} files for this tab.`;
+  if (tabKey === 'districts') {
+    helper.textContent = `${tab.title} editor. Using ${sourceFile}. Saving writes ${isScenarioMode() ? 'scenario.districts_config.txt' : 'user.districts_config.txt'}.`;
+  } else {
+    helper.textContent = `${tab.title} editor. Saving writes ${isScenarioMode() ? 'scenario.*' : 'user.*'} files for this tab.`;
+  }
   wrap.appendChild(helper);
+
+  if (tabKey === 'districts') {
+    if (tab.filteredFromDefault && tab.filteredFromDefault.applied) {
+      const filtered = document.createElement('p');
+      filtered.className = 'warning';
+      filtered.textContent = `Scenario fallback filtered incompatible default districts: kept ${tab.filteredFromDefault.keptCount} of ${tab.filteredFromDefault.originalCount}.`;
+      wrap.appendChild(filtered);
+    }
+  }
 
   const listFilterRow = document.createElement('div');
   listFilterRow.className = 'reference-filter-row sticky-search-row';
@@ -19563,6 +20145,8 @@ function renderSectionTab(tab, tabKey) {
     itemBtn.classList.toggle('active', sectionIndex === selectedIndex);
     itemBtn.type = 'button';
     if (tabKey === 'districts') {
+      const hasDistrictIssue = !!(districtIssueIndexes && districtIssueIndexes.has(sectionIndex));
+      if (hasDistrictIssue) itemBtn.classList.add('district-entry-item-has-issue');
       const thumb = document.createElement('span');
       thumb.className = 'entry-thumb district-entry-thumb';
       itemBtn.appendChild(thumb);
@@ -19580,6 +20164,13 @@ function renderSectionTab(tab, tabKey) {
       primary.className = 'district-entry-primary';
       primary.textContent = districtDisplay.primary;
       itemBtn.appendChild(primary);
+      if (hasDistrictIssue) {
+        const issueBadge = document.createElement('span');
+        issueBadge.className = 'district-issue-badge';
+        issueBadge.textContent = '⚠';
+        issueBadge.title = 'This district has unresolved config references.';
+        itemBtn.appendChild(issueBadge);
+      }
       attachRichTooltip(
         itemBtn,
         `${formatSourceInfo(getSectionTabSourceMeta(tab), 'C3X Config')}\nDisplay Name: ${districtDisplay.primary}\nInternal Name: ${districtDisplay.secondary || '(same as display)'}\nTooltip: ${districtDisplay.tooltip || '(not set)'}`
@@ -19686,12 +20277,35 @@ function renderSectionTab(tab, tabKey) {
     top.appendChild(removeSectionBtn);
     card.appendChild(top);
     if (tabKey === 'districts') {
+      const warningLines = [];
       const districtValidationError = validateDistrictSection(section, selectedIndex);
       if (districtValidationError) {
-        const warn = document.createElement('p');
-        warn.className = 'warning';
-        warn.textContent = districtValidationError;
-        card.appendChild(warn);
+        warningLines.push(districtValidationError);
+      }
+      const sectionIssues = districtCompatibility && districtCompatibility.bySection
+        ? districtCompatibility.bySection.get(selectedIndex)
+        : null;
+      if (sectionIssues && sectionIssues.length > 0) {
+        sectionIssues.forEach((issue) => {
+          warningLines.push(`${issue.label}: ${issue.invalidValues.join(', ')}`);
+        });
+      }
+      if (warningLines.length > 0) {
+        const warningBox = document.createElement('div');
+        warningBox.className = 'district-warning-box';
+        const warningTitle = document.createElement('div');
+        warningTitle.className = 'district-warning-title';
+        warningTitle.textContent = 'Warning';
+        warningBox.appendChild(warningTitle);
+        const warningList = document.createElement('ul');
+        warningList.className = 'district-warning-list';
+        warningLines.forEach((line) => {
+          const item = document.createElement('li');
+          item.textContent = line;
+          warningList.appendChild(item);
+        });
+        warningBox.appendChild(warningList);
+        card.appendChild(warningBox);
       }
     }
 
@@ -19826,7 +20440,7 @@ function renderSectionTab(tab, tabKey) {
     detailPane.scrollTop = savedDetailTop;
   });
 
-  if (isScenarioMode()) {
+  if (isScenarioMode() && tabKey !== 'districts') {
     const warning = document.createElement('p');
     warning.className = 'warning';
     warning.textContent = 'This tab is replacement-based in Scenario mode: scenario file replaces user/default content.';
@@ -19976,7 +20590,11 @@ async function loadBundleAndRender(options = {}) {
       scenarioPath: state.settings.scenarioPath
     });
     if (bundle && bundle.tabs && bundle.tabs.districts && bundle.tabs.districts.model && Array.isArray(bundle.tabs.districts.model.sections)) {
+      // Always backfill known district defaults first so fallback scenarios retain expected art/flags.
       applySpecialDistrictDefaultsToSections(bundle.tabs.districts.model.sections);
+      if (state.settings.mode === 'scenario') {
+        filterDistrictSectionsForScenarioFallback(bundle);
+      }
     }
 
     const previousActiveTab = state.activeTab;
@@ -20205,24 +20823,294 @@ async function openFileDiffModalForPath(targetPath) {
   }
 }
 
-async function confirmCreateBaseFileOnSaveIfNeeded() {
-  if (!state.bundle || getTabDirtyCount('base') <= 0) return true;
-  const modeKey = isScenarioMode() ? 'scenario' : 'global';
-  if (state.baseCreateConfirmSeen && state.baseCreateConfirmSeen[modeKey]) return true;
-  const targetPath = getActiveBaseTargetPath();
-  if (!targetPath || !window.c3xManager || typeof window.c3xManager.pathExists !== 'function') return true;
-  let exists = false;
-  try {
-    exists = !!(await window.c3xManager.pathExists(targetPath));
-  } catch (_err) {
-    return true;
+function clearSaveToastTimer() {
+  if (state.saveUi && state.saveUi.toastTimer) {
+    window.clearTimeout(state.saveUi.toastTimer);
+    state.saveUi.toastTimer = null;
   }
-  if (exists) return true;
-  const fileName = getActiveBaseTargetName();
-  const ok = window.confirm(`This save will create ${fileName} and write only overridden C3X settings.\n\nTarget: ${targetPath}`);
-  if (!ok) return false;
-  state.baseCreateConfirmSeen[modeKey] = true;
-  return true;
+}
+
+function hideSaveToast() {
+  if (!el.saveToast) return;
+  clearSaveToastTimer();
+  el.saveToast.classList.add('hidden');
+  el.saveToast.classList.remove('saving', 'success', 'failure');
+  if (state.saveUi) state.saveUi.toastPhase = 'idle';
+}
+
+function showSaveToast({ phase = 'saving', title = '', body = '', autoHideMs = 0 } = {}) {
+  if (!el.saveToast || !el.saveToastTitle || !el.saveToastBody) return;
+  clearSaveToastTimer();
+  el.saveToast.classList.remove('hidden', 'saving', 'success', 'failure');
+  el.saveToast.classList.add(phase === 'success' ? 'success' : phase === 'failure' ? 'failure' : 'saving');
+  el.saveToastTitle.textContent = title || (phase === 'saving' ? 'Saving files...' : 'Save update');
+  el.saveToastBody.textContent = body || '';
+  if (state.saveUi) state.saveUi.toastPhase = phase;
+  if (autoHideMs > 0) {
+    state.saveUi.toastTimer = window.setTimeout(() => {
+      hideSaveToast();
+    }, autoHideMs);
+  }
+}
+
+function buildSavePayload({ tabsToSave, dirtyTabs }) {
+  return {
+    mode: state.settings.mode,
+    c3xPath: state.settings.c3xPath,
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: state.settings.scenarioPath,
+    dirtyTabs,
+    tabs: tabsToSave
+  };
+}
+
+function mapSaveKindLabel(kind) {
+  const key = String(kind || '').trim().toLowerCase();
+  if (!key) return 'File';
+  if (key === 'base') return 'Base Config';
+  if (key === 'districts') return 'Districts';
+  if (key === 'wonders') return 'Wonder Districts';
+  if (key === 'naturalwonders') return 'Natural Wonders';
+  if (key === 'animations') return 'Tile Animations';
+  if (key === 'biq') return 'BIQ';
+  if (key === 'unitini') return 'Unit INI';
+  if (key === 'pediaicons') return 'PediaIcons';
+  if (key === 'civilopedia') return 'Civilopedia';
+  if (key === 'diplomacy') return 'Diplomacy';
+  return key.toUpperCase();
+}
+
+function dedupeSaveItems(items) {
+  const byPath = new Map();
+  (items || []).forEach((item) => {
+    const pathValue = String(item && item.path || '').trim();
+    if (!pathValue) return;
+    byPath.set(pathValue, {
+      path: pathValue,
+      kind: String(item && item.kind || ''),
+      isNew: !!(item && item.isNew),
+      status: String(item && item.status || 'pending'),
+      note: String(item && item.note || '')
+    });
+  });
+  return Array.from(byPath.values());
+}
+
+function buildFallbackSaveItems() {
+  return dedupeSaveItems(
+    Array.from(collectPendingWritePathsFromDirtyTabs()).map((pathValue) => ({
+      path: String(pathValue || ''),
+      kind: '',
+      isNew: false,
+      status: 'pending',
+      note: 'Pending write'
+    }))
+  );
+}
+
+async function previewSaveItems(payload) {
+  const fallbackItems = buildFallbackSaveItems();
+  if (!window.c3xManager || typeof window.c3xManager.previewSavePlan !== 'function') return fallbackItems;
+  try {
+    const preview = await window.c3xManager.previewSavePlan(payload);
+    if (!preview || !preview.ok || !Array.isArray(preview.writes)) return fallbackItems;
+    const items = preview.writes.map((entry) => ({
+      path: String(entry && entry.path || ''),
+      kind: String(entry && entry.kind || ''),
+      isNew: !entry.exists,
+      status: 'pending',
+      note: mapSaveKindLabel(entry && entry.kind)
+    }));
+    return dedupeSaveItems(items);
+  } catch (_err) {
+    return fallbackItems;
+  }
+}
+
+function setSaveDetailState({ items, summary, rollbackSummary = '', rollbackHasWarning = false }) {
+  state.saveUi.detailItems = dedupeSaveItems(items || []);
+  state.saveUi.detailSummary = String(summary || '');
+  state.saveUi.rollbackSummary = String(rollbackSummary || '');
+  state.saveUi.rollbackHasWarning = !!rollbackHasWarning;
+  if (state.saveUi.detailOpen) renderSaveProgressModal();
+}
+
+function buildSaveOutcome(preparedItems, res, fallbackError = '') {
+  const baseItems = dedupeSaveItems(preparedItems || []);
+  const byPath = new Map();
+  baseItems.forEach((item) => byPath.set(item.path, { ...item }));
+  const ensureItem = (pathValue) => {
+    const pathText = String(pathValue || '').trim();
+    if (!pathText) return null;
+    if (!byPath.has(pathText)) {
+      byPath.set(pathText, {
+        path: pathText,
+        kind: '',
+        isNew: false,
+        status: 'pending',
+        note: 'Pending write'
+      });
+    }
+    return byPath.get(pathText);
+  };
+  const writeResults = Array.isArray(res && res.writeResults) ? res.writeResults : [];
+  const rollback = res && typeof res.rollback === 'object' ? res.rollback : null;
+  const rollbackByPath = new Map();
+  if (rollback && Array.isArray(rollback.results)) {
+    rollback.results.forEach((entry) => {
+      const pathValue = String(entry && entry.path || '').trim();
+      if (!pathValue) return;
+      rollbackByPath.set(pathValue, entry);
+      ensureItem(pathValue);
+    });
+  }
+  writeResults.forEach((entry) => {
+    const item = ensureItem(entry && entry.path);
+    if (!item) return;
+    item.kind = item.kind || String(entry && entry.kind || '');
+    if (String(entry && entry.status || '') === 'failed') {
+      item.status = 'failed';
+      item.note = String(entry && entry.error || 'Write failed');
+    } else if (rollbackByPath.has(item.path)) {
+      const rb = rollbackByPath.get(item.path);
+      if (String(rb && rb.status || '') === 'rollbackFailed') {
+        item.status = 'failed';
+        item.note = `Rollback failed: ${String(rb && rb.error || 'unknown error')}`;
+      } else {
+        item.status = 'rolled-back';
+        item.note = 'Rolled back after save failure';
+      }
+    } else {
+      item.status = 'success';
+      item.note = item.note || 'Saved';
+    }
+  });
+  if (res && res.ok) {
+    byPath.forEach((item) => {
+      item.status = 'success';
+      item.note = item.isNew ? 'Created' : 'Saved';
+    });
+    const filesSaved = byPath.size;
+    return {
+      phase: 'success',
+      title: filesSaved > 0 ? `Saved ${filesSaved} file${filesSaved === 1 ? '' : 's'}` : 'No file changes',
+      body: 'Click to view save details',
+      summary: filesSaved > 0
+        ? `Saved ${filesSaved} file${filesSaved === 1 ? '' : 's'} successfully.`
+        : 'No files required changes.',
+      items: Array.from(byPath.values()),
+      rollbackSummary: '',
+      rollbackHasWarning: false
+    };
+  }
+  byPath.forEach((item) => {
+    if (item.status === 'pending') {
+      item.status = 'failed';
+      item.note = item.note || 'Not saved';
+    }
+  });
+  let rollbackSummary = '';
+  let rollbackHasWarning = false;
+  if (rollback) {
+    const attempted = Number(rollback.attempted || 0);
+    const failed = Number(rollback.failed || 0);
+    if (attempted > 0 && failed === 0) {
+      rollbackSummary = `Rollback complete: ${attempted} file${attempted === 1 ? '' : 's'} restored or removed.`;
+    } else if (attempted > 0) {
+      rollbackSummary = `Rollback encountered ${failed} issue${failed === 1 ? '' : 's'} across ${attempted} file${attempted === 1 ? '' : 's'}.`;
+      rollbackHasWarning = true;
+    }
+  }
+  const errorText = String((res && res.error) || fallbackError || 'Save failed.');
+  return {
+    phase: 'failure',
+    title: rollbackHasWarning ? 'Save failed with rollback issues' : 'Save failed',
+    body: rollbackSummary || 'Click to view save details',
+    summary: errorText,
+    items: Array.from(byPath.values()),
+    rollbackSummary,
+    rollbackHasWarning
+  };
+}
+
+function renderSaveProgressModal() {
+  if (!el.saveProgressList || !el.saveProgressModalBody || !el.saveProgressRollback) return;
+  const items = Array.isArray(state.saveUi.detailItems) ? state.saveUi.detailItems : [];
+  el.saveProgressModalBody.textContent = state.saveUi.detailSummary || 'Save status details are shown below.';
+  el.saveProgressList.innerHTML = '';
+  if (!items.length) {
+    const empty = document.createElement('li');
+    empty.className = 'files-read-empty';
+    empty.textContent = 'No save operations to display.';
+    el.saveProgressList.appendChild(empty);
+  } else {
+    items.forEach((item) => {
+      const li = document.createElement('li');
+      const statusKey = String(item && item.status || 'pending');
+      const statusClass = statusKey === 'success'
+        ? 'success'
+        : statusKey === 'rolled-back'
+          ? 'rolled-back'
+          : statusKey === 'failed'
+            ? 'failed'
+            : 'pending';
+      li.className = `save-progress-item ${statusClass}`;
+
+      const icon = document.createElement('span');
+      icon.className = 'save-progress-item-icon';
+      li.appendChild(icon);
+
+      const main = document.createElement('div');
+      main.className = 'save-progress-item-main';
+      const pathEl = document.createElement('code');
+      pathEl.className = 'save-progress-item-path';
+      pathEl.textContent = compactPathFromCiv3Root(item.path) || item.path;
+      pathEl.title = item.path;
+      main.appendChild(pathEl);
+      const note = document.createElement('div');
+      note.className = 'save-progress-item-note';
+      note.textContent = String(item.note || mapSaveKindLabel(item.kind) || '');
+      main.appendChild(note);
+      li.appendChild(main);
+
+      const status = document.createElement('span');
+      status.className = 'save-progress-item-status';
+      status.textContent = statusClass === 'success'
+        ? 'Saved'
+        : statusClass === 'rolled-back'
+          ? 'Rolled Back'
+          : statusClass === 'failed'
+            ? 'Failed'
+            : 'Saving';
+      li.appendChild(status);
+      el.saveProgressList.appendChild(li);
+    });
+  }
+  const rollbackText = String(state.saveUi.rollbackSummary || '').trim();
+  if (rollbackText) {
+    el.saveProgressRollback.classList.remove('hidden');
+    el.saveProgressRollback.classList.toggle('warn', !!state.saveUi.rollbackHasWarning);
+    el.saveProgressRollback.textContent = rollbackText;
+  } else {
+    el.saveProgressRollback.classList.add('hidden');
+    el.saveProgressRollback.classList.remove('warn');
+    el.saveProgressRollback.textContent = '';
+  }
+}
+
+function openSaveProgressModal() {
+  if (!el.saveProgressModalOverlay) return;
+  state.saveUi.detailOpen = true;
+  renderSaveProgressModal();
+  el.saveProgressModalOverlay.classList.remove('hidden');
+  el.saveProgressModalOverlay.setAttribute('aria-hidden', 'false');
+}
+
+function closeSaveProgressModal() {
+  if (!el.saveProgressModalOverlay) return;
+  state.saveUi.detailOpen = false;
+  el.saveProgressModalOverlay.classList.add('hidden');
+  el.saveProgressModalOverlay.setAttribute('aria-hidden', 'true');
 }
 
 async function saveCurrentBundle() {
@@ -20236,25 +21124,40 @@ async function saveCurrentBundle() {
     refreshDirtyUi();
     return false;
   }
-  const createOk = await confirmCreateBaseFileOnSaveIfNeeded();
-  if (!createOk) {
-    setStatus('Save canceled.');
-    return false;
-  }
 
   syncSettingsFromInputs();
   await window.c3xManager.setSettings(state.settings);
 
+  const tabsToSave = getTabsForSavePayload();
+  const dirtyTabs = Object.keys((state.bundle && state.bundle.tabs) || {}).filter((key) => getTabDirtyCount(key) > 0);
+  const payload = buildSavePayload({ tabsToSave, dirtyTabs });
+  const preparedItems = await previewSaveItems(payload);
+  setSaveDetailState({
+    items: preparedItems,
+    summary: `Saving ${preparedItems.length} file${preparedItems.length === 1 ? '' : 's'}...`,
+    rollbackSummary: '',
+    rollbackHasWarning: false
+  });
+  showSaveToast({
+    phase: 'saving',
+    title: 'Saving files...',
+    body: `Writing ${preparedItems.length} file${preparedItems.length === 1 ? '' : 's'}`
+  });
+
   try {
-    const tabsToSave = getTabsForSavePayload();
-    const dirtyTabs = Object.keys((state.bundle && state.bundle.tabs) || {}).filter((key) => getTabDirtyCount(key) > 0);
-    const res = await window.c3xManager.saveBundle({
-      mode: state.settings.mode,
-      c3xPath: state.settings.c3xPath,
-      civ3Path: state.settings.civ3Path,
-      scenarioPath: state.settings.scenarioPath,
-      dirtyTabs,
-      tabs: tabsToSave
+    const res = await window.c3xManager.saveBundle(payload);
+    const outcome = buildSaveOutcome(preparedItems, res);
+    setSaveDetailState({
+      items: outcome.items,
+      summary: outcome.summary,
+      rollbackSummary: outcome.rollbackSummary,
+      rollbackHasWarning: outcome.rollbackHasWarning
+    });
+    showSaveToast({
+      phase: outcome.phase,
+      title: outcome.title,
+      body: outcome.body,
+      autoHideMs: outcome.phase === 'success' ? 14000 : 20000
     });
 
     if (!res.ok) {
@@ -20275,6 +21178,19 @@ async function saveCurrentBundle() {
     }
     return true;
   } catch (err) {
+    const outcome = buildSaveOutcome(preparedItems, { ok: false, error: err.message }, err.message);
+    setSaveDetailState({
+      items: outcome.items,
+      summary: outcome.summary,
+      rollbackSummary: outcome.rollbackSummary,
+      rollbackHasWarning: outcome.rollbackHasWarning
+    });
+    showSaveToast({
+      phase: outcome.phase,
+      title: outcome.title,
+      body: outcome.body,
+      autoHideMs: 20000
+    });
     setStatus(`Failed to save: ${err.message}`, true);
     return false;
   }
@@ -20699,6 +21615,16 @@ async function init() {
       closeFileDiffModal();
     });
   }
+  if (el.saveToastButton) {
+    el.saveToastButton.addEventListener('click', () => {
+      openSaveProgressModal();
+    });
+  }
+  if (el.saveProgressClose) {
+    el.saveProgressClose.addEventListener('click', () => {
+      closeSaveProgressModal();
+    });
+  }
   if (el.filesReadModalOverlay) {
     el.filesReadModalOverlay.addEventListener('click', (ev) => {
       if (ev.target === el.filesReadModalOverlay) {
@@ -20710,6 +21636,13 @@ async function init() {
     el.fileDiffModalOverlay.addEventListener('click', (ev) => {
       if (ev.target === el.fileDiffModalOverlay) {
         closeFileDiffModal();
+      }
+    });
+  }
+  if (el.saveProgressModalOverlay) {
+    el.saveProgressModalOverlay.addEventListener('click', (ev) => {
+      if (ev.target === el.saveProgressModalOverlay) {
+        closeSaveProgressModal();
       }
     });
   }
@@ -20818,6 +21751,12 @@ async function init() {
     }
     if (el.fileDiffModalOverlay && !el.fileDiffModalOverlay.classList.contains('hidden') && ev.key === 'Escape') {
       closeFileDiffModal();
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+    if (el.saveProgressModalOverlay && !el.saveProgressModalOverlay.classList.contains('hidden') && ev.key === 'Escape') {
+      closeSaveProgressModal();
       ev.preventDefault();
       ev.stopPropagation();
       return;

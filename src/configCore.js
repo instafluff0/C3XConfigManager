@@ -2570,6 +2570,19 @@ function inferDisplayNameFromKey(shortKey) {
     .trim();
 }
 
+function isLikelyDisplayHeading(line) {
+  const text = String(line || '').trim();
+  if (!text) return false;
+  if (text.length > 72) return false;
+  if (/[<>{}=]/.test(text)) return false;
+  if (/\$LINK<|^\^/.test(text)) return false;
+  if (/[.!?]$/.test(text)) return false;
+  if (text.includes(':')) return false;
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 9) return false;
+  return true;
+}
+
 function normalizePediaHeadingText(value) {
   return String(value || '')
     .trim()
@@ -2999,10 +3012,10 @@ function buildReferenceTabs(civ3Path, options = {}) {
         const civilopediaSection = (civilopediaSections[entry.civilopediaKey] && civilopediaSections[entry.civilopediaKey].value) || null;
         const descSection = (civilopediaSections[`DESC_${entry.civilopediaKey}`] && civilopediaSections[`DESC_${entry.civilopediaKey}`].value) || null;
         const shortKey = entry.civilopediaKey.slice(prefix.length);
-        const displayName = inferDisplayNameFromKey(shortKey);
+        const inferredDisplayName = inferDisplayNameFromKey(shortKey);
         const pedia = mapPediaIconsForKey(pediaBlocks, entry.civilopediaKey);
-        const overviewLines = parseBodyFromCivilopediaSection(civilopediaSection, { displayName });
-        const descLines = parseBodyFromCivilopediaSection(descSection, { displayName });
+        const overviewLines = parseBodyFromCivilopediaSection(civilopediaSection, { displayName: inferredDisplayName });
+        const descLines = parseBodyFromCivilopediaSection(descSection, { displayName: inferredDisplayName });
         const overviewRawText = (civilopediaSection && Array.isArray(civilopediaSection.rawLines))
           ? civilopediaSection.rawLines.join('\n')
           : '';
@@ -3039,6 +3052,16 @@ function buildReferenceTabs(civ3Path, options = {}) {
             expectedSetter: String(f.expectedSetter || '')
           }))
           : [];
+        const biqNameField = biqFields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === 'name');
+        const biqDisplayName = String((biqNameField && biqNameField.value) || '').trim();
+        const pediaHeadingName = String((overviewLines && overviewLines[0]) || '').trim();
+        let displayName = inferredDisplayName;
+        if (tabSpec.key === 'improvements') {
+          if (biqDisplayName) displayName = biqDisplayName;
+          else if (isLikelyDisplayHeading(pediaHeadingName)) displayName = pediaHeadingName;
+        } else if (biqDisplayName) {
+          displayName = biqDisplayName;
+        }
 
         return {
           id: shortKey,
@@ -3475,9 +3498,11 @@ function buildBaseModel(defaultText, scenarioText, customText, mode, targetText)
 
   const effective = { ...defaultParsed.map };
   if (mode === 'scenario') {
+    Object.assign(effective, customParsed.map);
     Object.assign(effective, scenarioParsed.map);
+  } else {
+    Object.assign(effective, customParsed.map);
   }
-  Object.assign(effective, customParsed.map);
 
   const orderedKeys = [];
   const keySet = new Set();
@@ -3501,10 +3526,10 @@ function buildBaseModel(defaultText, scenarioText, customText, mode, targetText)
     const effectiveValue = effective[key] ?? '';
     const editableValue = editableMap[key] ?? effectiveValue;
     let source = 'default';
-    if (Object.prototype.hasOwnProperty.call(customParsed.map, key)) {
-      source = 'custom';
-    } else if (mode === 'scenario' && Object.prototype.hasOwnProperty.call(scenarioParsed.map, key)) {
+    if (mode === 'scenario' && Object.prototype.hasOwnProperty.call(scenarioParsed.map, key)) {
       source = 'scenario';
+    } else if (Object.prototype.hasOwnProperty.call(customParsed.map, key)) {
+      source = 'custom';
     }
     return {
       key,
@@ -3520,7 +3545,7 @@ function buildBaseModel(defaultText, scenarioText, customText, mode, targetText)
     rows,
     defaultMap: defaultParsed.map,
     effectiveMap: effective,
-    sourceOrder: mode === 'scenario' ? ['default', 'scenario', 'custom'] : ['default', 'custom']
+    sourceOrder: mode === 'scenario' ? ['default', 'custom', 'scenario'] : ['default', 'custom']
   };
 }
 
@@ -3575,7 +3600,9 @@ function parseSectionedConfig(text, marker) {
     const match = rawLine.match(/^\s*([^=]+?)\s*=\s*(.*?)\s*$/);
     if (match) {
       const parsedValue = String(match[2] == null ? '' : match[2]).trim();
-      const normalizedValue = parsedValue.replace(/^"(.*)"$/, '$1');
+      // Only unquote simple single tokens; keep quoted lists intact.
+      const shouldUnquoteWholeValue = /^"[\s\S]*"$/.test(parsedValue) && !/",\s*"/.test(parsedValue);
+      const normalizedValue = shouldUnquoteWholeValue ? parsedValue.slice(1, -1) : parsedValue;
       current.fields.push({ key: match[1].trim(), value: normalizedValue });
     }
   }
@@ -3658,8 +3685,17 @@ function normalizeSectionFieldValueForWrite(kind, key, value) {
 function serializeSectionedConfig(model, marker, options = null) {
   const lines = [];
   const kind = options && options.kind ? String(options.kind) : '';
+  const includeComments = !(options && options.includeComments === false);
+  const includeManagedHeader = !!(options && options.includeManagedHeader);
+  const managedMode = options && options.mode ? String(options.mode) : '';
 
-  if (model.headerComments && model.headerComments.length > 0) {
+  if (includeManagedHeader) {
+    lines.push('; Managed by Civ 3 | C3X Modern Configuration Manager');
+    if (managedMode) lines.push(`; Mode: ${managedMode}`);
+    lines.push('');
+  }
+
+  if (includeComments && model.headerComments && model.headerComments.length > 0) {
     for (const line of model.headerComments) {
       lines.push(line);
     }
@@ -3671,10 +3707,12 @@ function serializeSectionedConfig(model, marker, options = null) {
   for (let i = 0; i < model.sections.length; i += 1) {
     const section = model.sections[i];
     lines.push(marker);
-    const sectionComments = Array.isArray(section && section.comments) ? section.comments : [];
-    sectionComments.forEach((line) => {
-      lines.push(String(line || ''));
-    });
+    if (includeComments) {
+      const sectionComments = Array.isArray(section && section.comments) ? section.comments : [];
+      sectionComments.forEach((line) => {
+        lines.push(String(line || ''));
+      });
+    }
     for (const field of section.fields) {
       if (!field.key) {
         continue;
@@ -3837,14 +3875,29 @@ function loadBundle(payload) {
       const targetText = readTextIfExists(filePaths[kind].targetPath);
       const fallbackText = readTextIfExists(filePaths[kind].effectivePath) || '';
       const text = targetText ?? fallbackText;
+      const defaultPath = filePaths[kind].defaultPath || '';
+      const userPath = filePaths[kind].userPath || '';
+      const scenarioFilePath = filePaths[kind].scenarioPath || '';
+      const effectivePath = filePaths[kind].effectivePath || '';
+      const targetPath = filePaths[kind].targetPath || '';
 
       bundle.tabs[kind] = {
         title: spec.title,
         effectiveSource: filePaths[kind].effectiveSource,
-        targetPath: filePaths[kind].targetPath,
+        targetPath,
         marker: spec.sectionMarker,
         fieldDocs: parseSectionFieldDocs(defaultText),
-        model: parseSectionedConfig(text, spec.sectionMarker)
+        model: parseSectionedConfig(text, spec.sectionMarker),
+        sourceDetails: {
+          defaultPath,
+          userPath,
+          scenarioPath: scenarioFilePath,
+          effectivePath,
+          targetPath,
+          hasDefault: !!(defaultPath && fs.existsSync(defaultPath)),
+          hasUser: !!(userPath && fs.existsSync(userPath)),
+          hasScenario: !!(scenarioFilePath && fs.existsSync(scenarioFilePath))
+        }
       };
     }
 
@@ -4112,10 +4165,11 @@ function writeAtomicFileSync(targetPath, data, options = {}) {
 
 function commitWritesWithRollback(writes) {
   const ordered = uniqueWritesByPath(writes);
-  if (ordered.length === 0) return { ok: true };
+  if (ordered.length === 0) return { ok: true, writeResults: [] };
   const backupDir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-save-backup-'));
   const backups = new Map();
   const committed = [];
+  const writeResults = [];
   try {
     ordered.forEach((entry, idx) => {
       const targetPath = entry.path;
@@ -4128,14 +4182,32 @@ function commitWritesWithRollback(writes) {
       }
     });
 
-    ordered.forEach((entry) => {
-      writeAtomicFileSync(entry.path, entry.data, { encoding: entry.encoding || 'utf8' });
-      committed.push(entry.path);
-    });
+    for (const entry of ordered) {
+      const targetPath = String(entry && entry.path || '').trim();
+      if (!targetPath) continue;
+      try {
+        writeAtomicFileSync(targetPath, entry.data, { encoding: entry.encoding || 'utf8' });
+        committed.push(targetPath);
+        writeResults.push({
+          path: targetPath,
+          kind: String(entry && entry.kind || ''),
+          status: 'saved'
+        });
+      } catch (err) {
+        writeResults.push({
+          path: targetPath,
+          kind: String(entry && entry.kind || ''),
+          status: 'failed',
+          error: err && err.message ? String(err.message) : 'unknown error'
+        });
+        throw err;
+      }
+    }
 
-    return { ok: true };
+    return { ok: true, writeResults };
   } catch (err) {
     const rollbackErrors = [];
+    const rollbackResults = [];
     for (let i = committed.length - 1; i >= 0; i -= 1) {
       const targetPath = committed[i];
       const backup = backups.get(targetPath);
@@ -4144,17 +4216,48 @@ function commitWritesWithRollback(writes) {
         if (backup.existed && backup.backupPath && fs.existsSync(backup.backupPath)) {
           const original = fs.readFileSync(backup.backupPath);
           writeAtomicFileSync(targetPath, original);
+          rollbackResults.push({
+            path: targetPath,
+            action: 'restore',
+            status: 'rolledBack'
+          });
         } else if (fs.existsSync(targetPath)) {
           fs.unlinkSync(targetPath);
+          rollbackResults.push({
+            path: targetPath,
+            action: 'removeNewFile',
+            status: 'rolledBack'
+          });
+        } else {
+          rollbackResults.push({
+            path: targetPath,
+            action: 'removeNewFile',
+            status: 'rolledBack'
+          });
         }
       } catch (rollbackErr) {
         rollbackErrors.push(`${targetPath}: ${rollbackErr.message}`);
+        rollbackResults.push({
+          path: targetPath,
+          action: backup.existed ? 'restore' : 'removeNewFile',
+          status: 'rollbackFailed',
+          error: rollbackErr && rollbackErr.message ? String(rollbackErr.message) : 'unknown error'
+        });
       }
     }
     const rollbackSuffix = rollbackErrors.length > 0
       ? ` Rollback encountered errors: ${rollbackErrors.join(' | ')}`
       : '';
-    return { ok: false, error: `Save transaction failed and was rolled back: ${err.message}.${rollbackSuffix}` };
+    return {
+      ok: false,
+      error: `Save transaction failed and was rolled back: ${err.message}.${rollbackSuffix}`,
+      writeResults,
+      rollback: {
+        attempted: rollbackResults.length,
+        failed: rollbackResults.filter((entry) => entry.status === 'rollbackFailed').length,
+        results: rollbackResults
+      }
+    };
   } finally {
     try {
       fs.rmSync(backupDir, { recursive: true, force: true });
@@ -4242,7 +4345,13 @@ function buildSavePlan(payload) {
     }
     const protectErr = failIfProtected(targetPath, `${kind} target`);
     if (protectErr) return { ok: false, error: protectErr };
-    const serialized = serializeSectionedConfig(tab.model, spec.sectionMarker, { kind });
+    const targetExists = fs.existsSync(targetPath);
+    const serialized = serializeSectionedConfig(tab.model, spec.sectionMarker, {
+      kind,
+      mode,
+      includeComments: targetExists,
+      includeManagedHeader: !targetExists
+    });
     plannedWrites.push({
       kind,
       path: targetPath,
@@ -4411,10 +4520,39 @@ function saveBundle(payload) {
   if (!plan.ok) return plan;
   const committed = commitWritesWithRollback(plan.plannedWrites);
   if (!committed.ok) {
-    return { ok: false, error: committed.error || 'Failed to commit save transaction.' };
+    return {
+      ok: false,
+      error: committed.error || 'Failed to commit save transaction.',
+      saveReport: plan.saveReport,
+      writeResults: committed.writeResults || [],
+      rollback: committed.rollback || null
+    };
   }
 
-  return { ok: true, saveReport: plan.saveReport };
+  return {
+    ok: true,
+    saveReport: plan.saveReport,
+    writeResults: committed.writeResults || []
+  };
+}
+
+function previewSavePlan(payload) {
+  const plan = buildSavePlan(payload);
+  if (!plan.ok) return plan;
+  const writes = uniqueWritesByPath(plan.plannedWrites).map((entry) => {
+    const targetPath = String(entry && entry.path || '').trim();
+    const exists = targetPath ? fs.existsSync(targetPath) : false;
+    return {
+      path: targetPath,
+      kind: String(entry && entry.kind || ''),
+      exists
+    };
+  });
+  return {
+    ok: true,
+    writes,
+    saveReport: plan.saveReport
+  };
 }
 
 function previewFileDiff(payload) {
@@ -5413,6 +5551,7 @@ module.exports = {
   resolvePaths,
   loadBundle,
   saveBundle,
+  previewSavePlan,
   previewFileDiff,
   buildUnifiedDiffRows
 };

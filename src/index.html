@@ -156,6 +156,28 @@
       </div>
     </div>
 
+    <div id="save-toast" class="save-toast hidden" aria-live="polite">
+      <button id="save-toast-button" class="save-toast-button" type="button" aria-label="Show save details">
+        <span id="save-toast-icon" class="save-toast-icon" aria-hidden="true"></span>
+        <span class="save-toast-copy">
+          <span id="save-toast-title" class="save-toast-title">Saving files...</span>
+          <span id="save-toast-body" class="save-toast-body">Preparing write plan</span>
+        </span>
+      </button>
+    </div>
+
+    <div id="save-progress-modal-overlay" class="confirm-modal-overlay hidden" aria-hidden="true">
+      <div class="confirm-modal save-progress-modal" role="dialog" aria-modal="true" aria-labelledby="save-progress-modal-title" aria-describedby="save-progress-modal-body">
+        <h3 id="save-progress-modal-title">Save Details</h3>
+        <p id="save-progress-modal-body"></p>
+        <ul id="save-progress-list" class="save-progress-list"></ul>
+        <div id="save-progress-rollback" class="save-progress-rollback hidden"></div>
+        <div class="confirm-modal-actions">
+          <button id="save-progress-close" class="ghost" type="button"><span class="btn-icon">✕</span>Close</button>
+        </div>
+      </div>
+    </div>
+
     <div id="loading-overlay" class="loading-overlay hidden" aria-live="polite">
       <div class="loading-card">
         <div class="loading-spinner" aria-hidden="true"></div>

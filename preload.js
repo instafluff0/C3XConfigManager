@@ -24,5 +24,6 @@ contextBridge.exposeInMainWorld('c3xManager', {
   getPreview: (payload) => ipcRenderer.invoke('manager:get-preview', payload),
   loadBundle: (payload) => ipcRenderer.invoke('manager:load-bundle', payload),
   saveBundle: (payload) => ipcRenderer.invoke('manager:save-bundle', payload),
+  previewSavePlan: (payload) => ipcRenderer.invoke('manager:preview-save-plan', payload),
   previewFileDiff: (payload) => ipcRenderer.invoke('manager:preview-file-diff', payload)
 });

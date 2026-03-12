@@ -7,6 +7,7 @@ const os = require('node:os');
 const {
   loadBundle,
   saveBundle,
+  previewFileDiff,
   parseIniLines,
   parseSectionedConfig
 } = require('../src/configCore');
@@ -94,6 +95,110 @@ function sectionField(section, key) {
 function parseSectionFile(filePath, marker) {
   return parseSectionedConfig(fs.readFileSync(filePath, 'utf8'), marker);
 }
+
+function setBaseRowValue(bundle, key, value) {
+  const rows = bundle && bundle.tabs && bundle.tabs.base && Array.isArray(bundle.tabs.base.rows)
+    ? bundle.tabs.base.rows
+    : [];
+  const row = rows.find((r) => String(r && r.key || '') === String(key || ''));
+  assert.ok(row, `Missing base row: ${key}`);
+  row.value = String(value);
+}
+
+test('C3X base structured editor families persist and appear in file diff preview', () => {
+  const c3xRoot = mkTmpDir();
+  writeDefaults(c3xRoot);
+
+  const defaultBasePath = path.join(c3xRoot, 'default.c3x_config.ini');
+  fs.appendFileSync(defaultBasePath, [
+    'limit_units_per_tile = false',
+    'unit_cycle_search_criteria = [all]',
+    'special_defensive_bombard_rules = [all]',
+    'special_zone_of_control_rules = [all]',
+    'land_transport_rules = [load-onto-boat]',
+    'special_helicopter_rules = [allow-on-carriers]',
+    'enabled_seasons = [summer fall winter spring]',
+    'production_perfume = ["Temple": 10]',
+    'perfume_specs = ["Granary": 5]',
+    'technology_perfume = ["Alphabet": 10]',
+    'government_perfume = ["Despotism": 10]',
+    'building_prereqs_for_units = ["Barracks": "Warrior"]',
+    'buildings_generating_resources = ["Temple": local "Incense"]',
+    'great_wall_auto_build_wonder_name = "The Great Wall"',
+    ''
+  ].join('\n'), 'utf8');
+
+  const bundle = loadBundle({ mode: 'global', c3xPath: c3xRoot, scenarioPath: '' });
+
+  setBaseRowValue(bundle, 'limit_units_per_tile', '[2 3 4]');
+  setBaseRowValue(bundle, 'unit_cycle_search_criteria', '[land, sea]');
+  setBaseRowValue(bundle, 'special_defensive_bombard_rules', '[all, no-check-zoc-attack]');
+  setBaseRowValue(bundle, 'special_zone_of_control_rules', '[all, no-city-no-defense]');
+  setBaseRowValue(bundle, 'land_transport_rules', '[load-onto-boat, no-escape]');
+  setBaseRowValue(bundle, 'special_helicopter_rules', '[allow-on-carriers, no-escape]');
+  setBaseRowValue(bundle, 'enabled_seasons', '[summer winter]');
+  setBaseRowValue(bundle, 'production_perfume', '["Temple": 20, "Warrior": 8]');
+  setBaseRowValue(bundle, 'perfume_specs', '["Granary": 15]');
+  setBaseRowValue(bundle, 'technology_perfume', '["Alphabet": 12]');
+  setBaseRowValue(bundle, 'government_perfume', '["Despotism": 5]');
+  setBaseRowValue(bundle, 'building_prereqs_for_units', '["Barracks": "Warrior" "Archer"]');
+  setBaseRowValue(bundle, 'buildings_generating_resources', '["Temple": local "Incense", "Marketplace": yields "Dyes"]');
+  setBaseRowValue(bundle, 'great_wall_auto_build_wonder_name', '"Pyramids"');
+
+  const customPath = path.join(c3xRoot, 'custom.c3x_config.ini');
+  const preview = previewFileDiff({
+    mode: 'global',
+    c3xPath: c3xRoot,
+    scenarioPath: '',
+    tabs: bundle.tabs,
+    dirtyTabs: ['base'],
+    targetPath: customPath
+  });
+  assert.equal(preview.ok, true, String(preview.error || 'preview failed'));
+  assert.equal(preview.found, true, 'Expected pending write for custom.c3x_config.ini');
+  const newText = String(preview.newText || '');
+  [
+    'limit_units_per_tile = [2 3 4]',
+    'unit_cycle_search_criteria = [land, sea]',
+    'special_defensive_bombard_rules = [all, no-check-zoc-attack]',
+    'special_zone_of_control_rules = [all, no-city-no-defense]',
+    'land_transport_rules = [load-onto-boat, no-escape]',
+    'special_helicopter_rules = [allow-on-carriers, no-escape]',
+    'enabled_seasons = [summer winter]',
+    'production_perfume = ["Temple": 20, "Warrior": 8]',
+    'perfume_specs = ["Granary": 15]',
+    'technology_perfume = ["Alphabet": 12]',
+    'government_perfume = ["Despotism": 5]',
+    'building_prereqs_for_units = ["Barracks": "Warrior" "Archer"]',
+    'buildings_generating_resources = ["Temple": local "Incense", "Marketplace": yields "Dyes"]',
+    'great_wall_auto_build_wonder_name = "Pyramids"'
+  ].forEach((line) => assert.match(newText, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))));
+
+  const save = saveBundle({
+    mode: 'global',
+    c3xPath: c3xRoot,
+    scenarioPath: '',
+    dirtyTabs: ['base'],
+    tabs: bundle.tabs
+  });
+  assert.equal(save.ok, true, String(save.error || 'save failed'));
+
+  const baseParsed = parseIniLines(fs.readFileSync(customPath, 'utf8'));
+  assert.equal(baseParsed.map.limit_units_per_tile, '[2 3 4]');
+  assert.equal(baseParsed.map.unit_cycle_search_criteria, '[land, sea]');
+  assert.equal(baseParsed.map.special_defensive_bombard_rules, '[all, no-check-zoc-attack]');
+  assert.equal(baseParsed.map.special_zone_of_control_rules, '[all, no-city-no-defense]');
+  assert.equal(baseParsed.map.land_transport_rules, '[load-onto-boat, no-escape]');
+  assert.equal(baseParsed.map.special_helicopter_rules, '[allow-on-carriers, no-escape]');
+  assert.equal(baseParsed.map.enabled_seasons, '[summer winter]');
+  assert.equal(baseParsed.map.production_perfume, '["Temple": 20, "Warrior": 8]');
+  assert.equal(baseParsed.map.perfume_specs, '["Granary": 15]');
+  assert.equal(baseParsed.map.technology_perfume, '["Alphabet": 12]');
+  assert.equal(baseParsed.map.government_perfume, '["Despotism": 5]');
+  assert.equal(baseParsed.map.building_prereqs_for_units, '["Barracks": "Warrior" "Archer"]');
+  assert.equal(baseParsed.map.buildings_generating_resources, '["Temple": local "Incense", "Marketplace": yields "Dyes"]');
+  assert.equal(baseParsed.map.great_wall_auto_build_wonder_name, '"Pyramids"');
+});
 
 test('C3X write matrix (global): base + all sectioned files support edit/add/delete and preserve untouched entries', () => {
   const c3xRoot = mkTmpDir();
@@ -291,4 +396,3 @@ test('C3X-only transaction rollback restores earlier files when later commit fai
   assert.equal(fs.readFileSync(originalBasePath, 'utf8'), beforeBase);
   assert.equal(fs.readFileSync(originalDistrictsPath, 'utf8'), beforeDistricts);
 });
-

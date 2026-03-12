@@ -525,6 +525,13 @@ textarea {
   overflow-x: auto;
 }
 
+.actions button:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  border-color: rgba(55, 85, 145, 0.35);
+  filter: brightness(1.03) saturate(1.05);
+}
+
 .nav-btn {
   min-width: 38px;
   width: 38px;
@@ -539,8 +546,17 @@ textarea {
   color: #355089;
 }
 
-.nav-btn:hover {
-  box-shadow: 0 8px 18px rgba(66, 103, 178, 0.2);
+.nav-btn:hover:not(:disabled) {
+  box-shadow: none;
+  border-color: rgba(66, 103, 178, 0.38);
+  filter: brightness(1.04) saturate(1.06);
+}
+
+#global-search-btn:hover:not(:disabled),
+#undo-btn:hover:not(:disabled) {
+  background: linear-gradient(160deg, #f4f8ff, #edf4ff);
+  border-color: rgba(66, 103, 178, 0.32);
+  color: #2f4f8c;
 }
 
 .nav-btn:disabled {
@@ -595,6 +611,12 @@ button:disabled {
 .secondary.dirty {
   border-color: #4f84e7;
   box-shadow: 0 0 0 2px rgba(79, 132, 231, 0.28), 0 8px 18px rgba(24, 20, 50, 0.12);
+}
+
+.actions #save-btn.secondary,
+.actions #save-btn.secondary:hover:not(:disabled),
+.actions #save-btn.secondary.dirty {
+  box-shadow: none;
 }
 
 .debug-actions {
@@ -1352,6 +1374,271 @@ button.danger:hover {
   color: #646f95;
 }
 
+.save-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 95;
+  width: min(430px, calc(100vw - 24px));
+}
+
+.save-toast-button {
+  width: 100%;
+  border: 1px solid rgba(35, 74, 138, 0.28);
+  border-radius: 14px;
+  background: linear-gradient(170deg, rgba(246, 251, 255, 0.98), rgba(234, 244, 255, 0.98));
+  box-shadow: 0 16px 28px rgba(16, 32, 61, 0.24);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.save-toast-button:hover {
+  border-color: rgba(30, 92, 169, 0.42);
+  box-shadow: 0 18px 30px rgba(16, 38, 74, 0.28);
+}
+
+.save-toast.saving .save-toast-button {
+  border-color: rgba(25, 117, 194, 0.42);
+}
+
+.save-toast.success .save-toast-button {
+  border-color: rgba(35, 151, 86, 0.46);
+  background: linear-gradient(170deg, rgba(239, 255, 245, 0.99), rgba(222, 250, 233, 0.99));
+}
+
+.save-toast.failure .save-toast-button {
+  border-color: rgba(189, 74, 57, 0.46);
+  background: linear-gradient(170deg, rgba(255, 246, 243, 0.99), rgba(255, 232, 227, 0.99));
+}
+
+.save-toast-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.save-toast.saving .save-toast-icon {
+  border: 2px solid rgba(71, 123, 202, 0.24);
+  border-top-color: #2f74cf;
+  animation: spin 720ms linear infinite;
+}
+
+.save-toast.success .save-toast-icon::before {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #15703f;
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.save-toast.failure .save-toast-icon::before {
+  content: '!';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #a53425;
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.save-toast-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.save-toast-title {
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: #1d3259;
+}
+
+.save-toast-body {
+  font-size: 0.75rem;
+  color: #41567c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.save-progress-modal {
+  width: min(880px, 100%);
+  max-height: min(82vh, 920px);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+}
+
+.save-progress-list {
+  margin: 0;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(53, 76, 116, 0.2);
+  background: rgba(250, 253, 255, 0.96);
+  list-style: none;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 5px;
+}
+
+.save-progress-item {
+  border: 1px solid rgba(64, 83, 120, 0.2);
+  border-radius: 9px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  padding: 8px 9px;
+  align-items: center;
+  animation: save-progress-enter 280ms ease both;
+}
+
+.save-progress-item-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 2px solid rgba(106, 134, 177, 0.28);
+  position: relative;
+}
+
+.save-progress-item.pending .save-progress-item-icon {
+  border-top-color: #336fd0;
+  animation: spin 760ms linear infinite;
+}
+
+.save-progress-item.success .save-progress-item-icon,
+.save-progress-item.rolled-back .save-progress-item-icon {
+  border-color: rgba(46, 157, 98, 0.42);
+  background: rgba(224, 247, 234, 0.9);
+}
+
+.save-progress-item.success .save-progress-item-icon::before {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #1c7d48;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.save-progress-item.rolled-back .save-progress-item-icon::before {
+  content: '↶';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #1c7d48;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.save-progress-item.failed .save-progress-item-icon {
+  border-color: rgba(189, 74, 57, 0.5);
+  background: rgba(255, 228, 223, 0.9);
+}
+
+.save-progress-item.failed .save-progress-item-icon::before {
+  content: '!';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #a53425;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.save-progress-item-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.save-progress-item-path {
+  font-family: 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.72rem;
+  color: #263556;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.save-progress-item-note {
+  font-size: 0.71rem;
+  color: #516489;
+}
+
+.save-progress-item-status {
+  font-size: 0.7rem;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+}
+
+.save-progress-item.pending .save-progress-item-status {
+  color: #22567d;
+  border-color: rgba(46, 122, 186, 0.3);
+  background: rgba(202, 230, 255, 0.74);
+}
+
+.save-progress-item.success .save-progress-item-status {
+  color: #17653a;
+  border-color: rgba(36, 146, 82, 0.34);
+  background: rgba(205, 241, 217, 0.88);
+}
+
+.save-progress-item.rolled-back .save-progress-item-status {
+  color: #17653a;
+  border-color: rgba(36, 146, 82, 0.34);
+  background: rgba(205, 241, 217, 0.88);
+}
+
+.save-progress-item.failed .save-progress-item-status {
+  color: #812015;
+  border-color: rgba(185, 56, 40, 0.44);
+  background: rgba(255, 224, 218, 0.92);
+}
+
+.save-progress-rollback {
+  border-radius: 9px;
+  border: 1px solid rgba(41, 120, 77, 0.32);
+  background: rgba(226, 248, 235, 0.88);
+  color: #1f5b3e;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  padding: 8px 9px;
+}
+
+.save-progress-rollback.warn {
+  border-color: rgba(185, 56, 40, 0.38);
+  background: rgba(255, 233, 228, 0.92);
+  color: #7a281e;
+}
+
+@keyframes save-progress-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 #debug-log {
   max-height: calc(min(52vh, 420px) - 90px);
   overflow: auto;
@@ -1688,6 +1975,11 @@ button.danger:hover {
   padding: 6px 8px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.72);
+  transition: background-color 0.14s ease;
+}
+
+.base-row:hover {
+  background: rgba(238, 244, 255, 0.9);
 }
 
 .base-key-wrap {
@@ -1705,6 +1997,25 @@ button.danger:hover {
   align-items: center;
   gap: 7px;
   flex-wrap: wrap;
+}
+
+.base-dirty-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #e47f2f;
+  color: #ffffff;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 900;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9), 0 2px 5px rgba(138, 74, 26, 0.28);
+}
+
+.base-dirty-badge.hidden {
+  display: none;
 }
 
 .c3x-active-file-card {
@@ -1812,6 +2123,10 @@ button.danger:hover {
   background: rgba(231, 239, 255, 0.82);
 }
 
+.c3x-release-badge.hidden {
+  display: none;
+}
+
 .c3x-release-badge.inferred {
   color: #6a4e1f;
   border-color: rgba(175, 126, 44, 0.34);
@@ -1822,6 +2137,49 @@ button.danger:hover {
   color: #555e73;
   border-color: rgba(111, 122, 150, 0.28);
   background: rgba(241, 244, 251, 0.9);
+}
+
+.c3x-source-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border: 1px solid rgba(73, 69, 98, 0.24);
+}
+
+.c3x-source-pill.hidden {
+  display: none;
+}
+
+.c3x-source-pill.source-default {
+  color: #5a637a;
+  border-color: rgba(111, 122, 150, 0.3);
+  background: rgba(241, 244, 251, 0.92);
+}
+
+.c3x-source-pill.source-custom {
+  color: #6b5410;
+  border-color: rgba(209, 164, 48, 0.38);
+  background: rgba(255, 245, 210, 0.95);
+}
+
+.c3x-source-pill.source-scenario {
+  color: #8b2f2f;
+  border-color: rgba(214, 108, 108, 0.4);
+  background: rgba(255, 227, 227, 0.95);
+}
+
+.c3x-source-pill.source-unknown {
+  color: #5a637a;
+  border-color: rgba(111, 122, 150, 0.3);
+  background: rgba(241, 244, 251, 0.92);
 }
 
 .section-editor-header {
@@ -1888,6 +2246,7 @@ button.danger:hover {
   border: 1px solid rgba(73, 69, 98, 0.13);
   background: rgba(255, 255, 255, 0.78);
   text-align: left;
+  cursor: pointer;
   padding: 7px 8px;
   display: grid;
   grid-template-columns: 30px 1fr;
@@ -1919,11 +2278,13 @@ button.danger:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
 }
 
 .entry-thumb-canvas {
   width: 26px;
   height: 26px;
+  border-radius: inherit;
   image-rendering: pixelated;
   background: #ffffff;
 }
@@ -1949,7 +2310,36 @@ button.danger:hover {
 .district-entry-item {
   grid-template-columns: 36px minmax(0, 1fr);
   gap: 8px;
-  padding: 7px 8px;
+  padding: 7px 30px 7px 8px;
+}
+
+.district-entry-item-has-issue {
+  background: linear-gradient(135deg, rgba(255, 247, 204, 0.92), rgba(255, 243, 184, 0.9));
+  border-color: rgba(193, 144, 38, 0.45);
+}
+
+.district-entry-item-has-issue.active {
+  background: linear-gradient(135deg, rgba(255, 239, 170, 0.95), rgba(255, 231, 146, 0.95));
+  border-color: rgba(183, 123, 25, 0.52);
+}
+
+.district-issue-badge {
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #8a4e08;
+  background: rgba(255, 236, 164, 0.94);
+  border: 1px solid rgba(171, 123, 32, 0.45);
+  box-shadow: 0 1px 4px rgba(138, 88, 8, 0.2);
 }
 
 .district-entry-item .entry-thumb {
@@ -2019,6 +2409,27 @@ button.danger:hover {
   font-size: 10px;
   border-radius: 999px;
   line-height: 1;
+}
+
+.tab-warning-badge {
+  position: absolute;
+  top: -5px;
+  right: 10px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 900;
+  color: #7a4308;
+  background: #ffe09a;
+  border: 1px solid rgba(168, 117, 31, 0.58);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.92), 0 2px 5px rgba(125, 87, 12, 0.28);
+  pointer-events: none;
 }
 
 .entry-detail-pane {
@@ -2596,12 +3007,15 @@ details > summary:focus-visible {
 }
 
 .tech-link-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border-radius: 999px;
   border: 1px solid rgba(68, 98, 156, 0.3);
   background: rgba(242, 247, 255, 0.96);
   color: #2a416e;
   font-size: 0.68rem;
-  padding: 4px 9px;
+  padding: 3px 9px 3px 5px;
   cursor: pointer;
 }
 
@@ -3641,6 +4055,11 @@ details > summary:focus-visible {
   margin: 0;
 }
 
+.entry-list-item.help-hover-target,
+.district-entry-item.help-hover-target {
+  cursor: pointer;
+}
+
 .biq-subtab-btn.help-hover-target {
   cursor: pointer;
   border-radius: 16px;
@@ -3770,6 +4189,34 @@ details > summary:focus-visible {
   color: #7c3d08;
   font-size: 0.9rem;
   margin: 8px 0 0;
+}
+
+.district-warning-box {
+  margin-top: 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(192, 146, 40, 0.42);
+  background: linear-gradient(180deg, rgba(255, 246, 204, 0.96), rgba(255, 238, 176, 0.9));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  padding: 10px 12px;
+}
+
+.district-warning-title {
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #7a4508;
+  margin-bottom: 6px;
+}
+
+.district-warning-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #6d3907;
+  display: grid;
+  gap: 4px;
+  font-size: 0.84rem;
+  line-height: 1.35;
 }
 
 .hint {
@@ -4284,7 +4731,7 @@ details > summary:focus-visible {
 
 .pedia-link-preview {
   position: fixed;
-  z-index: 95;
+  z-index: 10020;
   width: min(360px, calc(100vw - 20px));
   border: 1px solid rgba(36, 25, 64, 0.2);
   border-radius: 12px;

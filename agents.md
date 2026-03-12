@@ -7,9 +7,9 @@ This folder contains an Electron app (`Civ 3 | C3X Modern Configuration Manager`
 Behavior is based on `injected_code.c`:
 
 1. Base config (`*.c3x_config.ini`)
-- Files loaded in order: `default.c3x_config.ini`, then `scenario.c3x_config.ini` (if found), then `custom.c3x_config.ini`.
+- Files loaded in order: `default.c3x_config.ini`, then `custom.c3x_config.ini`, then `scenario.c3x_config.ini` (if found).
 - This is cumulative key override, not full replacement.
-- Effective precedence is `custom > scenario > default`.
+- Effective precedence is `scenario > custom > default`.
 
 2. District config (`*.districts_config.txt`)
 - Files attempted in order: `default`, `user`, `scenario`.
@@ -113,7 +113,6 @@ Scenario scope writes:
     - Standard: `default (read-only) -> custom (editable)`
     - Scenario: `default (read-only) -> custom -> scenario (editable)`
   - Field metadata includes source provenance (`default/custom/scenario`) for effective values.
-  - Save button label in the base tab is mode-aware (`Save to custom...` / `Save to scenario...`).
   - If the active base target file is missing and base settings are dirty, first save prompts confirmation before creating the target override file.
 - Structured base fields currently include:
   - `limit_units_per_tile`
@@ -126,6 +125,14 @@ Scenario scope writes:
   - Adding new entries inserts at top (`unshift`).
   - Title in left list syncs live when the name/title field changes.
   - Known fields are schema-driven; unknown fields remain editable under `Advanced fields`.
+  - Districts tab now shows explicit replacement semantics and active source file context.
+  - Districts tab surfaces unresolved scenario reference warnings (tech/improvement/resource/civ/government/natural wonder/district links) with warning badges in the left district list and highlighted issue rows.
+  - District detail now renders warnings in a dedicated yellow warning box (validation + unresolved dependency refs); no strip/jump action buttons are shown.
+  - Quoted list values in sectioned files (for example `dependent_improvs = "Airport", "Commercial Dock"`) are preserved during parse so tokens remain valid.
+  - In Scenario mode, if `scenario.districts_config.txt` is missing and effective districts come from `default.districts_config.txt`, the UI filters out default districts whose dependency fields cannot be resolved against scenario data.
+- Technologies Tech Tree editor:
+  - Drag/drop X/Y positioning is an approximation of Civ III's visual layout.
+  - The in-game tech tree can render at different resolutions/scales, so positions seen in-app may not exactly match runtime game placement.
 - Units animation editing safety:
   - Era variants now use a compact variant selector in the Unit Animations panel.
   - Scenario save blocks unresolved new unit animation folder references when the animation key was edited in the unit panel and no valid/resolvable INI path is available.
@@ -207,6 +214,18 @@ Scenario scope writes:
 - Base config file writes are gated on Base-tab dirtiness (`custom/scenario .c3x_config.ini` is not written when only other tabs changed).
 - Animation INI rows include an explicit `Animation INI` file-type pill in row metadata.
 - Missing primary base override targets (`custom/scenario .c3x_config.ini`) are shown as `Not created yet` (non-alarming) until base edits actually require creation.
+
+## Save UX Behavior
+- Save no longer uses OS-level confirmation popups for creating missing override files (for example `custom.c3x_config.ini`).
+- Save feedback is now in-app:
+  - Lower-right save snackbar shows active save progress (spinner), then success/failure state.
+  - Snackbar is clickable and opens a Save Details modal listing each target file vertically with per-file status.
+- Save Details modal status model:
+  - `Saving` while request is in progress.
+  - `Saved` on successful writes.
+  - `Rolled Back` when a write succeeded but the transaction later failed and rollback restored/removed it.
+  - `Failed` for write failures or rollback failures.
+- Transaction semantics are unchanged: core save still commits atomically with rollback-on-failure; UI now exposes rollback outcomes for user confidence.
 
 ## Verification
 - Run:
