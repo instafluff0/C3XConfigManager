@@ -88,6 +88,14 @@ Scenario scope writes:
   - Civilization portraits: `#RACE_*` block in `PediaIcons.txt`.
 - Art/path resolution for read-only previews follows same precedence:
   - `Conquests/Art` first, then `civ3PTW/Art`, then base `Art`.
+- Diplomacy text (`diplomacy.txt`) currently powers civilization `diplomacytextindex` slots:
+  - Slot previews/editing are based on `#AIFIRSTCONTACT` and `#AIFIRSTDEAL` lines for selector block `#CIV 1 / #POWER 0 / #MOOD 0 / #RANDOM 1`.
+  - Civilizations tab now shows diplomacy section-by-section with human-readable selector blocks and line lists.
+  - Each diplomacy section has a local raw `Edit` mode for the section body (not whole-file only), similar to Civilopedia edit affordances.
+  - Large diplomacy sections are collapsed by default for readability.
+  - Save precedence for diplomacy edits is: raw full-file edit (authoritative) > slot-level helper edits.
+  - Layer precedence matches other text overlays: `Scenario > Conquests > PTW > Vanilla`.
+  - Scenario edits write only to scenario-local `Text/diplomacy.txt` (never core game text files).
 
 ## UI/Editing Behavior
 - Mode labels in UI are:

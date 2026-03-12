@@ -9,6 +9,8 @@ const {
   serializeCivilopediaDocumentWithOrder,
   parsePediaIconsDocumentWithOrder,
   serializePediaIconsDocumentWithOrder,
+  parseDiplomacyDocumentWithOrder,
+  serializeDiplomacyDocumentWithOrder,
   parseDiplomacySlotOptions,
   parseSectionedConfig,
   serializeSectionedConfig,
@@ -67,6 +69,43 @@ test('Diplomacy fixture produces slot options with combined previews', () => {
   assert.equal(options[0].value, '0');
   assert.match(options[0].label, /^Slot 0 - First contact:/);
   assert.match(options[0].label, /Trade intro:/);
+});
+
+test('Diplomacy fixture parse/serialize is idempotent', () => {
+  const input = fixture('diplomacy_sample.txt');
+  const doc1 = parseDiplomacyDocumentWithOrder(input);
+  const out1 = serializeDiplomacyDocumentWithOrder(doc1);
+  const doc2 = parseDiplomacyDocumentWithOrder(out1);
+  const out2 = serializeDiplomacyDocumentWithOrder(doc2);
+
+  assert.equal(out1, out2);
+  assert.match(out1, /#AIFIRSTCONTACT/);
+  assert.match(out1, /#AIFIRSTDEAL/);
+  assert.match(out1, /\$CIVNAME1/);
+});
+
+test('Diplomacy parse/serialize preserves section header formatting for surgical round-trips', () => {
+  const input = [
+    '; header shape fixture',
+    '#AiFirstContact   ',
+    '#CIV 1',
+    '#POWER 0',
+    '#MOOD 0',
+    '#RANDOM 1',
+    '"Hello."',
+    '',
+    '#aifirstdeal\t',
+    '#CIV 1',
+    '#POWER 0',
+    '#MOOD 0',
+    '#RANDOM 1',
+    '"Deal."',
+    ''
+  ].join('\n');
+  const doc = parseDiplomacyDocumentWithOrder(input);
+  const out = serializeDiplomacyDocumentWithOrder(doc);
+  assert.match(out, /^\#AiFirstContact   $/m);
+  assert.match(out, /^\#aifirstdeal\t$/m);
 });
 
 test('Sectioned fixture parse/serialize is idempotent', () => {

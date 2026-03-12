@@ -2256,6 +2256,183 @@ function parseDiplomacySlotOptions(text) {
   return options;
 }
 
+function normalizeDiplomacyDialogueLine(value) {
+  return String(value == null ? '' : value)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function quoteDiplomacyDialogueLine(value) {
+  const text = normalizeDiplomacyDialogueLine(value);
+  if (!text) return '';
+  return `"${text.replace(/"/g, '\\"')}"`;
+}
+
+function parseDiplomacyDocumentWithOrder(text) {
+  const src = String(text || '');
+  const doc = {
+    preamble: [],
+    sections: [],
+    hadTrailingNewline: /\r\n$|\n$|\r$/.test(src)
+  };
+  if (!src) return doc;
+  const lines = src.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  let currentSection = null;
+  lines.forEach((raw) => {
+    const line = String(raw || '');
+    const trimmed = line.trim();
+    const isDirective = /^#(CIV|POWER|MOOD|RANDOM)\b/i.test(trimmed);
+    const isSectionHeader = trimmed.startsWith('#') && !isDirective;
+    if (isSectionHeader) {
+      currentSection = {
+        header: line,
+        key: trimmed.slice(1).trim().toUpperCase(),
+        lines: []
+      };
+      doc.sections.push(currentSection);
+      return;
+    }
+    if (currentSection) {
+      currentSection.lines.push(line);
+    } else {
+      doc.preamble.push(line);
+    }
+  });
+  return doc;
+}
+
+function serializeDiplomacyDocumentWithOrder(doc) {
+  const preamble = Array.isArray(doc && doc.preamble) ? doc.preamble : [];
+  const sections = Array.isArray(doc && doc.sections) ? doc.sections : [];
+  const hadTrailingNewline = !!(doc && doc.hadTrailingNewline);
+  const out = [];
+  preamble.forEach((line) => out.push(String(line || '')));
+  sections.forEach((section) => {
+    if (!section) return;
+    const rawHeader = String(section.header || '');
+    const key = String(section.key || '').trim().toUpperCase();
+    if (!rawHeader && !key) return;
+    const header = rawHeader
+      ? (rawHeader.startsWith('#') ? rawHeader : `#${rawHeader}`)
+      : `#${key}`;
+    out.push(header);
+    (Array.isArray(section.lines) ? section.lines : []).forEach((line) => out.push(String(line || '')));
+  });
+  const serialized = out.join('\n');
+  return hadTrailingNewline ? ensureTrailingNewline(serialized) : serialized;
+}
+
+function parseDiplomacySlotsFromDocument(doc) {
+  const sections = Array.isArray(doc && doc.sections) ? doc.sections : [];
+  const findSection = (name) => sections.find((section) => String(section && section.key || '').trim().toUpperCase() === String(name || '').toUpperCase());
+  const findLines = (sectionName) => {
+    const section = findSection(sectionName);
+    if (!section) return [];
+    return parseDiplomacySectionSlotLines(
+      ['#X', ...(Array.isArray(section.lines) ? section.lines : [])].join('\n'),
+      'X'
+    );
+  };
+  const firstContact = findLines('AIFIRSTCONTACT');
+  const firstDeal = findLines('AIFIRSTDEAL');
+  const count = Math.max(firstContact.length, firstDeal.length);
+  const slots = [];
+  for (let i = 0; i < count; i += 1) {
+    slots.push({
+      index: i,
+      firstContact: String(firstContact[i] || ''),
+      firstDeal: String(firstDeal[i] || '')
+    });
+  }
+  return slots;
+}
+
+function applyDiplomacySectionSlotLines(section, values) {
+  const target = section && Array.isArray(section.lines) ? section : null;
+  const desired = (Array.isArray(values) ? values : [])
+    .map((line) => normalizeDiplomacyDialogueLine(line))
+    .filter(Boolean)
+    .map((line) => quoteDiplomacyDialogueLine(line));
+  if (!target) return false;
+
+  const lines = target.lines.slice();
+  const indices = [];
+  let civ = null;
+  let power = null;
+  let mood = null;
+  let random = null;
+  let firstSelectorLine = -1;
+  let firstMatchLine = -1;
+  let lastMatchLine = -1;
+
+  const isDialogueLine = (line) => {
+    const trimmed = String(line || '').trim();
+    return !!trimmed && !trimmed.startsWith(';') && !trimmed.startsWith('#');
+  };
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const raw = String(lines[i] || '');
+    const trimmed = raw.trim();
+    const upper = trimmed.toUpperCase();
+    if (upper.startsWith('#CIV ')) {
+      civ = Number.parseInt(upper.slice(5).trim(), 10);
+      continue;
+    }
+    if (upper.startsWith('#POWER ')) {
+      power = Number.parseInt(upper.slice(7).trim(), 10);
+      continue;
+    }
+    if (upper.startsWith('#MOOD ')) {
+      mood = Number.parseInt(upper.slice(6).trim(), 10);
+      continue;
+    }
+    if (upper.startsWith('#RANDOM ')) {
+      random = Number.parseInt(upper.slice(8).trim(), 10);
+      if (civ === 1 && power === 0 && mood === 0 && random === 1 && firstSelectorLine < 0) {
+        firstSelectorLine = i;
+      }
+      continue;
+    }
+    if (trimmed.startsWith('#')) continue;
+    const inTargetSelector = civ === 1 && power === 0 && mood === 0 && random === 1;
+    if (!inTargetSelector) continue;
+    if (firstMatchLine < 0) firstMatchLine = i;
+    lastMatchLine = i;
+    if (isDialogueLine(trimmed)) indices.push(i);
+  }
+
+  const before = JSON.stringify(lines);
+  if (indices.length > 0) {
+    const capped = Math.min(indices.length, desired.length);
+    for (let i = 0; i < capped; i += 1) {
+      lines[indices[i]] = desired[i];
+    }
+    if (desired.length > indices.length) {
+      const insertAt = (lastMatchLine >= 0 ? lastMatchLine + 1 : indices[indices.length - 1] + 1);
+      lines.splice(insertAt, 0, ...desired.slice(indices.length));
+    } else if (desired.length < indices.length) {
+      for (let i = indices.length - 1; i >= desired.length; i -= 1) {
+        lines.splice(indices[i], 1);
+      }
+    }
+  } else if (firstSelectorLine >= 0) {
+    lines.splice(firstSelectorLine + 1, 0, ...desired);
+  } else {
+    if (lines.length > 0 && String(lines[lines.length - 1] || '').trim()) lines.push('');
+    lines.push('#CIV 1');
+    lines.push('#POWER 0');
+    lines.push('#MOOD 0');
+    lines.push('#RANDOM 1');
+    desired.forEach((line) => lines.push(line));
+  }
+
+  target.lines = lines;
+  return JSON.stringify(lines) !== before;
+}
+
 function parsePediaIconsDocumentWithOrder(text) {
   const src = String(text || '');
   const doc = { order: [], blocks: {}, headers: {}, hadTrailingNewline: /\r\n$|\n$|\r$/.test(src) };
@@ -2731,7 +2908,16 @@ function buildReferenceTabs(civ3Path, options = {}) {
     : '';
   const diplomacyLayers = readTextLayers(civ3Path, 'diplomacy.txt', scenarioPath, scenarioPaths);
   const diplomacyTopLayer = pickHighestLayerText(diplomacyLayers);
-  const diplomacyOptions = parseDiplomacySlotOptions(diplomacyTopLayer && diplomacyTopLayer.text);
+  const diplomacyDoc = parseDiplomacyDocumentWithOrder((diplomacyTopLayer && diplomacyTopLayer.text) || '');
+  const diplomacySlots = parseDiplomacySlotsFromDocument(diplomacyDoc);
+  const diplomacyOptions = parseDiplomacySlotOptions(serializeDiplomacyDocumentWithOrder(diplomacyDoc));
+  const scenarioDiplomacyWritePath = mode === 'scenario'
+    ? (
+      ((diplomacyLayers.scenario && diplomacyLayers.scenario.filePath) || '')
+      || resolveScenarioTextPath(scenarioPath, 'diplomacy.txt', scenarioPaths)
+      || (scenarioPath ? path.join(resolveScenarioDir(scenarioPath), 'Text', 'diplomacy.txt') : '')
+    )
+    : '';
   const civilopediaSections = mergeByPrecedence(civilopediaSectionsByLayer, layerOrder);
   const pediaBlocks = mergeByPrecedence(pediaBlocksByLayer, layerOrder);
 
@@ -2895,10 +3081,22 @@ function buildReferenceTabs(civ3Path, options = {}) {
         diplomacyPtw: (diplomacyLayers.ptw && diplomacyLayers.ptw.filePath) || '',
         diplomacyConquests: (diplomacyLayers.conquests && diplomacyLayers.conquests.filePath) || '',
         diplomacyScenario: (diplomacyLayers.scenario && diplomacyLayers.scenario.filePath) || '',
+        diplomacyScenarioWrite: scenarioDiplomacyWritePath,
         diplomacyActive: (diplomacyTopLayer && diplomacyTopLayer.filePath) || ''
       },
       entries,
-      diplomacyOptions: tabSpec.key === 'civilizations' ? diplomacyOptions : []
+      diplomacyOptions: tabSpec.key === 'civilizations' ? diplomacyOptions : [],
+      diplomacySlots: tabSpec.key === 'civilizations'
+        ? diplomacySlots.map((slot) => ({
+          index: Number(slot && slot.index),
+          firstContact: String(slot && slot.firstContact || ''),
+          originalFirstContact: String(slot && slot.firstContact || ''),
+          firstDeal: String(slot && slot.firstDeal || ''),
+          originalFirstDeal: String(slot && slot.firstDeal || '')
+        }))
+        : [],
+      diplomacyText: tabSpec.key === 'civilizations' ? String((diplomacyTopLayer && diplomacyTopLayer.text) || '') : '',
+      originalDiplomacyText: tabSpec.key === 'civilizations' ? String((diplomacyTopLayer && diplomacyTopLayer.text) || '') : ''
     };
   }
 
@@ -3728,6 +3926,84 @@ function buildScenarioCivilopediaEditResult({ targetPath, edits }) {
   }
 }
 
+function buildScenarioDiplomacyEditResult({ targetPath, edits }) {
+  if (!targetPath || !Array.isArray(edits) || edits.length === 0) {
+    return { ok: true, applied: 0, buffer: null };
+  }
+  try {
+    const existing = readWindows1252TextIfExists(targetPath) || '';
+    const replaceEdit = edits.find((edit) => String(edit && edit.op || '').toLowerCase() === 'replace');
+    if (replaceEdit) {
+      const nextText = String(replaceEdit.text || '');
+      if (nextText.replace(/\r\n/g, '\n').replace(/\r/g, '\n') === existing.replace(/\r\n/g, '\n').replace(/\r/g, '\n')) {
+        return { ok: true, applied: 0, buffer: null };
+      }
+      return { ok: true, applied: 1, buffer: encodeWindows1252Text(nextText) };
+    }
+    const doc = parseDiplomacyDocumentWithOrder(existing);
+    const sectionByKey = new Map(
+      (Array.isArray(doc.sections) ? doc.sections : [])
+        .map((section) => [String(section && section.key || '').trim().toUpperCase(), section])
+    );
+    const ensureSection = (key) => {
+      const upper = String(key || '').trim().toUpperCase();
+      if (!upper) return null;
+      const existingSection = sectionByKey.get(upper);
+      if (existingSection) return existingSection;
+      const created = { key: upper, header: `#${upper}`, lines: [] };
+      doc.sections.push(created);
+      sectionByKey.set(upper, created);
+      return created;
+    };
+
+    const contactByIndex = new Map();
+    const dealByIndex = new Map();
+    edits.forEach((edit) => {
+      const idx = Number(edit && edit.index);
+      if (!Number.isFinite(idx) || idx < 0) return;
+      contactByIndex.set(idx, normalizeDiplomacyDialogueLine(edit && edit.firstContact));
+      dealByIndex.set(idx, normalizeDiplomacyDialogueLine(edit && edit.firstDeal));
+    });
+    if (contactByIndex.size === 0 && dealByIndex.size === 0) {
+      return { ok: true, applied: 0, buffer: null };
+    }
+
+    const maxIndex = Math.max(
+      -1,
+      ...Array.from(contactByIndex.keys()),
+      ...Array.from(dealByIndex.keys())
+    );
+    const existingSlots = parseDiplomacySlotsFromDocument(doc);
+    const nextContact = [];
+    const nextDeal = [];
+    for (let i = 0; i <= Math.max(maxIndex, existingSlots.length - 1); i += 1) {
+      const existingSlot = existingSlots[i] || {};
+      nextContact[i] = contactByIndex.has(i)
+        ? contactByIndex.get(i)
+        : normalizeDiplomacyDialogueLine(existingSlot.firstContact);
+      nextDeal[i] = dealByIndex.has(i)
+        ? dealByIndex.get(i)
+        : normalizeDiplomacyDialogueLine(existingSlot.firstDeal);
+    }
+    while (nextContact.length > 0 && !nextContact[nextContact.length - 1] && !nextDeal[nextDeal.length - 1]) {
+      nextContact.pop();
+      nextDeal.pop();
+    }
+
+    let applied = 0;
+    const contactSection = ensureSection('AIFIRSTCONTACT');
+    const dealSection = ensureSection('AIFIRSTDEAL');
+    if (applyDiplomacySectionSlotLines(contactSection, nextContact)) applied += 1;
+    if (applyDiplomacySectionSlotLines(dealSection, nextDeal)) applied += 1;
+    if (applied === 0) return { ok: true, applied: 0, buffer: null };
+
+    const serialized = serializeDiplomacyDocumentWithOrder(doc);
+    return { ok: true, applied, buffer: encodeWindows1252Text(serialized) };
+  } catch (err) {
+    return { ok: false, error: `Failed to save diplomacy edits: ${err.message}` };
+  }
+}
+
 function uniqueWritesByPath(writes) {
   const map = new Map();
   writes.forEach((entry) => {
@@ -4018,6 +4294,27 @@ function buildSavePlan(payload) {
           data: civilopediaSave.buffer
         });
         saveReport.push({ kind: 'civilopedia', path: targetPath, applied: civilopediaSave.applied });
+      }
+    }
+
+    const diplomacyEdits = collectDiplomacyReferenceEdits(payload.tabs || {});
+    if (diplomacyEdits.length > 0) {
+      const explicitTarget = ((((payload.tabs || {}).civilizations || {}).sourceDetails || {}).diplomacyScenarioWrite || '').trim()
+        || ((((payload.tabs || {}).civilizations || {}).sourceDetails || {}).diplomacyScenario || '').trim();
+      const targetPath = explicitTarget || path.join(scenarioContext.contentWriteRoot || scenarioDir, 'Text', 'diplomacy.txt');
+      const protectErr = failIfProtected(targetPath, 'diplomacy target');
+      if (protectErr) return { ok: false, error: protectErr };
+      const diplomacySave = buildScenarioDiplomacyEditResult({ targetPath, edits: diplomacyEdits });
+      if (!diplomacySave.ok) {
+        return { ok: false, error: diplomacySave.error || 'Failed to save diplomacy edits.' };
+      }
+      if (diplomacySave.applied > 0) {
+        plannedWrites.push({
+          kind: 'diplomacy',
+          path: targetPath,
+          data: diplomacySave.buffer
+        });
+        saveReport.push({ kind: 'diplomacy', path: targetPath, applied: diplomacySave.applied });
       }
     }
 
@@ -4617,6 +4914,35 @@ function collectCivilopediaReferenceEdits(tabs) {
   return edits;
 }
 
+function collectDiplomacyReferenceEdits(tabs) {
+  const civTab = tabs && tabs.civilizations;
+  if (!civTab) return [];
+  const rawText = String(civTab.diplomacyText || '');
+  const originalRawText = String(civTab.originalDiplomacyText || '');
+  if (rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n') !== originalRawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')) {
+    return [{ op: 'replace', text: rawText }];
+  }
+  if (!Array.isArray(civTab.diplomacySlots)) return [];
+  const edits = [];
+  civTab.diplomacySlots.forEach((slot) => {
+    const index = Number(slot && slot.index);
+    if (!Number.isFinite(index) || index < 0) return;
+    const firstContact = normalizeDiplomacyDialogueLine(slot && slot.firstContact);
+    const originalFirstContact = normalizeDiplomacyDialogueLine(slot && slot.originalFirstContact);
+    const firstDeal = normalizeDiplomacyDialogueLine(slot && slot.firstDeal);
+    const originalFirstDeal = normalizeDiplomacyDialogueLine(slot && slot.originalFirstDeal);
+    if (firstContact !== originalFirstContact || firstDeal !== originalFirstDeal) {
+      edits.push({
+        index,
+        firstContact,
+        firstDeal
+      });
+    }
+  });
+  edits.sort((a, b) => a.index - b.index);
+  return edits;
+}
+
 function normalizePediaPathList(values) {
   return dedupeStrings(
     (Array.isArray(values) ? values : [])
@@ -5022,6 +5348,8 @@ module.exports = {
   serializeCivilopediaDocumentWithOrder,
   parsePediaIconsDocumentWithOrder,
   serializePediaIconsDocumentWithOrder,
+  parseDiplomacyDocumentWithOrder,
+  serializeDiplomacyDocumentWithOrder,
   parseDiplomacySlotOptions,
   buildReferenceTabs,
   resolveScenarioDir,

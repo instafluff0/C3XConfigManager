@@ -93,6 +93,10 @@ const state = {
     activeIndex: 0,
     results: []
   },
+  diplomacyEditorSelection: {
+    sectionKey: '',
+    blockId: ''
+  },
   techTreeEraSelectionByTab: {},
   mapEditorTool: {
     mode: 'select',
@@ -1908,6 +1912,33 @@ function hasReferenceEntryChangedFromClean(currentEntry, cleanEntry) {
   );
 }
 
+function countCivilizationDiplomacySlotChanges(currentTab, cleanTab) {
+  const currentSlots = (currentTab && Array.isArray(currentTab.diplomacySlots)) ? currentTab.diplomacySlots : [];
+  const cleanSlots = (cleanTab && Array.isArray(cleanTab.diplomacySlots)) ? cleanTab.diplomacySlots : [];
+  const cleanByIndex = new Map(cleanSlots.map((slot) => [Number(slot && slot.index), slot]));
+  let changed = 0;
+  currentSlots.forEach((slot) => {
+    const idx = Number(slot && slot.index);
+    if (!Number.isFinite(idx) || idx < 0) return;
+    const cleanSlot = cleanByIndex.get(idx) || null;
+    const firstContact = String(slot && slot.firstContact || '').trim();
+    const cleanFirstContact = String(cleanSlot && cleanSlot.firstContact || '').trim();
+    const firstDeal = String(slot && slot.firstDeal || '').trim();
+    const cleanFirstDeal = String(cleanSlot && cleanSlot.firstDeal || '').trim();
+    if (firstContact !== cleanFirstContact || firstDeal !== cleanFirstDeal) changed += 1;
+    cleanByIndex.delete(idx);
+  });
+  cleanByIndex.forEach((slot) => {
+    const firstContact = String(slot && slot.firstContact || '').trim();
+    const firstDeal = String(slot && slot.firstDeal || '').trim();
+    if (firstContact || firstDeal) changed += 1;
+  });
+  const currentRaw = String(currentTab && currentTab.diplomacyText || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const cleanRaw = String(cleanTab && cleanTab.diplomacyText || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const rawChanged = currentRaw !== cleanRaw;
+  return rawChanged ? Math.max(1, changed) : changed;
+}
+
 function isTabDirty(tabKey) {
   if (!state.isDirty || !state.bundle || !state.bundle.tabs) return false;
   if (!EDITABLE_TAB_KEYS.includes(tabKey)) return false;
@@ -1935,6 +1966,9 @@ function computeTabDirtyCount(tabKey) {
       prevByKey.delete(key);
     });
     changed += prevByKey.size;
+    if (tabKey === 'civilizations') {
+      changed += countCivilizationDiplomacySlotChanges(currentTab, cleanTab);
+    }
     return changed;
   }
 
@@ -2035,7 +2069,10 @@ function updateActiveDirtyCaches() {
     const cleanEntry = getCleanReferenceEntry(tabKey, key);
     if (hasReferenceEntryChangedFromClean(entry, cleanEntry)) set.add(key);
     else set.delete(key);
-    setTabDirtyCount(tabKey, set.size);
+    const cleanTabs = getCleanTabsObject();
+    const cleanTab = cleanTabs[tabKey];
+    const extra = tabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
+    setTabDirtyCount(tabKey, set.size + extra);
     return;
   }
 
@@ -2070,7 +2107,10 @@ function rebuildDirtyTabCounts() {
         const cleanEntry = getCleanReferenceEntry(tabKey, key);
         if (hasReferenceEntryChangedFromClean(entry, cleanEntry)) set.add(key);
       });
-      setTabDirtyCount(tabKey, set.size);
+      const cleanTabs = getCleanTabsObject();
+      const cleanTab = cleanTabs[tabKey];
+      const extra = tabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
+      setTabDirtyCount(tabKey, set.size + extra);
       return;
     }
     if (tab.model && Array.isArray(tab.model.sections)) {
@@ -8819,6 +8859,714 @@ function renderCivilizationNameListsCard(entry, referenceEditable) {
   return card;
 }
 
+function rebuildCivilizationDiplomacyOptions(tab) {
+  const slots = (tab && Array.isArray(tab.diplomacySlots)) ? tab.diplomacySlots : [];
+  return slots.map((slot, idx) => {
+    const index = Number.isFinite(Number(slot && slot.index)) ? Number(slot.index) : idx;
+    let contact = String(slot && slot.firstContact || '').trim();
+    let deal = String(slot && slot.firstDeal || '').trim();
+    if (contact.length > 90) contact = `${contact.slice(0, 87)}...`;
+    if (deal.length > 90) deal = `${deal.slice(0, 87)}...`;
+    const parts = [];
+    if (contact) parts.push(`First contact: ${contact}`);
+    if (deal) parts.push(`Trade intro: ${deal}`);
+    const preview = parts.join(' | ');
+    return {
+      value: String(index),
+      label: preview ? `Slot ${index} - ${preview}` : `Slot ${index}`
+    };
+  });
+}
+
+function getCivilizationDiplomacySlotIndex(entry) {
+  const field = getBiqFieldByBaseKey(entry, 'diplomacytextindex');
+  const parsed = parseIntFromDisplayValue(field && field.value);
+  return parsed == null || parsed < 0 ? null : parsed;
+}
+
+function findOrCreateDiplomacySlotForIndex(tab, slotIndex) {
+  if (!tab || !Number.isFinite(slotIndex) || slotIndex < 0) return null;
+  if (!Array.isArray(tab.diplomacySlots)) tab.diplomacySlots = [];
+  let slot = tab.diplomacySlots.find((candidate) => Number(candidate && candidate.index) === slotIndex) || null;
+  if (slot) return slot;
+  slot = {
+    index: slotIndex,
+    firstContact: '',
+    originalFirstContact: '',
+    firstDeal: '',
+    originalFirstDeal: ''
+  };
+  tab.diplomacySlots.push(slot);
+  tab.diplomacySlots.sort((a, b) => Number(a && a.index) - Number(b && b.index));
+  return slot;
+}
+
+function parseDiplomacySectionSlotLinesForUi(text, sectionName) {
+  const src = String(text || '');
+  if (!src.trim()) return [];
+  const lines = src.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const slots = [];
+  let inSection = false;
+  let civ = null;
+  let power = null;
+  let mood = null;
+  let random = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    const raw = String(lines[i] || '');
+    const trimmed = raw.trim();
+    const upper = trimmed.toUpperCase();
+    if (upper === `#${String(sectionName || '').toUpperCase()}`) {
+      inSection = true;
+      civ = null;
+      power = null;
+      mood = null;
+      random = null;
+      continue;
+    }
+    if (!inSection) continue;
+    if (trimmed.startsWith('#') && !upper.startsWith('#CIV ') && !upper.startsWith('#POWER ') && !upper.startsWith('#MOOD ') && !upper.startsWith('#RANDOM ')) {
+      break;
+    }
+    if (upper.startsWith('#CIV ')) {
+      civ = Number.parseInt(upper.slice(5).trim(), 10);
+      continue;
+    }
+    if (upper.startsWith('#POWER ')) {
+      power = Number.parseInt(upper.slice(7).trim(), 10);
+      continue;
+    }
+    if (upper.startsWith('#MOOD ')) {
+      mood = Number.parseInt(upper.slice(6).trim(), 10);
+      continue;
+    }
+    if (upper.startsWith('#RANDOM ')) {
+      random = Number.parseInt(upper.slice(8).trim(), 10);
+      continue;
+    }
+    if (!trimmed || trimmed.startsWith(';') || trimmed.startsWith('#')) continue;
+    if (!(civ === 1 && power === 0 && mood === 0 && random === 1)) continue;
+    const textLine = trimmed
+      .replace(/^["“”„«»]+/, '')
+      .replace(/["“”„«»]+$/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!textLine) continue;
+    slots.push(textLine);
+  }
+  return slots;
+}
+
+function parseCivilizationDiplomacySlotsFromText(text) {
+  const firstContact = parseDiplomacySectionSlotLinesForUi(text, 'AIFIRSTCONTACT');
+  const firstDeal = parseDiplomacySectionSlotLinesForUi(text, 'AIFIRSTDEAL');
+  const count = Math.max(firstContact.length, firstDeal.length);
+  const out = [];
+  for (let i = 0; i < count; i += 1) {
+    out.push({
+      index: i,
+      firstContact: String(firstContact[i] || ''),
+      firstDeal: String(firstDeal[i] || '')
+    });
+  }
+  return out;
+}
+
+function normalizeDiplomacyDialogueLineForUi(value) {
+  return String(value == null ? '' : value)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function quoteDiplomacyDialogueLineForUi(value) {
+  const text = normalizeDiplomacyDialogueLineForUi(value);
+  if (!text) return '';
+  return `"${text.replace(/"/g, '\\"')}"`;
+}
+
+function parseDiplomacyDocumentWithOrderForUi(text) {
+  const src = String(text || '');
+  const doc = { preamble: [], sections: [], hadTrailingNewline: /\r\n$|\n$|\r$/.test(src) };
+  const lines = src.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  let currentSection = null;
+  lines.forEach((raw) => {
+    const line = String(raw || '');
+    const trimmed = line.trim();
+    const isDirective = /^#(CIV|POWER|MOOD|RANDOM)\b/i.test(trimmed);
+    const isSectionHeader = trimmed.startsWith('#') && !isDirective;
+    if (isSectionHeader) {
+      currentSection = {
+        header: line,
+        key: trimmed.slice(1).trim().toUpperCase(),
+        lines: []
+      };
+      doc.sections.push(currentSection);
+      return;
+    }
+    if (currentSection) currentSection.lines.push(line);
+    else doc.preamble.push(line);
+  });
+  return doc;
+}
+
+function parseDiplomacyEditableBlocksForUi(text) {
+  const lines = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const sections = [];
+  const blocks = [];
+  let currentSection = null;
+  let currentBlock = null;
+  const sectionCounts = new Map();
+  const finalizeBlock = (endLineExclusive) => {
+    if (!currentBlock) return;
+    currentBlock.endLineExclusive = Number(endLineExclusive);
+    const count = Number(sectionCounts.get(currentBlock.sectionKey) || 0) + 1;
+    sectionCounts.set(currentBlock.sectionKey, count);
+    currentBlock.id = `${currentBlock.sectionKey}:${count}`;
+    blocks.push(currentBlock);
+    currentBlock = null;
+  };
+  const finalizeSection = (endLineExclusive) => {
+    if (!currentSection) return;
+    currentSection.endLineExclusive = Number(endLineExclusive);
+    sections.push(currentSection);
+    currentSection = null;
+  };
+
+  const isDirective = (upper) => upper.startsWith('#CIV ') || upper.startsWith('#POWER ') || upper.startsWith('#MOOD ') || upper.startsWith('#RANDOM ');
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = String(lines[i] || '');
+    const trimmed = line.trim();
+    const upper = trimmed.toUpperCase();
+    const isSectionHeader = trimmed.startsWith('#') && !isDirective(upper);
+    if (isSectionHeader) {
+      finalizeBlock(i);
+      finalizeSection(i);
+      const sectionKey = trimmed.slice(1).trim().toUpperCase();
+      currentSection = {
+        key: sectionKey,
+        header: line,
+        startLine: i,
+        endLineExclusive: lines.length
+      };
+      continue;
+    }
+    if (!currentSection) continue;
+    if (upper.startsWith('#CIV ')) {
+      finalizeBlock(i);
+      currentBlock = {
+        id: '',
+        sectionKey: currentSection.key,
+        sectionHeader: currentSection.header,
+        civ: Number.parseInt(upper.slice(5).trim(), 10),
+        power: null,
+        mood: null,
+        random: null,
+        firstSelectorLine: i,
+        lastSelectorLine: i,
+        dialogueLineIdxs: [],
+        startLine: i,
+        endLineExclusive: lines.length
+      };
+      continue;
+    }
+    if (!currentBlock) continue;
+    if (upper.startsWith('#POWER ')) {
+      currentBlock.power = Number.parseInt(upper.slice(7).trim(), 10);
+      currentBlock.lastSelectorLine = i;
+      continue;
+    }
+    if (upper.startsWith('#MOOD ')) {
+      currentBlock.mood = Number.parseInt(upper.slice(6).trim(), 10);
+      currentBlock.lastSelectorLine = i;
+      continue;
+    }
+    if (upper.startsWith('#RANDOM ')) {
+      currentBlock.random = Number.parseInt(upper.slice(8).trim(), 10);
+      currentBlock.lastSelectorLine = i;
+      continue;
+    }
+    if (!trimmed || trimmed.startsWith(';') || trimmed.startsWith('#')) continue;
+    currentBlock.dialogueLineIdxs.push(i);
+  }
+  finalizeBlock(lines.length);
+  finalizeSection(lines.length);
+  return { lines, sections, blocks };
+}
+
+function serializeDiplomacyDocumentWithOrderForUi(doc) {
+  const preamble = Array.isArray(doc && doc.preamble) ? doc.preamble : [];
+  const sections = Array.isArray(doc && doc.sections) ? doc.sections : [];
+  const out = [];
+  preamble.forEach((line) => out.push(String(line || '')));
+  sections.forEach((section) => {
+    if (!section) return;
+    const rawHeader = String(section.header || '');
+    const key = String(section.key || '').trim().toUpperCase();
+    if (!rawHeader && !key) return;
+    const header = rawHeader
+      ? (rawHeader.startsWith('#') ? rawHeader : `#${rawHeader}`)
+      : `#${key}`;
+    out.push(header);
+    (Array.isArray(section.lines) ? section.lines : []).forEach((line) => out.push(String(line || '')));
+  });
+  const serialized = out.join('\n');
+  return doc && doc.hadTrailingNewline ? (serialized.endsWith('\n') ? serialized : `${serialized}\n`) : serialized;
+}
+
+function applyDialogueLinesToDiplomacyBlockForUi(text, block, values) {
+  const lines = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const desired = (Array.isArray(values) ? values : [])
+    .map((line) => normalizeDiplomacyDialogueLineForUi(line))
+    .filter(Boolean)
+    .map((line) => quoteDiplomacyDialogueLineForUi(line));
+  const idxs = Array.isArray(block && block.dialogueLineIdxs) ? block.dialogueLineIdxs.slice() : [];
+  if (idxs.length > 0) {
+    const capped = Math.min(idxs.length, desired.length);
+    for (let i = 0; i < capped; i += 1) lines[idxs[i]] = desired[i];
+    if (desired.length > idxs.length) {
+      const insertAt = idxs[idxs.length - 1] + 1;
+      lines.splice(insertAt, 0, ...desired.slice(idxs.length));
+    } else if (desired.length < idxs.length) {
+      for (let i = idxs.length - 1; i >= desired.length; i -= 1) lines.splice(idxs[i], 1);
+    }
+    return lines.join('\n');
+  }
+  const insertAt = Number.isFinite(Number(block && block.lastSelectorLine))
+    ? (Number(block.lastSelectorLine) + 1)
+    : (Number.isFinite(Number(block && block.startLine)) ? Number(block.startLine) + 1 : lines.length);
+  lines.splice(insertAt, 0, ...desired);
+  return lines.join('\n');
+}
+
+function applyDiplomacySectionSlotLinesForUi(section, values) {
+  const target = section && Array.isArray(section.lines) ? section : null;
+  if (!target) return false;
+  const desired = (Array.isArray(values) ? values : [])
+    .map((line) => normalizeDiplomacyDialogueLineForUi(line))
+    .filter(Boolean)
+    .map((line) => quoteDiplomacyDialogueLineForUi(line));
+  const lines = target.lines.slice();
+  const indices = [];
+  let civ = null;
+  let power = null;
+  let mood = null;
+  let random = null;
+  let firstSelectorLine = -1;
+  let lastMatchLine = -1;
+  const isDialogueLine = (line) => {
+    const trimmed = String(line || '').trim();
+    return !!trimmed && !trimmed.startsWith(';') && !trimmed.startsWith('#');
+  };
+  for (let i = 0; i < lines.length; i += 1) {
+    const raw = String(lines[i] || '');
+    const trimmed = raw.trim();
+    const upper = trimmed.toUpperCase();
+    if (upper.startsWith('#CIV ')) {
+      civ = Number.parseInt(upper.slice(5).trim(), 10);
+      continue;
+    }
+    if (upper.startsWith('#POWER ')) {
+      power = Number.parseInt(upper.slice(7).trim(), 10);
+      continue;
+    }
+    if (upper.startsWith('#MOOD ')) {
+      mood = Number.parseInt(upper.slice(6).trim(), 10);
+      continue;
+    }
+    if (upper.startsWith('#RANDOM ')) {
+      random = Number.parseInt(upper.slice(8).trim(), 10);
+      if (civ === 1 && power === 0 && mood === 0 && random === 1 && firstSelectorLine < 0) firstSelectorLine = i;
+      continue;
+    }
+    if (trimmed.startsWith('#')) continue;
+    const inTargetSelector = civ === 1 && power === 0 && mood === 0 && random === 1;
+    if (!inTargetSelector) continue;
+    lastMatchLine = i;
+    if (isDialogueLine(trimmed)) indices.push(i);
+  }
+  const before = JSON.stringify(lines);
+  if (indices.length > 0) {
+    const capped = Math.min(indices.length, desired.length);
+    for (let i = 0; i < capped; i += 1) lines[indices[i]] = desired[i];
+    if (desired.length > indices.length) {
+      const insertAt = (lastMatchLine >= 0 ? lastMatchLine + 1 : indices[indices.length - 1] + 1);
+      lines.splice(insertAt, 0, ...desired.slice(indices.length));
+    } else if (desired.length < indices.length) {
+      for (let i = indices.length - 1; i >= desired.length; i -= 1) lines.splice(indices[i], 1);
+    }
+  } else if (firstSelectorLine >= 0) {
+    lines.splice(firstSelectorLine + 1, 0, ...desired);
+  } else {
+    if (lines.length > 0 && String(lines[lines.length - 1] || '').trim()) lines.push('');
+    lines.push('#CIV 1');
+    lines.push('#POWER 0');
+    lines.push('#MOOD 0');
+    lines.push('#RANDOM 1');
+    desired.forEach((line) => lines.push(line));
+  }
+  target.lines = lines;
+  return JSON.stringify(lines) !== before;
+}
+
+function syncCivilizationDiplomacyTextFromSlots(tab) {
+  if (!tab || !Array.isArray(tab.diplomacySlots)) return;
+  const doc = parseDiplomacyDocumentWithOrderForUi(String(tab.diplomacyText || ''));
+  const sectionByKey = new Map((Array.isArray(doc.sections) ? doc.sections : []).map((section) => [String(section && section.key || '').toUpperCase(), section]));
+  const ensureSection = (key) => {
+    const upper = String(key || '').toUpperCase();
+    let section = sectionByKey.get(upper) || null;
+    if (section) return section;
+    section = { key: upper, header: `#${upper}`, lines: [] };
+    doc.sections.push(section);
+    sectionByKey.set(upper, section);
+    return section;
+  };
+  const maxIndex = Math.max(-1, ...tab.diplomacySlots.map((slot) => Number(slot && slot.index)));
+  const contact = [];
+  const deal = [];
+  for (let i = 0; i <= maxIndex; i += 1) {
+    const slot = tab.diplomacySlots.find((candidate) => Number(candidate && candidate.index) === i) || {};
+    contact.push(String(slot.firstContact || ''));
+    deal.push(String(slot.firstDeal || ''));
+  }
+  applyDiplomacySectionSlotLinesForUi(ensureSection('AIFIRSTCONTACT'), contact);
+  applyDiplomacySectionSlotLinesForUi(ensureSection('AIFIRSTDEAL'), deal);
+  tab.diplomacyText = serializeDiplomacyDocumentWithOrderForUi(doc);
+}
+
+function applyDiplomacyTextToCivilizationSlots(tab) {
+  if (!tab) return;
+  const priorSlots = Array.isArray(tab.diplomacySlots) ? tab.diplomacySlots : [];
+  const priorByIndex = new Map(priorSlots.map((slot) => [Number(slot && slot.index), slot]));
+  const parsed = parseCivilizationDiplomacySlotsFromText(tab.diplomacyText);
+  tab.diplomacySlots = parsed.map((slot) => {
+    const prior = priorByIndex.get(Number(slot && slot.index)) || {};
+    return {
+      index: Number(slot && slot.index),
+      firstContact: String(slot && slot.firstContact || ''),
+      originalFirstContact: String(prior.originalFirstContact != null ? prior.originalFirstContact : (slot && slot.firstContact) || ''),
+      firstDeal: String(slot && slot.firstDeal || ''),
+      originalFirstDeal: String(prior.originalFirstDeal != null ? prior.originalFirstDeal : (slot && slot.firstDeal) || '')
+    };
+  });
+  tab.diplomacyOptions = rebuildCivilizationDiplomacyOptions(tab);
+}
+
+function parseDiplomacySectionBlocksForUi(sectionLines) {
+  const lines = Array.isArray(sectionLines) ? sectionLines : [];
+  const blocks = [];
+  const sectionNotes = [];
+  let currentBlock = null;
+  const pushBlock = () => {
+    if (!currentBlock) return;
+    blocks.push(currentBlock);
+    currentBlock = null;
+  };
+  const ensureBlock = () => {
+    if (currentBlock) return currentBlock;
+    currentBlock = {
+      civ: null,
+      power: null,
+      mood: null,
+      random: null,
+      selectors: [],
+      dialogue: [],
+      notes: []
+    };
+    return currentBlock;
+  };
+  lines.forEach((raw, idx) => {
+    const line = String(raw || '');
+    const trimmed = line.trim();
+    const upper = trimmed.toUpperCase();
+    if (upper.startsWith('#CIV ')) {
+      pushBlock();
+      const b = ensureBlock();
+      b.civ = Number.parseInt(upper.slice(5).trim(), 10);
+      b.selectors.push({ key: 'CIV', value: b.civ, line: line });
+      return;
+    }
+    if (upper.startsWith('#POWER ')) {
+      const b = ensureBlock();
+      b.power = Number.parseInt(upper.slice(7).trim(), 10);
+      b.selectors.push({ key: 'POWER', value: b.power, line: line });
+      return;
+    }
+    if (upper.startsWith('#MOOD ')) {
+      const b = ensureBlock();
+      b.mood = Number.parseInt(upper.slice(6).trim(), 10);
+      b.selectors.push({ key: 'MOOD', value: b.mood, line: line });
+      return;
+    }
+    if (upper.startsWith('#RANDOM ')) {
+      const b = ensureBlock();
+      b.random = Number.parseInt(upper.slice(8).trim(), 10);
+      b.selectors.push({ key: 'RANDOM', value: b.random, line: line });
+      return;
+    }
+    const isComment = trimmed.startsWith(';');
+    if (!currentBlock) {
+      if (!trimmed && sectionNotes.length > 0) sectionNotes.push({ kind: 'blank', text: '', idx });
+      else if (trimmed || isComment) sectionNotes.push({ kind: isComment ? 'comment' : 'text', text: line, idx });
+      return;
+    }
+    if (!trimmed) {
+      currentBlock.notes.push({ kind: 'blank', text: '', idx });
+      return;
+    }
+    if (isComment) {
+      currentBlock.notes.push({ kind: 'comment', text: line, idx });
+      return;
+    }
+    if (trimmed.startsWith('#')) {
+      currentBlock.notes.push({ kind: 'text', text: line, idx });
+      return;
+    }
+    const cleaned = trimmed.replace(/^["“”„«»]+/, '').replace(/["“”„«»]+$/, '').trim();
+    currentBlock.dialogue.push({ raw: line, text: cleaned, idx });
+  });
+  pushBlock();
+  return { blocks, sectionNotes };
+}
+
+function replaceDiplomacySectionBodyForUi(tab, sectionKey, newSectionBodyText) {
+  if (!tab) return;
+  const doc = parseDiplomacyDocumentWithOrderForUi(String(tab.diplomacyText || ''));
+  const key = String(sectionKey || '').trim().toUpperCase();
+  if (!key) return;
+  let section = (doc.sections || []).find((item) => String(item && item.key || '').trim().toUpperCase() === key) || null;
+  if (!section) {
+    section = { key, header: `#${key}`, lines: [] };
+    doc.sections.push(section);
+  }
+  const normalized = String(newSectionBodyText || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  section.lines = normalized.length === 0 ? [] : normalized.split('\n');
+  tab.diplomacyText = serializeDiplomacyDocumentWithOrderForUi(doc);
+  applyDiplomacyTextToCivilizationSlots(tab);
+}
+
+function renderCivilizationDiplomacySectionsCard(tab, referenceEditable) {
+  const outer = document.createElement('details');
+  outer.className = 'rule-group-card';
+  const title = document.createElement('summary');
+  title.className = 'rule-group-title';
+  title.textContent = 'Diplomacy Text';
+  const sourceMeta = (((tab && tab.sourceDetails) || {}).diplomacyActive || '').trim();
+  const writePath = (((tab && tab.sourceDetails) || {}).diplomacyScenarioWrite || '').trim();
+  attachRichTooltip(title, formatSourceInfo({ source: 'diplomacy.txt', readPath: sourceMeta, writePath }, 'diplomacy.txt'));
+  outer.appendChild(title);
+
+  const doc = parseDiplomacyDocumentWithOrderForUi(String((tab && tab.diplomacyText) || ''));
+  const sections = Array.isArray(doc.sections) ? doc.sections : [];
+  if (!sections.length) {
+    const empty = document.createElement('div');
+    empty.className = 'field-meta';
+    empty.textContent = 'No diplomacy sections found.';
+    outer.appendChild(empty);
+    outer.open = true;
+    return outer;
+  }
+  const totalNonEmptyLines = sections.reduce((sum, section) => {
+    const lines = Array.isArray(section && section.lines) ? section.lines : [];
+    return sum + lines.filter((line) => String(line || '').trim()).length;
+  }, 0);
+  const anySectionEditing = sections.some((section, sectionIdx) => {
+    const key = String(section && section.key || '').trim().toUpperCase();
+    if (!key) return false;
+    return !!state.civilopediaEditorOpen[`DIPLOMACY_SECTION:${key}:${sectionIdx}`];
+  });
+  const shouldCollapseOuter = sections.length > 4 || totalNonEmptyLines > 48;
+  outer.open = !shouldCollapseOuter || anySectionEditing;
+
+  const bodyWrap = document.createElement('div');
+  bodyWrap.style.marginTop = '8px';
+
+  sections.forEach((section, sectionIdx) => {
+    const key = String(section && section.key || '').trim().toUpperCase();
+    if (!key) return;
+    const editorKey = `DIPLOMACY_SECTION:${key}:${sectionIdx}`;
+    const sectionLines = Array.isArray(section && section.lines) ? section.lines : [];
+    const parsed = parseDiplomacySectionBlocksForUi(sectionLines);
+    const blockCount = parsed.blocks.length;
+    const lineCount = sectionLines.filter((line) => String(line || '').trim()).length;
+    const isEditing = referenceEditable && !!state.civilopediaEditorOpen[editorKey];
+
+    const details = document.createElement('details');
+    details.className = 'section-card source-section';
+    details.open = !!isEditing;
+    const summary = document.createElement('summary');
+    summary.className = 'section-top';
+    const left = document.createElement('strong');
+    left.textContent = key;
+    summary.appendChild(left);
+    const meta = document.createElement('span');
+    meta.className = 'field-meta';
+    meta.style.marginLeft = '10px';
+    meta.textContent = `${lineCount} line${lineCount === 1 ? '' : 's'}`;
+    summary.appendChild(meta);
+    details.appendChild(summary);
+
+    const body = document.createElement('div');
+    body.style.marginTop = '8px';
+    if (referenceEditable) {
+      const controls = document.createElement('div');
+      controls.className = 'civilopedia-editor-controls';
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'ghost civilopedia-edit-toggle';
+      editBtn.textContent = isEditing ? '✓ Done' : '✎ Edit';
+      editBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        state.civilopediaEditorOpen[editorKey] = !isEditing;
+        renderActiveTab({ preserveTabScroll: true });
+      });
+      controls.appendChild(editBtn);
+      body.appendChild(controls);
+    }
+
+    if (isEditing) {
+      const hint = document.createElement('div');
+      hint.className = 'field-meta';
+      hint.textContent = 'Raw section body (line by line).';
+      body.appendChild(hint);
+      const editor = document.createElement('textarea');
+      editor.className = 'civilopedia-editor';
+      editor.rows = Math.min(16, Math.max(6, sectionLines.length + 2));
+      editor.value = sectionLines.join('\n');
+      editor.addEventListener('input', () => {
+        rememberUndoSnapshot();
+        replaceDiplomacySectionBodyForUi(tab, key, editor.value);
+        setDirty(true);
+      });
+      body.appendChild(editor);
+    } else {
+      if (parsed.sectionNotes.length > 0) {
+        const note = document.createElement('div');
+        note.className = 'field-meta';
+        note.textContent = `${parsed.sectionNotes.length} non-block line${parsed.sectionNotes.length === 1 ? '' : 's'} in this section.`;
+        body.appendChild(note);
+      }
+      parsed.blocks.forEach((block, idx) => {
+        const blockCard = document.createElement('div');
+        blockCard.className = 'section-card diplomacy-block-card';
+        blockCard.style.marginTop = '8px';
+        const blockTop = document.createElement('div');
+        blockTop.className = 'section-top';
+        const blockTitle = document.createElement('strong');
+        const civ = Number.isFinite(block.civ) ? block.civ : '?';
+        const power = Number.isFinite(block.power) ? block.power : '?';
+        const mood = Number.isFinite(block.mood) ? block.mood : '?';
+        const random = Number.isFinite(block.random) ? block.random : '?';
+        blockTitle.textContent = `Block ${idx + 1}: CIV ${civ}, POWER ${power}, MOOD ${mood}, RANDOM ${random}`;
+        blockTop.appendChild(blockTitle);
+        const blockMeta = document.createElement('span');
+        blockMeta.className = 'field-meta';
+        blockMeta.style.marginLeft = '10px';
+        const dialogueCount = Array.isArray(block.dialogue) ? block.dialogue.length : 0;
+        blockMeta.textContent = `${dialogueCount} line${dialogueCount === 1 ? '' : 's'}`;
+        blockTop.appendChild(blockMeta);
+        blockCard.appendChild(blockTop);
+
+        const blockBody = document.createElement('div');
+        blockBody.style.marginTop = '6px';
+        const list = document.createElement('ol');
+        list.style.margin = '8px 0 0 18px';
+        list.style.padding = '0';
+        const dialogue = Array.isArray(block.dialogue) ? block.dialogue : [];
+        if (dialogue.length === 0) {
+          const none = document.createElement('div');
+          none.className = 'field-meta';
+          none.textContent = '(no dialogue lines)';
+          blockBody.appendChild(none);
+        } else {
+          dialogue.forEach((line) => {
+            const li = document.createElement('li');
+            li.textContent = String(line && line.text || '');
+            list.appendChild(li);
+          });
+          blockBody.appendChild(list);
+        }
+        blockCard.appendChild(blockBody);
+        body.appendChild(blockCard);
+      });
+      if (parsed.blocks.length === 0) {
+        const none = document.createElement('div');
+        none.className = 'field-meta';
+        none.textContent = 'No selector blocks found in this section.';
+        body.appendChild(none);
+      }
+    }
+    details.appendChild(body);
+    bodyWrap.appendChild(details);
+  });
+
+  outer.appendChild(bodyWrap);
+  return outer;
+}
+
+function renderCivilizationDiplomacyCard(tab, entry, referenceEditable) {
+  const slotIndex = getCivilizationDiplomacySlotIndex(entry);
+  if (slotIndex == null) return null;
+  const slot = referenceEditable
+    ? findOrCreateDiplomacySlotForIndex(tab, slotIndex)
+    : ((tab && Array.isArray(tab.diplomacySlots)) ? tab.diplomacySlots.find((candidate) => Number(candidate && candidate.index) === slotIndex) : null);
+  if (!slot) return null;
+
+  const card = document.createElement('div');
+  card.className = 'rule-group-card';
+  const title = document.createElement('div');
+  title.className = 'rule-group-title';
+  title.textContent = `Diplomacy Text (Slot ${slotIndex})`;
+  card.appendChild(title);
+
+  const sourceMeta = (((tab && tab.sourceDetails) || {}).diplomacyActive || '').trim();
+  const writePath = (((tab && tab.sourceDetails) || {}).diplomacyScenarioWrite || '').trim();
+  attachRichTooltip(
+    title,
+    formatSourceInfo({ source: 'diplomacy.txt', readPath: sourceMeta, writePath }, 'diplomacy.txt')
+  );
+
+  const makeRow = (labelText, key) => {
+    const row = document.createElement('div');
+    row.className = 'rule-row';
+    const label = document.createElement('label');
+    label.className = 'field-meta';
+    label.textContent = labelText;
+    row.appendChild(label);
+    const controlWrap = document.createElement('div');
+    controlWrap.className = 'rule-control';
+    if (referenceEditable) {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = String(slot[key] || '');
+      input.placeholder = labelText;
+      input.addEventListener('input', () => {
+        rememberUndoSnapshot();
+        slot[key] = input.value;
+        tab.diplomacyOptions = rebuildCivilizationDiplomacyOptions(tab);
+        syncCivilizationDiplomacyTextFromSlots(tab);
+        setDirty(true);
+      });
+      controlWrap.appendChild(input);
+    } else {
+      const text = document.createElement('div');
+      text.className = 'field-meta';
+      text.textContent = String(slot[key] || '(none)');
+      controlWrap.appendChild(text);
+    }
+    row.appendChild(controlWrap);
+    card.appendChild(row);
+  };
+
+  makeRow('First Contact', 'firstContact');
+  makeRow('Trade Intro', 'firstDeal');
+  return card;
+}
+
 function renderUnitBottomListsCard(entry, referenceEditable) {
   const card = document.createElement('div');
   card.className = 'rule-group-card';
@@ -8980,7 +9728,11 @@ function getReferenceOptionsForField(tabKey, field) {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
   if (tabKey === 'civilizations' && base === 'diplomacytextindex') {
     const civTab = state.bundle && state.bundle.tabs && state.bundle.tabs.civilizations;
-    const options = civTab && Array.isArray(civTab.diplomacyOptions) ? civTab.diplomacyOptions : [];
+    let options = civTab && Array.isArray(civTab.diplomacyOptions) ? civTab.diplomacyOptions : [];
+    if ((!options || options.length === 0) && civTab && Array.isArray(civTab.diplomacySlots)) {
+      options = rebuildCivilizationDiplomacyOptions(civTab);
+      civTab.diplomacyOptions = options;
+    }
     return options.map((opt) => ({
       value: String(opt && opt.value != null ? opt.value : ''),
       label: String(opt && opt.label != null ? opt.label : '')
@@ -13042,6 +13794,8 @@ function renderReferenceTab(tab, tabKey) {
         if (relCard) rulesGrid.appendChild(relCard);
       }
       if (tabKey === 'civilizations') {
+        const diplomacySectionsCard = renderCivilizationDiplomacySectionsCard(tab, referenceEditable);
+        if (diplomacySectionsCard) rulesGrid.appendChild(diplomacySectionsCard);
         const buildCard = renderCivilizationBuildPriorityCard(entry, referenceEditable);
         if (buildCard) rulesGrid.appendChild(buildCard);
         const nameListsCard = renderCivilizationNameListsCard(entry, referenceEditable);
@@ -19524,6 +20278,18 @@ function friendlyBiqWarningText(raw) {
 function markReferenceTabEntryOriginals(tab) {
   if (!tab || !Array.isArray(tab.entries)) return;
   tab.recordOps = [];
+  if (Object.prototype.hasOwnProperty.call(tab, 'diplomacyText')) {
+    tab.originalDiplomacyText = String(tab.diplomacyText || '');
+  }
+  if (Array.isArray(tab.diplomacySlots)) {
+    tab.diplomacySlots.forEach((slot, idx) => {
+      if (!slot) return;
+      if (!Number.isFinite(Number(slot.index))) slot.index = idx;
+      slot.originalFirstContact = String(slot.firstContact || '');
+      slot.originalFirstDeal = String(slot.firstDeal || '');
+    });
+    tab.diplomacyOptions = rebuildCivilizationDiplomacyOptions(tab);
+  }
   tab.entries.forEach((entry) => {
     if (!entry) return;
     entry.isNew = false;
