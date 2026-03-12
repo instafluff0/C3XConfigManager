@@ -604,7 +604,13 @@ function resolveUnitIniPath(civ3Path, animationName, scenarioPath, scenarioPaths
     path.join(ptwRoot, 'Art', 'Units', unitName, `${unitName}.ini`),
     path.join(civ3Root, 'Art', 'Units', unitName, `${unitName}.ini`)
   );
-  return candidates.find((p) => fileExists(p)) || null;
+  const existing = candidates.filter((p) => fileExists(p));
+  if (existing.length === 0) return null;
+  const withResolvableFlc = existing.find((iniPath) => {
+    const flcPath = parseIniForFlc(iniPath);
+    return !!flcPath && fileExists(flcPath);
+  });
+  return withResolvableFlc || existing[0];
 }
 
 function resolvePcxPath(c3xPath, fileName) {

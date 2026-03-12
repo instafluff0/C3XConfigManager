@@ -81,6 +81,13 @@ function getRecordField(record, key) {
   return fields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target) || null;
 }
 
+function getScenarioSettingsField(bundle, key) {
+  const tab = bundle && bundle.tabs && bundle.tabs.scenarioSettings;
+  const section = getSection(tab, 'GAME');
+  const record = section && Array.isArray(section.records) ? section.records[0] : null;
+  return getRecordField(record, key);
+}
+
 test('BIQ round-trip persists tech tree coordinate edits on scenario copy', (t) => {
   const sampleBiq = findSampleBiqPath();
   if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
@@ -129,6 +136,44 @@ test('BIQ round-trip persists tech tree coordinate edits on scenario copy', (t) 
   const reX = findField(reTech, 'x');
   assert.ok(reX, 'expected reloaded tech X field');
   assert.equal(Number(String(reX.value || '').replace(/[^\d-]+/g, '')), original + 9);
+});
+
+test('BIQ round-trip ignores Scenario Search Folders edits from UI payload', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const before = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const beforeField = getScenarioSettingsField(before, 'scenariosearchfolders');
+  if (!beforeField) {
+    t.skip('Sample BIQ has no Scenario Search Folders field.');
+    return;
+  }
+  const originalValue = String(beforeField.value || '');
+  beforeField.value = '__C3X_SHOULD_NOT_PERSIST__';
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: before.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const afterField = getScenarioSettingsField(reloaded, 'scenariosearchfolders');
+  assert.ok(afterField, 'expected Scenario Search Folders field after reload');
+  assert.equal(String(afterField.value || ''), originalValue);
 });
 
 test('BIQ round-trip supports add/copy/delete record ops for technology section', (t) => {

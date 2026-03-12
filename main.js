@@ -1,7 +1,7 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
-const { loadBundle, saveBundle, previewFileDiff } = require('./src/configCore');
+const { loadBundle, saveBundle, previewFileDiff, createScenario } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
 
 const APP_SETTINGS_FILE = 'settings.json';
@@ -410,6 +410,13 @@ ipcMain.handle('manager:list-scenarios', async (_event, civ3Path) => {
   } catch (_err) {
     return [];
   }
+});
+
+ipcMain.handle('manager:create-scenario', async (_event, payload) => {
+  return createScenario({
+    ...(payload || {}),
+    javaPath: resolveBundledJavaPath()
+  });
 });
 
 ipcMain.handle('manager:relaunch', async () => {

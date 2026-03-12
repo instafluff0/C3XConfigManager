@@ -61,6 +61,21 @@ test('resolveUnitIniPath prefers scenario unit folder over conquests/ptw/base', 
   assert.equal(resolved, path.join(scenPath, `${unit}.ini`));
 });
 
+test('resolveUnitIniPath prefers candidate whose INI resolves an existing FLC', () => {
+  const civ3Root = mkTmpDir();
+  const unit = 'Worker Modern Times';
+  const ptwPath = path.join(civ3Root, 'civ3PTW', 'Art', 'Units', unit);
+  const basePath = path.join(civ3Root, 'Art', 'Units', unit);
+  fs.mkdirSync(ptwPath, { recursive: true });
+  fs.mkdirSync(basePath, { recursive: true });
+  fs.writeFileSync(path.join(ptwPath, `${unit}.ini`), 'DEFAULT=WorkerModernDefault.flc\n', 'utf8');
+  fs.writeFileSync(path.join(basePath, `${unit}.ini`), 'DEFAULT=WorkerModernDefault.flc\n', 'utf8');
+  fs.writeFileSync(path.join(basePath, 'WorkerModernDefault.flc'), '');
+
+  const resolved = resolveUnitIniPath(civ3Root, unit, '', []);
+  assert.equal(resolved, path.join(basePath, `${unit}.ini`));
+});
+
 test('unitAnimationManifest returns all parsed actions and source paths', () => {
   const civ3Root = mkTmpDir();
   const conquestsUnitDir = path.join(civ3Root, 'Conquests', 'Art', 'Units', 'Archer');

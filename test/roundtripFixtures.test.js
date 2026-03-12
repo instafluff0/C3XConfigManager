@@ -131,3 +131,59 @@ test('saveBundle refuses writing protected base Civ3 files', () => {
   assert.equal(result.ok, false);
   assert.match(String(result.error || ''), /Refusing to modify base Civilization III file/i);
 });
+
+test('saveBundle refuses writing outside scenario write roots', () => {
+  const root = mkTmpDir();
+  const c3x = mkTmpDir();
+  const scenarioDir = path.join(root, 'Conquests', 'Scenarios', 'Isolated');
+  const otherScenarioDir = path.join(root, 'Conquests', 'Scenarios', 'Other');
+  fs.mkdirSync(path.join(scenarioDir, 'Text'), { recursive: true });
+  fs.mkdirSync(path.join(otherScenarioDir, 'Text'), { recursive: true });
+
+  fs.writeFileSync(path.join(c3x, 'default.c3x_config.ini'), 'flag = true\n', 'utf8');
+  fs.writeFileSync(path.join(c3x, 'default.districts_config.txt'), '#District\nname = Base\n', 'utf8');
+  fs.writeFileSync(path.join(c3x, 'default.districts_wonders_config.txt'), '#Wonder\nname = W\nimg_row = 0\nimg_column = 0\nimg_construct_row = 0\nimg_construct_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(c3x, 'default.districts_natural_wonders_config.txt'), '#Wonder\nname = N\nterrain_type = grassland\nimg_row = 0\nimg_column = 0\n', 'utf8');
+  fs.writeFileSync(path.join(c3x, 'default.tile_animations.txt'), '#Animation\nname = A\nini_path = X\\Y.ini\ntype = terrain\nterrain_types = grassland\n', 'utf8');
+
+  const scenarioBiq = path.join(scenarioDir, 'Isolated.biq');
+  fs.writeFileSync(scenarioBiq, 'BICX', 'latin1');
+
+  const outsideCivilopedia = path.join(otherScenarioDir, 'Text', 'Civilopedia.txt');
+  fs.writeFileSync(outsideCivilopedia, '#RACE_TEST\nLegacy\n', 'utf8');
+
+  const result = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      civilizations: {
+        title: 'Civs',
+        type: 'reference',
+        entries: [
+          {
+            civilopediaKey: 'RACE_TEST',
+            overview: 'Changed',
+            originalOverview: 'Legacy',
+            description: '',
+            originalDescription: '',
+            iconPaths: [],
+            originalIconPaths: [],
+            racePaths: [],
+            originalRacePaths: [],
+            animationName: '',
+            originalAnimationName: '',
+            biqFields: []
+          }
+        ],
+        sourceDetails: {
+          civilopediaScenario: outsideCivilopedia
+        }
+      }
+    }
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(String(result.error || ''), /outside scenario write roots/i);
+});

@@ -262,7 +262,8 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
           description: 'Updated unit description text.',
           originalDescription: 'Original unit description.',
           animationName: 'TestUnitNew',
-          originalAnimationName: 'TestUnit'
+          originalAnimationName: 'TestUnit',
+          unitIniEditor: {}
         })
       ]
     },

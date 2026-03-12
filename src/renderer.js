@@ -120,6 +120,10 @@ const state = {
   filesReadSearchInputMirror: '',
   filesReadSearchQuery: '',
   fileDiffOpen: false,
+  baseCreateConfirmSeen: {
+    global: false,
+    scenario: false
+  },
   filesReadFilters: {
     locationCore: false,
     locationScenario: false,
@@ -227,6 +231,7 @@ function getPreviewScratchCanvas(width, height) {
 const el = {
   modeGlobal: document.getElementById('mode-global'),
   modeScenarioSelect: document.getElementById('mode-scenario-select'),
+  modeScenarioNewAction: document.getElementById('mode-scenario-new-action'),
   fontDown: document.getElementById('font-down'),
   fontUp: document.getElementById('font-up'),
   fontScaleLabel: document.getElementById('font-scale-label'),
@@ -310,19 +315,19 @@ const TAB_ICONS = {
   resources: 'icon-resource',
   improvements: 'icon-improv',
   governments: 'icon-gov',
-  gameConcepts: 'icon-c3x',
-  map: 'icon-civ',
-  scenarioSettings: 'icon-gov',
-  players: 'icon-civ',
-  terrain: 'icon-natural',
-  terrainPedia: 'icon-natural',
-  workerActions: 'icon-natural',
-  world: 'icon-resource',
-  rules: 'icon-c3x',
-  base: 'icon-c3x',
+  gameConcepts: 'icon-c3x-concepts',
+  map: 'icon-map',
+  scenarioSettings: 'icon-scenario-settings',
+  players: 'icon-players',
+  terrain: 'icon-terrain',
+  terrainPedia: 'icon-terrain-pedia',
+  workerActions: 'icon-worker-actions',
+  world: 'icon-world',
+  rules: 'icon-rules',
+  base: 'icon-base',
   districts: 'icon-district',
   wonders: 'icon-wonder',
-  naturalWonders: 'icon-natural',
+  naturalWonders: 'icon-natural-wonder',
   animations: 'icon-anim'
 };
 const TAB_GROUPS = [
@@ -337,8 +342,12 @@ const REFERENCE_PREFIX_BY_TAB = {
   resources: 'GOOD_',
   improvements: 'BLDG_',
   governments: 'GOVT_',
-  units: 'PRTO_'
+  units: 'PRTO_',
+  gameConcepts: 'GCON_'
 };
+const ALL_REFERENCE_PREFIXES = Array.from(
+  new Set(Object.values(REFERENCE_PREFIX_BY_TAB).filter(Boolean).map((v) => String(v).toUpperCase()))
+).sort((a, b) => b.length - a.length);
 const CIVILOPEDIA_TEXT_UTILS = (typeof window !== 'undefined' && window.c3xCivilopediaText)
   ? window.c3xCivilopediaText
   : null;
@@ -1132,10 +1141,15 @@ function collectPendingWritePathsFromDirtyTabs() {
 function getFilesEntryChangeCategory(entry, access) {
   if (!entry) return '';
   if (!state.isDirty) return '';
+  if (entry.isPrimaryBaseTarget && !entry.baseDirty) return '';
+  const explicitCategory = String(entry.changeCategory || '').trim().toLowerCase();
   if (entry.potentialWrite) {
-    return access && !access.exists ? 'new' : 'changed';
+    if (access && !access.exists) return 'new';
+    if (explicitCategory) return explicitCategory;
+    return 'changed';
   }
-  return String(entry.changeCategory || '').toLowerCase();
+  if (explicitCategory) return explicitCategory;
+  return '';
 }
 
 function collectFilesModalEntries() {
@@ -1179,7 +1193,7 @@ function collectFilesModalEntries() {
           return !!(access && access.exists);
         }) || '';
       }
-      if (!resolved) resolved = candidates[0];
+      if (!resolved) return;
       if (!resolved || seenAnimSource.has(resolved)) return;
       seenAnimSource.add(resolved);
       const existing = byPath.get(resolved);
@@ -1240,7 +1254,8 @@ function collectFilesModalEntries() {
   collectPendingWritePathsFromDirtyTabs().forEach((pathValue) => {
     const existing = byPath.get(pathValue);
     if (existing) {
-      existing.changeCategory = existing.changeCategory || 'changed';
+      existing.potentialWrite = true;
+      existing.changeCategory = existing.changeCategory || '';
       if (!existing.note) existing.note = 'Pending save target';
       return;
     }
@@ -1249,12 +1264,36 @@ function collectFilesModalEntries() {
       path: pathValue,
       kind: getFilesEntryKind(pathValue, classification),
       note: 'Pending save target',
-      changeCategory: 'changed',
+      changeCategory: '',
+      potentialWrite: true,
       animationIni: isAnimationIniPath(pathValue)
     };
     out.push(pendingEntry);
     byPath.set(pathValue, pendingEntry);
   });
+
+  const baseTargetPath = getActiveBaseTargetPath();
+  if (baseTargetPath) {
+    const baseExisting = byPath.get(baseTargetPath);
+    const baseDirty = getTabDirtyCount('base') > 0;
+    const baseEntry = baseExisting || {
+      path: baseTargetPath,
+      kind: 'write',
+      note: 'Primary C3X base save target',
+      potentialWrite: true,
+      isPrimaryBaseTarget: true
+    };
+    baseEntry.kind = 'write';
+    baseEntry.note = baseEntry.note || 'Primary C3X base save target';
+    baseEntry.potentialWrite = !!baseDirty;
+    baseEntry.isPrimaryBaseTarget = true;
+    baseEntry.baseDirty = baseDirty;
+    baseEntry.changeCategory = '';
+    if (!baseExisting) {
+      out.push(baseEntry);
+      byPath.set(baseTargetPath, baseEntry);
+    }
+  }
 
   return out.sort((a, b) => {
     const scopePriority = { core: 0, scenario: 1, c3x: 2, external: 3 };
@@ -1309,7 +1348,7 @@ function getDefaultFilesReadFiltersForMode(mode) {
     locationC3x: true,
     locationExternal: false,
     typeConfigIni: true,
-    typeAnimationIni: true,
+    typeAnimationIni: false,
     typeText: true,
     typeBiq: true,
     statusNew: false,
@@ -1333,15 +1372,19 @@ function buildFilesRowTooltip(entry, classification, access) {
     }));
   lines.push(`Scope: ${classification && classification.title ? classification.title : 'Unknown'}`);
   if (entry && entry.note) lines.push(`Note: ${entry.note}`);
+  if (entry && entry.isPrimaryBaseTarget) {
+    lines.push(`Active C3X Save Target: ${getActiveBaseTargetName()}`);
+    lines.push(`Override Chain: ${getActiveBaseChainLine()}`);
+  }
+  const changeCategory = getFilesEntryChangeCategory(entry, access);
   if (classification && (classification.scope === 'core' || isProtectedC3xDefaultPathLocal(entry && entry.path))) {
     lines.push('Access: Read-Only');
   } else if (access && access.exists) {
     lines.push(`Disk Access: ${access.writable ? 'Writable' : 'Read-only'}`);
   } else if (access && !access.exists) {
-    if (entry && entry.potentialWrite && access.parentPath) {
-      lines.push(hasExistingSource
-        ? 'Target Missing: yes (will create scenario override if saved)'
-        : 'Target Missing: yes (will be created if saved)');
+    if (entry && entry.potentialWrite && changeCategory === 'new' && access.parentPath) {
+      lines.push('Category: New');
+      lines.push('Target Missing: yes');
       lines.push(`Create Location: ${access.parentPath}`);
       lines.push(`Create Access: ${access.parentWritable ? 'allowed' : 'blocked (read-only)'}`);
       if (hasExistingSource) {
@@ -1351,6 +1394,9 @@ function buildFilesRowTooltip(entry, classification, access) {
         });
         if (sourcePath) lines.push(`Existing Source: ${sourcePath}`);
       }
+    } else if (entry && entry.isPrimaryBaseTarget) {
+      lines.push('State: Not created yet');
+      lines.push('This override file is optional until Base settings are edited and saved.');
     } else {
       lines.push('Disk Access: Missing');
     }
@@ -1537,14 +1583,17 @@ function renderFilesReadModal() {
   }).length;
   const writeCount = entries.length - readCount;
   const modeLabel = (state.settings && state.settings.mode === 'scenario') ? 'Scenario' : 'Standard game';
+  const baseTargetName = getActiveBaseTargetName();
+  const baseTargetPath = getActiveBaseTargetPath();
+  const baseTargetCompact = baseTargetPath ? (compactPathFromCiv3Root(baseTargetPath) || baseTargetPath) : '(not available)';
   const issueCount = Number(state.filesReadIssueCount || 0);
   const shownPrefix = `Showing ${shownCount} of ${totalCount} file${totalCount === 1 ? '' : 's'}. `;
   if (!state.bundle) {
     el.filesReadModalBody.textContent = 'Load configs to view files read.';
   } else if (issueCount > 0) {
-    el.filesReadModalBody.textContent = `${shownPrefix}${modeLabel} loaded ${readCount} read-only file${readCount === 1 ? '' : 's'}${writeCount > 0 ? ` and ${writeCount} write target${writeCount === 1 ? '' : 's'}` : ''}. ${issueCount} potential save issue${issueCount === 1 ? '' : 's'} detected (read-only on disk).`;
+    el.filesReadModalBody.textContent = `${shownPrefix}${modeLabel} loaded ${readCount} read-only file${readCount === 1 ? '' : 's'}${writeCount > 0 ? ` and ${writeCount} write target${writeCount === 1 ? '' : 's'}` : ''}. C3X base edits save to ${baseTargetName} (${baseTargetCompact}). ${issueCount} potential save issue${issueCount === 1 ? '' : 's'} detected (read-only on disk).`;
   } else {
-    el.filesReadModalBody.textContent = `${shownPrefix}${modeLabel} loaded ${readCount} read-only file${readCount === 1 ? '' : 's'}${writeCount > 0 ? ` and ${writeCount} write target${writeCount === 1 ? '' : 's'}` : ''}.`;
+    el.filesReadModalBody.textContent = `${shownPrefix}${modeLabel} loaded ${readCount} read-only file${readCount === 1 ? '' : 's'}${writeCount > 0 ? ` and ${writeCount} write target${writeCount === 1 ? '' : 's'}` : ''}. C3X base edits save to ${baseTargetName} (${baseTargetCompact}).`;
   }
   el.filesReadList.innerHTML = '';
   if (filteredEntries.length === 0) {
@@ -1559,6 +1608,7 @@ function renderFilesReadModal() {
     const pathValue = String(entry.path || '');
     const access = state.filesReadAccessByPath[pathValue] || null;
     const classification = classifyReadFilePath(pathValue);
+    const fileType = getFilesEntryFileType(entry, classification);
     const issue = shouldWarnForAccessIssue(entry, classification, access);
     const changeCategory = getFilesEntryChangeCategory(entry, access);
     li.className = `files-read-item scope-${classification.scope}${issue ? ' has-issue' : ''}${changeCategory === 'new' ? ' change-new' : ''}${changeCategory === 'changed' ? ' change-changed' : ''}`;
@@ -1606,6 +1656,12 @@ function renderFilesReadModal() {
     scopeBadge.className = `files-read-badge scope-${classification.scope}`;
     scopeBadge.textContent = classification.title;
     meta.appendChild(scopeBadge);
+    if (fileType === 'animationIni') {
+      const typeBadge = document.createElement('span');
+      typeBadge.className = 'files-read-badge type-animation-ini';
+      typeBadge.textContent = 'Animation INI';
+      meta.appendChild(typeBadge);
+    }
 
     const changeBadge = document.createElement('span');
     if (changeCategory === 'new' || changeCategory === 'changed') {
@@ -1616,11 +1672,6 @@ function renderFilesReadModal() {
     }
 
     const accessBadge = document.createElement('span');
-    const hasExistingSource = !!(entry && entry.potentialWrite && Array.isArray(entry.sourceCandidates)
-      && entry.sourceCandidates.some((candidate) => {
-        const a = state.filesReadAccessByPath[String(candidate || '').trim()];
-        return !!(a && a.exists);
-      }));
     if (classification.scope === 'core' || isProtectedC3xDefaultPathLocal(pathValue)) {
       accessBadge.className = 'files-read-badge neutral';
       accessBadge.textContent = 'Read-Only';
@@ -1628,13 +1679,12 @@ function renderFilesReadModal() {
       accessBadge.className = `files-read-badge ${access.writable ? 'ok' : 'warn'}`;
       accessBadge.textContent = access.writable ? 'Writable' : 'Read-only on disk';
     } else if (access && !access.exists) {
-      if (entry.potentialWrite && access.parentPath) {
+      if (entry.potentialWrite && changeCategory === 'new' && access.parentPath) {
         accessBadge.className = `files-read-badge ${access.parentWritable ? 'ok' : 'warn'}`;
-        if (hasExistingSource) {
-          accessBadge.textContent = access.parentWritable ? 'Creates override on save' : 'Cannot create override';
-        } else {
-          accessBadge.textContent = access.parentWritable ? 'Will create on save' : 'Cannot create (read-only)';
-        }
+        accessBadge.textContent = access.parentWritable ? 'New' : 'Cannot create';
+      } else if (entry.isPrimaryBaseTarget) {
+        accessBadge.className = 'files-read-badge neutral';
+        accessBadge.textContent = 'Not created yet';
       } else {
         accessBadge.className = 'files-read-badge neutral';
         accessBadge.textContent = 'Missing';
@@ -1656,6 +1706,14 @@ function openFilesReadModal() {
   renderFilesReadModal();
   el.filesReadModalOverlay.classList.remove('hidden');
   el.filesReadModalOverlay.setAttribute('aria-hidden', 'false');
+}
+
+function updateSaveButtonLabel() {
+  if (!el.saveBtn) return;
+  const label = (state.bundle && state.activeTab === 'base')
+    ? `Save to ${getActiveBaseTargetName()}`
+    : 'Save';
+  el.saveBtn.innerHTML = `<span class="btn-icon">💾</span>${label}`;
 }
 
 function closeFilesReadModal() {
@@ -1714,6 +1772,7 @@ function enableBooleanRowToggle(rowEl, checkEl) {
 function refreshDirtyUi() {
   state.sectionValidationError = getSectionValidationError();
   if (el.saveBtn) el.saveBtn.classList.toggle('dirty', state.isDirty);
+  updateSaveButtonLabel();
   if (el.saveBtn) {
     el.saveBtn.disabled = !state.isDirty || state.isLoading || !!state.sectionValidationError;
     el.saveBtn.title = state.sectionValidationError || '';
@@ -2090,13 +2149,33 @@ function refreshActiveReferenceListDirtyBadges() {
   if (!tab || tab.type !== 'reference' || !Array.isArray(tab.entries)) return;
   const listButtons = Array.from(el.tabContent.querySelectorAll('.entry-list-pane .entry-list-item[data-entry-key]'));
   if (listButtons.length === 0) return;
+  const selectedIndex = Number(state.referenceSelection[tabKey] || 0);
+  const activeEntry = tab.entries[selectedIndex] || null;
+  const activeKey = String(activeEntry && activeEntry.civilopediaKey || '').toUpperCase();
+  const dirtySet = state.dirtyReferenceKeysByTab && state.dirtyReferenceKeysByTab[tabKey];
+  const hasDirtySet = !!(dirtySet && typeof dirtySet.has === 'function' && typeof dirtySet.add === 'function' && typeof dirtySet.delete === 'function');
   const byKey = new Map(tab.entries.map((entry) => [String((entry && entry.civilopediaKey) || '').toUpperCase(), entry]));
   listButtons.forEach((itemBtn) => {
     const key = String(itemBtn.getAttribute('data-entry-key') || '').toUpperCase();
     if (!key) return;
     const entry = byKey.get(key);
+    let isDirty = false;
+    if (hasDirtySet) {
+      // Fast path for most rows: rely on the maintained dirty-key set.
+      isDirty = dirtySet.has(key);
+      // Keep active row precise during live typing.
+      if (entry && key === activeKey) {
+        const cleanEntry = getCleanReferenceEntry(tabKey, key);
+        isDirty = hasReferenceEntryChangedFromClean(entry, cleanEntry);
+        if (isDirty) dirtySet.add(key);
+        else dirtySet.delete(key);
+      }
+    } else if (entry) {
+      // Fallback for unexpected state; preserves previous behavior.
+      isDirty = isReferenceEntryDirty(tabKey, entry);
+    }
     Array.from(itemBtn.querySelectorAll('.dirty-dot-badge')).forEach((node) => node.remove());
-    if (entry && isReferenceEntryDirty(tabKey, entry)) {
+    if (entry && isDirty) {
       appendDirtyBadge(itemBtn, `${entry.name || entry.civilopediaKey} has unsaved edits`);
     }
   });
@@ -2176,6 +2255,11 @@ function getScenarioPreviewPaths() {
 
 function getScenarioPreviewPathsKey() {
   return getScenarioPreviewPaths().join('|');
+}
+
+function isLockedGameField(baseKey) {
+  const key = String(baseKey || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return key === 'scenariosearchfolders' || key === 'scenariosearchfolder';
 }
 
 function getPathTail(anyPath) {
@@ -2268,6 +2352,43 @@ function updateScenarioSelectValue() {
   el.modeScenarioSelect.value = '__manual__';
 }
 
+let scenarioNewActionMeasureCanvas = null;
+function getScenarioNewActionMeasureContext() {
+  if (!scenarioNewActionMeasureCanvas) scenarioNewActionMeasureCanvas = document.createElement('canvas');
+  return scenarioNewActionMeasureCanvas.getContext('2d');
+}
+
+function resizeScenarioNewActionControl() {
+  const selectEl = el.modeScenarioNewAction;
+  if (!selectEl) return;
+  const option = selectEl.options && selectEl.options[selectEl.selectedIndex];
+  const label = String(option && option.textContent || 'New').trim() || 'New';
+  const styles = window.getComputedStyle(selectEl);
+  const ctx = getScenarioNewActionMeasureContext();
+  if (!ctx) return;
+  const fontSize = styles.fontSize || '14px';
+  const fontFamily = styles.fontFamily || 'sans-serif';
+  const fontWeight = styles.fontWeight || '700';
+  const fontStyle = styles.fontStyle || 'normal';
+  ctx.font = `${fontStyle} ${fontWeight} ${fontSize} ${fontFamily}`;
+  const textWidth = Math.ceil(ctx.measureText(label).width);
+  const paddingLeft = Number.parseFloat(styles.paddingLeft) || 0;
+  const paddingRight = Number.parseFloat(styles.paddingRight) || 0;
+  const borderLeft = Number.parseFloat(styles.borderLeftWidth) || 0;
+  const borderRight = Number.parseFloat(styles.borderRightWidth) || 0;
+  const minWidth = 96;
+  const maxWidth = 220;
+  const measured = textWidth + paddingLeft + paddingRight + borderLeft + borderRight + 8;
+  const finalWidth = Math.max(minWidth, Math.min(maxWidth, Math.ceil(measured)));
+  selectEl.style.width = `${finalWidth}px`;
+}
+
+function resetScenarioNewActionControl() {
+  if (!el.modeScenarioNewAction) return;
+  el.modeScenarioNewAction.value = '';
+  resizeScenarioNewActionControl();
+}
+
 async function refreshScenarioSelectOptions() {
   if (!el.modeScenarioSelect || !state.settings) return;
   const manualValue = '__manual__';
@@ -2307,6 +2428,352 @@ async function refreshScenarioSelectOptions() {
     el.modeScenarioSelect.value = selectedBefore;
   }
   updateScenarioSelectValue();
+}
+
+function getDefaultScenarioParentDir() {
+  const civ3Root = getCiv3InstallRoot();
+  if (!civ3Root) return '';
+  return `${civ3Root.replace(/\/+$/, '')}/Conquests/Scenarios`;
+}
+
+function buildScenarioSourceSelect(selectEl) {
+  if (!selectEl) return;
+  selectEl.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Source scenario...';
+  selectEl.appendChild(placeholder);
+  const manual = document.createElement('option');
+  manual.value = '__manual__';
+  manual.textContent = 'Manual / Browse...';
+  selectEl.appendChild(manual);
+  const addGroup = (source, label) => {
+    const groupItems = state.availableScenarios.filter((s) => String(s.source || '') === source);
+    if (groupItems.length === 0) return;
+    const group = document.createElement('optgroup');
+    group.label = label;
+    groupItems.forEach((item) => {
+      const option = document.createElement('option');
+      option.value = String(item.path || '');
+      option.textContent = String(item.name || item.fileName || getPathTail(item.path));
+      option.title = String(item.path || '');
+      group.appendChild(option);
+    });
+    selectEl.appendChild(group);
+  };
+  addGroup('Conquests', 'Conquests Folder');
+  addGroup('Scenarios', 'Scenarios Folder');
+}
+
+async function promptCreateScenarioFromBaseAction() {
+  if (!el.entityModalOverlay || !el.entityModalContent) return null;
+  if (el.entityModalTitle) el.entityModalTitle.textContent = 'Create Scenario: Base Game';
+  if (el.entityModalBody) {
+    el.entityModalBody.textContent = 'Create a new scenario folder by copying base game files and C3X defaults.';
+  }
+  if (el.entityModalConfirm) {
+    el.entityModalConfirm.textContent = 'Create';
+    el.entityModalConfirm.disabled = false;
+  }
+  el.entityModalContent.innerHTML = '';
+
+  const form = document.createElement('div');
+  form.className = 'entity-modal-content';
+  const grid = document.createElement('div');
+  grid.className = 'entity-form-grid';
+  form.appendChild(grid);
+
+  const nameField = document.createElement('div');
+  nameField.className = 'entity-field';
+  const nameLabel = document.createElement('label');
+  nameLabel.textContent = 'Scenario Name';
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.placeholder = 'My New Scenario';
+  nameField.appendChild(nameLabel);
+  nameField.appendChild(nameInput);
+  grid.appendChild(nameField);
+
+  const parentField = document.createElement('div');
+  parentField.className = 'entity-field';
+  const parentLabel = document.createElement('label');
+  parentLabel.textContent = 'Scenario Folder';
+  const parentRow = document.createElement('div');
+  parentRow.className = 'art-path-row';
+  const parentInput = document.createElement('input');
+  parentInput.type = 'text';
+  parentInput.placeholder = 'Folder where scenario directory will be created';
+  parentInput.value = getDefaultScenarioParentDir();
+  const parentPick = document.createElement('button');
+  parentPick.type = 'button';
+  parentPick.className = 'ghost';
+  parentPick.textContent = 'Browse';
+  parentPick.addEventListener('click', async () => {
+    const selected = await window.c3xManager.pickDirectory();
+    if (!selected) return;
+    parentInput.value = selected;
+  });
+  parentRow.appendChild(parentInput);
+  parentRow.appendChild(parentPick);
+  parentField.appendChild(parentLabel);
+  parentField.appendChild(parentRow);
+  grid.appendChild(parentField);
+
+  el.entityModalContent.appendChild(form);
+  state.entityModal.open = true;
+  el.entityModalOverlay.classList.remove('hidden');
+  el.entityModalOverlay.setAttribute('aria-hidden', 'false');
+  window.setTimeout(() => nameInput.focus({ preventScroll: true }), 0);
+
+  return new Promise((resolve) => {
+    state.entityModal.resolve = resolve;
+    const onConfirm = () => {
+      const scenarioName = String(nameInput.value || '').trim();
+      const scenarioParentDir = String(parentInput.value || '').trim();
+      if (!scenarioName) {
+        setStatus('Scenario name is required.', true);
+        return;
+      }
+      if (!scenarioParentDir) {
+        setStatus('Scenario folder is required.', true);
+        return;
+      }
+      resolveEntityModal({ scenarioName, scenarioParentDir, template: 'base' });
+    };
+    const onCancel = () => resolveEntityModal(null);
+    if (el.entityModalConfirm) el.entityModalConfirm.onclick = onConfirm;
+    if (el.entityModalCancel) el.entityModalCancel.onclick = onCancel;
+  });
+}
+
+async function promptCopyScenarioAction() {
+  if (!el.entityModalOverlay || !el.entityModalContent) return null;
+  if (el.entityModalTitle) el.entityModalTitle.textContent = 'Create Scenario: Copy Existing';
+  if (el.entityModalBody) {
+    el.entityModalBody.textContent = 'Copy an existing scenario folder and rename its BIQ for the new scenario.';
+  }
+  if (el.entityModalConfirm) {
+    el.entityModalConfirm.textContent = 'Create Copy';
+    el.entityModalConfirm.disabled = false;
+  }
+  el.entityModalContent.innerHTML = '';
+
+  const form = document.createElement('div');
+  form.className = 'entity-modal-content';
+  const grid = document.createElement('div');
+  grid.className = 'entity-form-grid';
+  form.appendChild(grid);
+
+  const sourceField = document.createElement('div');
+  sourceField.className = 'entity-field';
+  const sourceLabel = document.createElement('label');
+  sourceLabel.textContent = 'Source Scenario';
+  const sourceRow = document.createElement('div');
+  sourceRow.className = 'art-path-row';
+  const sourceSelect = document.createElement('select');
+  buildScenarioSourceSelect(sourceSelect);
+  const sourceBrowse = document.createElement('button');
+  sourceBrowse.type = 'button';
+  sourceBrowse.className = 'ghost';
+  sourceBrowse.textContent = 'Browse';
+  sourceRow.appendChild(sourceSelect);
+  sourceRow.appendChild(sourceBrowse);
+  sourceField.appendChild(sourceLabel);
+  sourceField.appendChild(sourceRow);
+  grid.appendChild(sourceField);
+
+  const nameField = document.createElement('div');
+  nameField.className = 'entity-field';
+  const nameLabel = document.createElement('label');
+  nameLabel.textContent = 'New Scenario Name';
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.placeholder = 'My Scenario Copy';
+  nameField.appendChild(nameLabel);
+  nameField.appendChild(nameInput);
+  grid.appendChild(nameField);
+
+  const parentField = document.createElement('div');
+  parentField.className = 'entity-field';
+  const parentLabel = document.createElement('label');
+  parentLabel.textContent = 'Scenario Folder';
+  const parentRow = document.createElement('div');
+  parentRow.className = 'art-path-row';
+  const parentInput = document.createElement('input');
+  parentInput.type = 'text';
+  parentInput.placeholder = 'Folder where scenario directory will be created';
+  parentInput.value = getDefaultScenarioParentDir();
+  const parentPick = document.createElement('button');
+  parentPick.type = 'button';
+  parentPick.className = 'ghost';
+  parentPick.textContent = 'Browse';
+  parentPick.addEventListener('click', async () => {
+    const selected = await window.c3xManager.pickDirectory();
+    if (!selected) return;
+    parentInput.value = selected;
+  });
+  parentRow.appendChild(parentInput);
+  parentRow.appendChild(parentPick);
+  parentField.appendChild(parentLabel);
+  parentField.appendChild(parentRow);
+  grid.appendChild(parentField);
+
+  el.entityModalContent.appendChild(form);
+  state.entityModal.open = true;
+  el.entityModalOverlay.classList.remove('hidden');
+  el.entityModalOverlay.setAttribute('aria-hidden', 'false');
+
+  let selectedSourcePath = '';
+  let nameEdited = false;
+  const syncDefaultNameFromSource = () => {
+    if (nameEdited) return;
+    const base = stripBiqExtension(getPathTail(selectedSourcePath));
+    if (!base) return;
+    nameInput.value = `${base} Copy`;
+  };
+
+  sourceSelect.addEventListener('change', async () => {
+    const value = String(sourceSelect.value || '').trim();
+    if (!value) return;
+    if (value === '__manual__') {
+      sourceBrowse.click();
+      return;
+    }
+    selectedSourcePath = value;
+    syncDefaultNameFromSource();
+  });
+
+  sourceBrowse.addEventListener('click', async () => {
+    const filePath = await window.c3xManager.pickFile({
+      filters: [{ name: 'BIQ Scenario Files', extensions: ['biq'] }]
+    });
+    if (!filePath) return;
+    selectedSourcePath = filePath;
+    const hasOption = Array.from(sourceSelect.options).some((opt) => String(opt.value || '') === filePath);
+    sourceSelect.value = hasOption ? filePath : '__manual__';
+    syncDefaultNameFromSource();
+  });
+
+  nameInput.addEventListener('input', () => {
+    nameEdited = true;
+  });
+  window.setTimeout(() => sourceSelect.focus({ preventScroll: true }), 0);
+
+  return new Promise((resolve) => {
+    state.entityModal.resolve = resolve;
+    const onConfirm = () => {
+      const scenarioName = String(nameInput.value || '').trim();
+      const scenarioParentDir = String(parentInput.value || '').trim();
+      if (!selectedSourcePath) {
+        setStatus('Source scenario is required.', true);
+        return;
+      }
+      if (!scenarioName) {
+        setStatus('Scenario name is required.', true);
+        return;
+      }
+      if (!scenarioParentDir) {
+        setStatus('Scenario folder is required.', true);
+        return;
+      }
+      resolveEntityModal({
+        template: 'copy',
+        sourceScenarioPath: selectedSourcePath,
+        scenarioName,
+        scenarioParentDir
+      });
+    };
+    const onCancel = () => resolveEntityModal(null);
+    if (el.entityModalConfirm) el.entityModalConfirm.onclick = onConfirm;
+    if (el.entityModalCancel) el.entityModalCancel.onclick = onCancel;
+  });
+}
+
+async function runScenarioCreateFlow(kind = 'base') {
+  if (!window.c3xManager || typeof window.c3xManager.createScenario !== 'function') {
+    setStatus('Scenario creation API is unavailable in this build.', true);
+    return false;
+  }
+  const actionLabel = kind === 'copy' ? 'creating a copied scenario' : 'creating a new scenario';
+  const allow = await confirmResolveUnsavedChanges(actionLabel);
+  if (!allow) return false;
+  const details = kind === 'copy'
+    ? await promptCopyScenarioAction()
+    : await promptCreateScenarioFromBaseAction();
+  if (!details) {
+    updateScenarioSelectValue();
+    resetScenarioNewActionControl();
+    return false;
+  }
+  if (!state.settings || !state.settings.civ3Path) {
+    setStatus('Set Civilization 3 folder before creating a scenario.', true);
+    return false;
+  }
+  if (!state.settings.c3xPath) {
+    setStatus('Set C3X folder before creating a scenario.', true);
+    return false;
+  }
+  const created = await window.c3xManager.createScenario({
+    dryRun: true,
+    c3xPath: state.settings.c3xPath,
+    civ3Path: state.settings.civ3Path,
+    template: details.template || 'base',
+    sourceScenarioPath: details.sourceScenarioPath || '',
+    scenarioName: details.scenarioName,
+    scenarioParentDir: details.scenarioParentDir
+  });
+  if (!created || !created.ok) {
+    setStatus((created && created.error) || 'Could not prepare scenario creation.', true);
+    updateScenarioSelectValue();
+    resetScenarioNewActionControl();
+    return false;
+  }
+  const writeRoots = Array.isArray(created.scenarioWriteRoots) ? created.scenarioWriteRoots : [created.scenarioDir];
+  const preflightLines = [
+    `Scenario: ${created.scenarioName || details.scenarioName}`,
+    `Destination: ${created.scenarioDir || details.scenarioParentDir}`,
+    '',
+    'Writable roots:',
+    ...writeRoots.map((p) => `- ${p}`)
+  ];
+  if (kind === 'copy' && Array.isArray(created.sourceSearchRoots) && created.sourceSearchRoots.length > 0) {
+    preflightLines.push('', 'Source scenario search roots to isolate:');
+    created.sourceSearchRoots.forEach((p) => preflightLines.push(`- ${p}`));
+  }
+  const proceed = window.confirm(`Create scenario with this plan?\n\n${preflightLines.join('\n')}`);
+  if (!proceed) {
+    updateScenarioSelectValue();
+    resetScenarioNewActionControl();
+    return false;
+  }
+
+  const committed = await window.c3xManager.createScenario({
+    c3xPath: state.settings.c3xPath,
+    civ3Path: state.settings.civ3Path,
+    template: details.template || 'base',
+    sourceScenarioPath: details.sourceScenarioPath || '',
+    scenarioName: details.scenarioName,
+    scenarioParentDir: details.scenarioParentDir
+  });
+  if (!committed || !committed.ok) {
+    setStatus((committed && committed.error) || 'Could not create scenario.', true);
+    updateScenarioSelectValue();
+    resetScenarioNewActionControl();
+    return false;
+  }
+  setMode('scenario');
+  el.scenarioPath.value = String(committed.scenarioBiqPath || '');
+  syncSettingsFromInputs();
+  await refreshScenarioSelectOptions();
+  updateScenarioSelectValue();
+  updatePathsSummary();
+  updateModeState();
+  await window.c3xManager.setSettings(state.settings);
+  await loadBundleAndRender({ loadingText: kind === 'copy' ? 'Loading copied scenario...' : 'Loading new scenario...' });
+  const statusVerb = kind === 'copy' ? 'Copied' : 'Created';
+  setStatus(`${statusVerb} scenario "${committed.scenarioName}" and loaded it.`);
+  resetScenarioNewActionControl();
+  return true;
 }
 
 function setPathsCollapsed(collapsed) {
@@ -2364,6 +2831,7 @@ function setLoadingUi(isLoading, text = 'Loading configs...') {
   const controls = [
     el.modeGlobal,
     el.modeScenarioSelect,
+    el.modeScenarioNewAction,
     el.fontDown,
     el.fontUp,
     el.c3xPath,
@@ -2928,6 +3396,7 @@ function setMode(mode) {
   updateScenarioSelectValue();
   updatePathsSummary();
   updateModeState();
+  updateSaveButtonLabel();
 }
 
 function syncSettingsFromInputs() {
@@ -2948,6 +3417,14 @@ function fillInputsFromSettings() {
   updatePathsSummary();
 }
 
+function lockPathInputs() {
+  [el.c3xPath, el.civ3Path, el.scenarioPath].forEach((input) => {
+    if (!input) return;
+    input.readOnly = true;
+    input.setAttribute('aria-readonly', 'true');
+  });
+}
+
 function isBiqPath(value) {
   return /\.biq$/i.test(String(value || '').trim());
 }
@@ -2955,6 +3432,44 @@ function isBiqPath(value) {
 function prettySourceLabel(source) {
   if (!source) return 'unknown';
   return source.replace('+', ' -> ');
+}
+
+function getC3xBaseCustomPath() {
+  const root = String((state.settings && state.settings.c3xPath) || '').trim();
+  if (!root) return '';
+  return `${root.replace(/[\\/]+$/, '')}/custom.c3x_config.ini`;
+}
+
+function getC3xBaseScenarioPath() {
+  const scenarioDir = String((state.bundle && state.bundle.scenarioPath) || '').trim();
+  if (!scenarioDir) return '';
+  return `${scenarioDir.replace(/[\\/]+$/, '')}/scenario.c3x_config.ini`;
+}
+
+function getActiveBaseTargetName() {
+  return isScenarioMode() ? 'scenario.c3x_config.ini' : 'custom.c3x_config.ini';
+}
+
+function getActiveBaseTargetPath() {
+  const tabTarget = String((state.bundle && state.bundle.tabs && state.bundle.tabs.base && state.bundle.tabs.base.targetPath) || '').trim();
+  if (tabTarget) return tabTarget;
+  if (isScenarioMode()) return getC3xBaseScenarioPath();
+  return getC3xBaseCustomPath();
+}
+
+function getActiveBaseChainLine() {
+  if (isScenarioMode()) {
+    return 'default.c3x_config.ini (read-only) -> custom.c3x_config.ini -> scenario.c3x_config.ini (editable)';
+  }
+  return 'default.c3x_config.ini (read-only) -> custom.c3x_config.ini (editable)';
+}
+
+function getBaseFieldSource(row) {
+  if (!row || !row.source) return 'unknown';
+  if (row.source === 'default') return 'default.c3x_config.ini';
+  if (row.source === 'custom') return 'custom.c3x_config.ini';
+  if (row.source === 'scenario') return 'scenario.c3x_config.ini';
+  return String(row.source);
 }
 
 function toFriendlyKey(key) {
@@ -2990,6 +3505,10 @@ function createBaseMeta(row, fieldDocs) {
   const meta = document.createElement('div');
   meta.className = 'field-meta-block';
   const desc = (fieldDocs && fieldDocs[row.key]) || BASE_FIELD_DETAILS[row.key] || '';
+  const source = document.createElement('div');
+  source.className = 'field-meta source';
+  source.textContent = `Source: ${getBaseFieldSource(row)}`;
+  meta.appendChild(source);
   const line = document.createElement('div');
   line.className = 'field-meta';
   line.textContent = desc ? `${row.key} - ${desc}` : row.key;
@@ -4243,12 +4762,29 @@ function renderBaseTab(tab) {
   const header = document.createElement('div');
   header.className = 'section-editor-header sticky';
   header.appendChild(createIcon(TAB_ICONS.base));
-  header.insertAdjacentHTML('beforeend', `<h3>${tab.title}</h3><span class="source-tag">effective: ${prettySourceLabel(tab.effectiveSource)}</span>`);
+  header.insertAdjacentHTML('beforeend', `<h3>${tab.title}</h3><span class="source-tag">editing: ${getActiveBaseTargetName()}</span>`);
   wrap.appendChild(header);
+
+  const targetCard = document.createElement('div');
+  targetCard.className = 'c3x-active-file-card';
+  const targetPath = getActiveBaseTargetPath();
+  const targetPathLabel = targetPath ? (compactPathFromCiv3Root(targetPath) || targetPath) : '(not available)';
+  targetCard.innerHTML = `
+    <div class="c3x-active-file-title">Active C3X File: <code>${getActiveBaseTargetName()}</code></div>
+    <div class="c3x-active-file-path">${targetPathLabel}</div>
+    <div class="c3x-active-file-chain">${getActiveBaseChainLine()}</div>
+  `;
+  if (isScenarioMode()) {
+    const scenarioNote = document.createElement('div');
+    scenarioNote.className = 'c3x-active-file-note';
+    scenarioNote.textContent = 'Scenario mode writes scenario.c3x_config.ini in the active scenario folder.';
+    targetCard.appendChild(scenarioNote);
+  }
+  wrap.appendChild(targetCard);
 
   const helper = document.createElement('p');
   helper.className = 'hint';
-  helper.textContent = 'C3X core settings for this mode. Most fields are typed; plain text appears only when a setting is truly free-form.';
+  helper.textContent = 'C3X core settings for this mode. default.c3x_config.ini is read-only; save writes only overrides to the active file.';
   wrap.appendChild(helper);
 
   const filterRow = document.createElement('div');
@@ -5168,6 +5704,7 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
       keyInput.value = folderName;
       withUndo(() => {
         entry.animationName = folderName;
+        entry.unitAnimationEdited = true;
         entry.unitIniEditor = null;
       });
       model = null;
@@ -5613,6 +6150,7 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
     keyInput.addEventListener('change', () => {
       withUndo(() => {
         entry.animationName = String(keyInput.value || '').trim();
+        entry.unitAnimationEdited = true;
         entry.unitIniEditor = null;
       });
       model = null;
@@ -5623,59 +6161,33 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
 
   const variants = getEraVariantEntries(tab, entry);
   if (variants.length > 1) {
-    const eraCard = document.createElement('div');
-    eraCard.className = 'unit-era-variant-card';
-    const eraTitle = document.createElement('div');
-    eraTitle.className = 'field-meta';
-    eraTitle.textContent = 'Era/Age Variant Animation Folders';
-    eraCard.appendChild(eraTitle);
-    panel.insertBefore(eraCard, mainRow);
+    const eraRow = document.createElement('div');
+    eraRow.className = 'rule-row unit-animation-key-row';
+    const eraLabel = document.createElement('label');
+    eraLabel.className = 'field-meta';
+    eraLabel.textContent = 'Era Variant';
+    eraRow.appendChild(eraLabel);
+    const eraCtrl = document.createElement('div');
+    eraCtrl.className = 'rule-control';
+    const eraSelect = document.createElement('select');
     variants.forEach((variant) => {
-      const row = document.createElement('div');
-      row.className = 'unit-era-variant-row';
-      const label = document.createElement('strong');
-      label.textContent = variant.eraLabel;
-      row.appendChild(label);
-      const valueInput = document.createElement(editable ? 'input' : 'span');
-      if (editable) {
-        valueInput.type = 'text';
-        valueInput.value = String(variant.entry && variant.entry.animationName || '');
-        valueInput.placeholder = 'Animation folder';
-        valueInput.addEventListener('change', () => {
-          withUndo(() => {
-            variant.entry.animationName = String(valueInput.value || '').trim();
-            variant.entry.unitIniEditor = null;
-          });
-          if (variant.entry === entry) {
-            model = null;
-            ui.actionKey = '';
-            void loadManifest();
-          }
-        });
-      } else {
-        valueInput.className = 'key-display-chip';
-        valueInput.textContent = String(variant.entry && variant.entry.animationName || '(none)');
-      }
-      row.appendChild(valueInput);
-      if (variant.entry !== entry) {
-        const jumpBtn = document.createElement('button');
-        jumpBtn.type = 'button';
-        jumpBtn.className = 'ghost';
-        jumpBtn.textContent = 'Open';
-        jumpBtn.addEventListener('click', () => {
-          navigateWithHistory(() => {
-            state.referenceSelection[tabKey] = variant.baseIndex;
-          }, { preserveTabScroll: true });
-        });
-        row.appendChild(jumpBtn);
-      } else {
-        const here = document.createElement('span');
-        here.className = 'hint';
-        here.textContent = '(current)';
-        row.appendChild(here);
-      }
-      eraCard.appendChild(row);
+      const option = document.createElement('option');
+      option.value = String(variant.baseIndex);
+      const folder = String(variant.entry && variant.entry.animationName || '').trim();
+      option.textContent = folder ? `${variant.eraLabel} (${folder})` : variant.eraLabel;
+      option.selected = variant.entry === entry;
+      eraSelect.appendChild(option);
     });
+    eraSelect.addEventListener('change', () => {
+      const nextIdx = Number.parseInt(String(eraSelect.value || ''), 10);
+      if (!Number.isInteger(nextIdx)) return;
+      navigateWithHistory(() => {
+        state.referenceSelection[tabKey] = nextIdx;
+      }, { preserveTabScroll: true });
+    });
+    eraCtrl.appendChild(eraSelect);
+    eraRow.appendChild(eraCtrl);
+    panel.insertBefore(eraRow, mainRow);
   }
 
   renderDirectionPad();
@@ -6811,6 +7323,19 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       requiredresource2: { group: 'Requirements', control: 'reference', label: 'Required Resource 2' },
       order: { group: 'General', control: 'text', label: 'Worker Order' }
     }
+  },
+  WSIZ: {
+    order: ['numberofcivs', 'distancebetweencivs', 'width', 'height', 'optimalnumberofcities', 'techrate'],
+    fields: {
+      numberofcivs: { group: 'General', control: 'number', min: 0, max: 32, label: 'Number Of Civilizations' },
+      distancebetweencivs: { group: 'General', control: 'number', min: 0, label: 'Distance Between Civilizations' },
+      width: { group: 'Map Size', control: 'number', min: 66, max: 362, label: 'Map Width' },
+      height: { group: 'Map Size', control: 'number', min: 66, max: 362, label: 'Map Height' },
+      mapwidth: { group: 'Map Size', control: 'number', min: 66, max: 362, label: 'Map Width' },
+      mapheight: { group: 'Map Size', control: 'number', min: 66, max: 362, label: 'Map Height' },
+      optimalnumberofcities: { group: 'General', control: 'number', min: 0, label: 'Optimal Number Of Cities' },
+      techrate: { group: 'General', control: 'number', min: 0, label: 'Tech Rate (%)' }
+    }
   }
 };
 
@@ -6829,39 +7354,76 @@ function makeBiqSectionIndexOptions(sectionCode, oneBased = false) {
   const targetTab = targetTabKey && state.bundle && state.bundle.tabs && state.bundle.tabs[targetTabKey];
   const targetEntries = targetTab && Array.isArray(targetTab.entries) ? targetTab.entries : [];
   const entryByIndex = new Map();
+  const entryByCivilopediaKey = new Map();
   targetEntries.forEach((entry, fallbackIdx) => {
     const biqIndex = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
     entryByIndex.set(biqIndex, entry);
+    const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (!key) return;
+    const prior = entryByCivilopediaKey.get(key);
+    if (!prior || (!prior.thumbPath && entry.thumbPath)) {
+      entryByCivilopediaKey.set(key, entry);
+    }
   });
-  return section.records.map((rec, idx) => {
+  const rawOptions = section.records.map((rec, idx) => {
     const recIndex = Number.isFinite(rec && rec.index) ? Number(rec.index) : idx;
-    const entry = entryByIndex.get(recIndex) || null;
+    const recCivilopediaKey = String(getFieldByBaseKey(rec, 'civilopediaentry')?.value || '').trim().toUpperCase();
+    const entry = entryByIndex.get(recIndex) || entryByCivilopediaKey.get(recCivilopediaKey) || null;
     const liveName = String(entry && entry.name || '').trim();
     const fallbackName = String(rec && rec.name || '').trim();
-    const label = liveName || fallbackName || `${code} ${recIndex + 1}`;
+    const fallbackFromKey = recCivilopediaKey
+      ? recCivilopediaKey
+        .replace(/^[A-Z]+_/, '')
+        .split('_')
+        .filter(Boolean)
+        .map((part) => part.charAt(0) + part.slice(1).toLowerCase())
+        .join(' ')
+      : '';
+    // BIQ record names are the authoritative scenario-facing labels for BIQ structure refs.
+    const label = fallbackName || liveName || fallbackFromKey || `${code} ${recIndex + 1}`;
     return {
       value: String(oneBased ? (recIndex + 1) : recIndex),
       label,
-      entry
+      entry,
+      recIndex
+    };
+  });
+  const labelCounts = new Map();
+  rawOptions.forEach((opt) => {
+    const k = String(opt && opt.label || '').trim().toLowerCase();
+    if (!k) return;
+    labelCounts.set(k, Number(labelCounts.get(k) || 0) + 1);
+  });
+  return rawOptions.map((opt) => {
+    const key = String(opt && opt.label || '').trim().toLowerCase();
+    const hasDup = key && Number(labelCounts.get(key) || 0) > 1;
+    if (!hasDup) return { value: opt.value, label: opt.label, entry: opt.entry };
+    return {
+      value: opt.value,
+      label: `${opt.label} [ID ${opt.recIndex}]`,
+      entry: opt.entry
     };
   });
 }
 
 function getBiqStructureRefSpec(sectionCode, baseKey) {
   const code = String(sectionCode || '').toUpperCase();
-  const base = String(baseKey || '').toLowerCase();
-  const unitRefKeys = new Set(['advancedbarbarian', 'basicbarbarian', 'barbarianseaunit', 'battlecreatedunit', 'buildarmyunit', 'scout', 'slave', 'startunit1', 'startunit2', 'flagunit']);
-  if ((code === 'GAME' || code === 'RULE') && unitRefKeys.has(base)) return { section: 'PRTO', oneBased: false };
-  if ((code === 'GAME' || code === 'RULE') && base === 'defaultmoneyresource') return { section: 'GOOD', oneBased: false };
-  if ((code === 'GAME' || code === 'RULE') && base === 'defaultdifficultylevel') return { section: 'DIFF', oneBased: false };
-  if (code === 'GAME' && base.startsWith('playable_civ')) return { section: 'RACE', oneBased: false };
-  if (code === 'LEAD' && base === 'civ') return { section: 'RACE', oneBased: false };
-  if (code === 'LEAD' && base === 'government') return { section: 'GOVT', oneBased: false };
-  if (code === 'LEAD' && base === 'initialera') return { section: 'ERAS', oneBased: false };
-  if (code === 'LEAD' && base === 'difficulty') return { section: 'DIFF', oneBased: false };
-  if (code === 'TERR' && base === 'workerjob') return { section: 'TFRM', oneBased: false };
-  if (code === 'TERR' && base === 'pollutioneffect') return { section: 'TERR', oneBased: false };
-  if (code === 'CTZN' && base === 'prerequisite') return { section: 'TECH', oneBased: false };
+  const canon = String(baseKey || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const unitRefKeys = new Set([
+    'advancedbarbarian', 'basicbarbarian', 'barbarianseaunit', 'battlecreatedunit', 'buildarmyunit',
+    'scout', 'slave', 'startunit1', 'startunit2', 'flagunit'
+  ]);
+  if ((code === 'GAME' || code === 'RULE') && unitRefKeys.has(canon)) return { section: 'PRTO', oneBased: false };
+  if ((code === 'GAME' || code === 'RULE') && canon === 'defaultmoneyresource') return { section: 'GOOD', oneBased: false };
+  if ((code === 'GAME' || code === 'RULE') && canon === 'defaultdifficultylevel') return { section: 'DIFF', oneBased: false };
+  if (code === 'GAME' && canon.startsWith('playableciv')) return { section: 'RACE', oneBased: false };
+  if (code === 'LEAD' && canon === 'civ') return { section: 'RACE', oneBased: false };
+  if (code === 'LEAD' && canon === 'government') return { section: 'GOVT', oneBased: false };
+  if (code === 'LEAD' && canon === 'initialera') return { section: 'ERAS', oneBased: false };
+  if (code === 'LEAD' && canon === 'difficulty') return { section: 'DIFF', oneBased: false };
+  if (code === 'TERR' && canon === 'workerjob') return { section: 'TFRM', oneBased: false };
+  if (code === 'TERR' && canon === 'pollutioneffect') return { section: 'TERR', oneBased: false };
+  if (code === 'CTZN' && canon === 'prerequisite') return { section: 'TECH', oneBased: false };
   return null;
 }
 
@@ -8463,6 +9025,13 @@ function getEnumOptionsForField(tabKey, field) {
 
 function getEnumOptionsForBiqStructureTab(tabKey, field) {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const canon = base.replace(/[^a-z0-9]/g, '');
+  if (tabKey === 'rules' && canon === 'defaultdifficultylevel') {
+    return getRuleSectionIndexOptions('DIFF');
+  }
+  if (tabKey === 'players' && canon === 'difficulty') {
+    return [{ value: 'Any', label: 'Any' }].concat(getRuleSectionIndexOptions('DIFF'));
+  }
   const enums = BIQ_FIELD_ENUMS[tabKey] || {};
   return enums[base] || [];
 }
@@ -10126,8 +10695,8 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   return block;
 }
 
-function createBiqTextEditorBlock({ editorKey, titleText, sourceInfo, value, onChange, multiline = false, emptyText = '(empty)' }) {
-  const isEditing = !!state.civilopediaEditorOpen[editorKey];
+function createBiqTextEditorBlock({ editorKey, titleText, sourceInfo, value, onChange, multiline = false, emptyText = '(empty)', editable = true }) {
+  const isEditing = editable && !!state.civilopediaEditorOpen[editorKey];
   const block = document.createElement('div');
   block.className = 'section-card source-section';
   block.style.marginTop = '8px';
@@ -10138,16 +10707,18 @@ function createBiqTextEditorBlock({ editorKey, titleText, sourceInfo, value, onC
   title.appendChild(left);
   const controls = document.createElement('div');
   controls.className = 'civilopedia-editor-controls';
-  const editBtn = document.createElement('button');
-  editBtn.type = 'button';
-  editBtn.className = 'ghost civilopedia-edit-toggle';
-  editBtn.textContent = isEditing ? '✓ Done' : '✎ Edit';
-  editBtn.addEventListener('click', () => {
-    state.tabContentScrollTop = el.tabContent ? el.tabContent.scrollTop : state.tabContentScrollTop;
-    state.civilopediaEditorOpen[editorKey] = !isEditing;
-    renderActiveTab({ preserveTabScroll: true });
-  });
-  controls.appendChild(editBtn);
+  if (editable) {
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'ghost civilopedia-edit-toggle';
+    editBtn.textContent = isEditing ? '✓ Done' : '✎ Edit';
+    editBtn.addEventListener('click', () => {
+      state.tabContentScrollTop = el.tabContent ? el.tabContent.scrollTop : state.tabContentScrollTop;
+      state.civilopediaEditorOpen[editorKey] = !isEditing;
+      renderActiveTab({ preserveTabScroll: true });
+    });
+    controls.appendChild(editBtn);
+  }
   title.appendChild(controls);
   attachRichTooltip(title, sourceInfo || '');
   block.appendChild(title);
@@ -10344,14 +10915,15 @@ function openArtFocusPreview(slot) {
     .catch(() => {});
 }
 
-function buildReferenceArtSlots(tabKey, entry) {
+function buildReferenceArtSlots(tabKey, entry, options = {}) {
   const slots = [];
   const supportsIconArt = new Set(['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'terrainPedia', 'workerActions']);
   if (!supportsIconArt.has(tabKey)) {
     return slots;
   }
+  const ensureIconSlots = !!options.ensureIconSlots;
   const icons = Array.isArray(entry && entry.iconPaths) ? entry.iconPaths : [];
-  const iconCount = icons.length > 0 ? Math.max(2, icons.length) : 0;
+  const iconCount = icons.length > 0 ? Math.max(2, icons.length) : (ensureIconSlots ? 2 : 0);
   for (let i = 0; i < iconCount; i += 1) {
     const label = i === 0 ? 'Civilopedia Large' : i === 1 ? 'Civilopedia Small' : `Icon ${i + 1}`;
     slots.push({ group: 'iconPaths', index: i, label, path: String(icons[i] || '') });
@@ -11089,6 +11661,14 @@ function normalizeReferenceKeyToken(raw) {
     .toUpperCase();
 }
 
+function stripReferencePrefixToken(token) {
+  const upper = String(token || '').toUpperCase();
+  for (const prefix of ALL_REFERENCE_PREFIXES) {
+    if (upper.startsWith(prefix)) return upper.slice(prefix.length);
+  }
+  return upper;
+}
+
 function inferReferenceNameFromKey(civilopediaKey, tabKey) {
   const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
   const key = String(civilopediaKey || '').toUpperCase();
@@ -11110,11 +11690,12 @@ function makeUniqueReferenceCivilopediaKey(tab, tabKey, desiredName, excludeKey 
       .filter((key) => key && key !== exclude)
   );
   let token = normalizeReferenceKeyToken(desiredName);
+  if (prefix) token = stripReferencePrefixToken(token);
   if (!token) token = `NEW_${Date.now()}`;
-  let key = token.startsWith(prefix) ? token : `${prefix}${token}`;
+  let key = prefix ? `${prefix}${token}` : token;
   let i = 2;
   while (existing.has(key)) {
-    key = `${prefix}${token}_${i}`;
+    key = prefix ? `${prefix}${token}_${i}` : `${token}_${i}`;
     i += 1;
   }
   return key;
@@ -11826,13 +12407,28 @@ function renderReferenceTab(tab, tabKey) {
     hydrateVisibleReferenceListThumbs(hasFilterText ? 40 : 24);
   });
 
-  filteredEntries.forEach(({ entry, baseIndex }, index) => {
+  const activeBaseIndex = filteredEntries[selectedFilteredIndex]
+    ? filteredEntries[selectedFilteredIndex].baseIndex
+    : -1;
+  const isUnitEraVariantEntry = (entry) => {
+    const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    return tabKey === 'units' && key.startsWith('PRTO_') && key.includes('_ERAS_');
+  };
+  const getUnitFamilyKey = (entry) => {
+    const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (tabKey !== 'units') return key;
+    const eraIdx = key.indexOf('_ERAS_');
+    return eraIdx > 0 ? key.slice(0, eraIdx) : key;
+  };
+
+  const addListButton = ({ entry, baseIndex, isChild = false }) => {
     const itemBtn = document.createElement('button');
     itemBtn.className = 'entry-list-item';
+    if (isChild) itemBtn.classList.add('entry-list-item-child');
     itemBtn.type = 'button';
     itemBtn.setAttribute('data-entry-key', String(entry.civilopediaKey || '').toUpperCase());
-    itemBtn.classList.toggle('active', index === selectedFilteredIndex);
-    const showListThumb = tabKey !== 'gameConcepts';
+    itemBtn.classList.toggle('active', baseIndex === activeBaseIndex);
+    const showListThumb = tabKey !== 'gameConcepts' && !isUnitEraVariantEntry(entry);
     if (!showListThumb) itemBtn.classList.add('no-thumb');
     const thumb = showListThumb ? document.createElement('span') : null;
     if (thumb) thumb.className = 'entry-thumb';
@@ -11844,7 +12440,7 @@ function renderReferenceTab(tab, tabKey) {
       appendDirtyBadge(itemBtn, `${entry.name || entry.civilopediaKey} has unsaved edits`);
     }
     if (thumb) {
-      if (index === selectedFilteredIndex) {
+      if (baseIndex === activeBaseIndex) {
         thumb.dataset.thumbPending = '0';
         loadReferenceListThumbnail(tabKey, entry, thumb);
       } else {
@@ -11863,7 +12459,55 @@ function renderReferenceTab(tab, tabKey) {
       }, { preserveTabScroll: true });
     });
     listPane.appendChild(itemBtn);
-  });
+  };
+
+  if (tabKey !== 'units') {
+    filteredEntries.forEach(({ entry, baseIndex }) => addListButton({ entry, baseIndex }));
+  } else {
+    const byKey = new Map(
+      allEntries.map((entry, idx) => [String(entry && entry.civilopediaKey || '').trim().toUpperCase(), { entry, baseIndex: idx }])
+    );
+    const groups = [];
+    const groupByFamily = new Map();
+    filteredEntries.forEach((item) => {
+      const familyKey = getUnitFamilyKey(item.entry);
+      if (!groupByFamily.has(familyKey)) {
+        const group = { familyKey, parent: null, children: [] };
+        groupByFamily.set(familyKey, group);
+        groups.push(group);
+      }
+      const group = groupByFamily.get(familyKey);
+      const key = String(item.entry && item.entry.civilopediaKey || '').trim().toUpperCase();
+      if (key === familyKey) group.parent = item;
+      else group.children.push(item);
+    });
+
+    groups.forEach((group) => {
+      const groupWrap = document.createElement('div');
+      groupWrap.className = 'entry-list-group';
+      if (group.parent) {
+        addListButton({ entry: group.parent.entry, baseIndex: group.parent.baseIndex, isChild: false });
+        const parentBtn = listPane.lastElementChild;
+        if (parentBtn) groupWrap.appendChild(parentBtn);
+      } else {
+        const base = byKey.get(group.familyKey);
+        if (base && base.entry) {
+          const parentLabel = document.createElement('div');
+          parentLabel.className = 'entry-list-item entry-list-item-parent-label no-thumb';
+          const title = document.createElement('strong');
+          title.textContent = String(base.entry.name || base.entry.civilopediaKey || group.familyKey);
+          parentLabel.appendChild(title);
+          groupWrap.appendChild(parentLabel);
+        }
+      }
+      group.children.forEach((child) => {
+        addListButton({ entry: child.entry, baseIndex: child.baseIndex, isChild: true });
+        const childBtn = listPane.lastElementChild;
+        if (childBtn) groupWrap.appendChild(childBtn);
+      });
+      if (groupWrap.children.length > 0) listPane.appendChild(groupWrap);
+    });
+  }
   layout.appendChild(listPane);
   requestAnimationFrame(() => hydrateVisibleReferenceListThumbs(hasFilterText ? 56 : 32));
 
@@ -11941,7 +12585,9 @@ function renderReferenceTab(tab, tabKey) {
     card.appendChild(detailLayout);
     detailLayout.appendChild(textCol);
     detailLayout.appendChild(navCol);
-    const artSlots = buildReferenceArtSlots(tabKey, entry);
+    const artSlots = buildReferenceArtSlots(tabKey, entry, {
+      ensureIconSlots: referenceEditable && REFERENCE_MUTABLE_ENTITY_TABS.has(tabKey)
+    });
     const primaryArtSlot = artSlots.length > 0 ? artSlots[0] : null;
     const secondaryArtSlots = artSlots.length > 1 ? artSlots.slice(1) : [];
     if (primaryArtSlot) {
@@ -11980,6 +12626,8 @@ function renderReferenceTab(tab, tabKey) {
       nameLabel.textContent = 'Name';
       const nameControl = document.createElement('div');
       nameControl.className = 'identity-key-control';
+      let inlineKeyChip = null;
+      let editableKeyInput = null;
       if (referenceEditable) {
         const nameInput = document.createElement('input');
         nameInput.type = 'text';
@@ -11995,7 +12643,8 @@ function renderReferenceTab(tab, tabKey) {
           if (tabKey === 'gameConcepts') {
             const renamed = renameReferenceEntryKey(tab, tabKey, entry, next, { allowExisting: true });
             if (renamed) {
-              inlineKey.textContent = String(entry.civilopediaKey || '(none)');
+              if (editableKeyInput) editableKeyInput.value = String(entry.civilopediaKey || '');
+              if (inlineKeyChip) inlineKeyChip.textContent = String(entry.civilopediaKey || '(none)');
             }
           } else {
             const nameField = ensureBiqFieldByBaseKey(entry, 'name', 'Name', next);
@@ -12010,11 +12659,33 @@ function renderReferenceTab(tab, tabKey) {
         nameDisplay.textContent = String(entry.name || '(none)');
         nameControl.appendChild(nameDisplay);
       }
-      const inlineKey = document.createElement('span');
-      inlineKey.className = 'key-display-chip';
-      inlineKey.textContent = String(entry.civilopediaKey || '(none)');
-      inlineKey.title = 'Record key (read-only)';
-      nameControl.appendChild(inlineKey);
+      const canEditKey = referenceEditable && !!entry.isNew;
+      if (canEditKey) {
+        const keyInput = document.createElement('input');
+        keyInput.type = 'text';
+        keyInput.className = 'key-input-inline';
+        keyInput.value = String(entry.civilopediaKey || '');
+        keyInput.title = 'Record key (editable for new entries)';
+        keyInput.addEventListener('change', () => {
+          rememberUndoSnapshot();
+          const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, keyInput.value);
+          if (!changed) {
+            keyInput.value = String(entry.civilopediaKey || '');
+            return;
+          }
+          setDirty(true);
+          renderActiveTab({ preserveTabScroll: true });
+        });
+        editableKeyInput = keyInput;
+        nameControl.appendChild(keyInput);
+      } else {
+        const inlineKey = document.createElement('span');
+        inlineKey.className = 'key-display-chip';
+        inlineKey.textContent = String(entry.civilopediaKey || '(none)');
+        inlineKey.title = 'Existing record keys are currently locked.';
+        inlineKeyChip = inlineKey;
+        nameControl.appendChild(inlineKey);
+      }
       nameRow.appendChild(nameLabel);
       nameRow.appendChild(nameControl);
       attachRichTooltip(nameRow, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
@@ -12757,7 +13428,7 @@ function renderBiqTab(tab) {
   state.biqRecordSelection[selected.id] = selectedRecordIndex;
   const selectedRecord = records[selectedRecordIndex] || null;
 
-  const structureMutable = !tab.readOnly && (selected.code === 'TERR' || selected.code === 'TFRM' || (selected.code === 'LEAD' && selectionKey === 'players'));
+  const structureMutable = !tab.readOnly && (selected.code === 'TFRM' || (selected.code === 'LEAD' && selectionKey === 'players'));
   if (structureMutable) {
     const actionRow = document.createElement('div');
     actionRow.className = 'reference-entity-actions';
@@ -13470,6 +14141,7 @@ function renderBiqTab(tab) {
               value: field.value,
               multiline: base === 'description',
               emptyText: base === 'title' ? '(empty title)' : '(empty description)',
+              editable: isScenarioMode() && !tab.readOnly,
               onChange: (nextValue) => {
                 rememberUndoSnapshot();
                 field.value = String(nextValue || '');
@@ -13759,10 +14431,13 @@ function renderBiqTab(tab) {
           }
           label.textContent = displayLabel;
           const biqFieldKey = String(field.baseKey || field.key || '');
+          const lockNote = (selected.code === 'GAME' && isLockedGameField(baseKeyRaw))
+            ? '\nLock: Managed by Add/Copy Scenario. Editing is locked to prevent broken search paths.'
+            : '';
           attachRichTooltip(
             label,
             withFieldHelp(
-              `Source: BIQ\nFile: ${compactPathFromCiv3Root(tab.sourcePath || '') || '(not available)'}\nSection: ${selected.title || selected.code}\nSection Code: ${selected.code}\nField: ${biqFieldKey}\nRecord: ${record.index + 1}`,
+              `Source: BIQ\nFile: ${compactPathFromCiv3Root(tab.sourcePath || '') || '(not available)'}\nSection: ${selected.title || selected.code}\nSection Code: ${selected.code}\nField: ${biqFieldKey}\nRecord: ${record.index + 1}${lockNote}`,
               { sectionCode: selected.code, fieldKey: biqFieldKey }
             )
           );
@@ -13820,31 +14495,11 @@ function renderBiqTab(tab) {
             groupCard.appendChild(row);
             return;
           }
-          if (editable && selected.code === 'GAME' && baseKey === 'scenariosearchfolders') {
-            const wrapRow = document.createElement('div');
-            wrapRow.className = 'path-row';
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.value = String(field.value || '');
-            input.addEventListener('input', () => {
-              rememberUndoSnapshot();
-              field.value = input.value;
-              setDirty(true);
-            });
-            const browseBtn = document.createElement('button');
-            browseBtn.type = 'button';
-            browseBtn.textContent = 'Browse';
-            browseBtn.addEventListener('click', async () => {
-              const dir = await window.c3xManager.pickDirectory();
-              if (!dir) return;
-              rememberUndoSnapshot();
-              field.value = String(dir);
-              input.value = String(dir);
-              setDirty(true);
-            });
-            wrapRow.appendChild(input);
-            wrapRow.appendChild(browseBtn);
-            controlWrap.appendChild(wrapRow);
+          if (selected.code === 'GAME' && isLockedGameField(baseKey)) {
+            const locked = document.createElement('div');
+            locked.className = 'key-display-chip';
+            locked.textContent = String(field.value || '(none)');
+            controlWrap.appendChild(locked);
             row.appendChild(controlWrap);
             groupCard.appendChild(row);
             return;
@@ -18481,6 +19136,7 @@ function renderActiveTab(options = {}) {
     el.tabContent.appendChild(renderSectionTab(tab, state.activeTab));
   }
   state.isRendering = false;
+  updateSaveButtonLabel();
   const targetTop = state.tabContentScrollTop || 0;
   window.requestAnimationFrame(() => {
     el.tabContent.scrollTop = targetTop;
@@ -18762,6 +19418,26 @@ async function openFileDiffModalForPath(targetPath) {
   }
 }
 
+async function confirmCreateBaseFileOnSaveIfNeeded() {
+  if (!state.bundle || getTabDirtyCount('base') <= 0) return true;
+  const modeKey = isScenarioMode() ? 'scenario' : 'global';
+  if (state.baseCreateConfirmSeen && state.baseCreateConfirmSeen[modeKey]) return true;
+  const targetPath = getActiveBaseTargetPath();
+  if (!targetPath || !window.c3xManager || typeof window.c3xManager.pathExists !== 'function') return true;
+  let exists = false;
+  try {
+    exists = !!(await window.c3xManager.pathExists(targetPath));
+  } catch (_err) {
+    return true;
+  }
+  if (exists) return true;
+  const fileName = getActiveBaseTargetName();
+  const ok = window.confirm(`This save will create ${fileName} and write only overridden C3X settings.\n\nTarget: ${targetPath}`);
+  if (!ok) return false;
+  state.baseCreateConfirmSeen[modeKey] = true;
+  return true;
+}
+
 async function saveCurrentBundle() {
   if (!state.bundle) {
     setStatus('Load configs before saving.', true);
@@ -18773,17 +19449,24 @@ async function saveCurrentBundle() {
     refreshDirtyUi();
     return false;
   }
+  const createOk = await confirmCreateBaseFileOnSaveIfNeeded();
+  if (!createOk) {
+    setStatus('Save canceled.');
+    return false;
+  }
 
   syncSettingsFromInputs();
   await window.c3xManager.setSettings(state.settings);
 
   try {
     const tabsToSave = getTabsForSavePayload();
+    const dirtyTabs = Object.keys((state.bundle && state.bundle.tabs) || {}).filter((key) => getTabDirtyCount(key) > 0);
     const res = await window.c3xManager.saveBundle({
       mode: state.settings.mode,
       c3xPath: state.settings.c3xPath,
       civ3Path: state.settings.civ3Path,
       scenarioPath: state.settings.scenarioPath,
+      dirtyTabs,
       tabs: tabsToSave
     });
 
@@ -18849,6 +19532,8 @@ function markReferenceTabEntryOriginals(tab) {
     entry.originalIconPaths = Array.isArray(entry.iconPaths) ? [...entry.iconPaths] : [];
     entry.originalRacePaths = Array.isArray(entry.racePaths) ? [...entry.racePaths] : [];
     entry.originalAnimationName = String(entry.animationName || '');
+    entry.unitAnimationEdited = false;
+    entry.unitFolderCloneSource = '';
     if (entry.unitIniEditor) {
       entry.unitIniEditor.originalActions = Array.isArray(entry.unitIniEditor.actions) ? entry.unitIniEditor.actions.map((row) => ({
         key: String(row && row.key || '').trim().toUpperCase(),
@@ -19052,6 +19737,7 @@ async function init() {
   renderFilesReadModal();
   updateNavButtons();
   fillInputsFromSettings();
+  lockPathInputs();
   setPathsCollapsed(false);
   setMode(state.settings.mode || 'global');
   await refreshScenarioSelectOptions();
@@ -19090,6 +19776,23 @@ async function init() {
       updateScenarioSelectValue();
       await window.c3xManager.setSettings(state.settings);
       await loadBundleAndRender({ loadingText: 'Switching to scenario...' });
+    });
+  }
+  if (el.modeScenarioNewAction) {
+    resizeScenarioNewActionControl();
+    el.modeScenarioNewAction.addEventListener('change', async () => {
+      resizeScenarioNewActionControl();
+      const selected = String(el.modeScenarioNewAction.value || '');
+      if (!selected) return;
+      if (selected === '__copy_existing__') {
+        await runScenarioCreateFlow('copy');
+        return;
+      }
+      if (selected === '__create_base__') {
+        await runScenarioCreateFlow('base');
+        return;
+      }
+      resetScenarioNewActionControl();
     });
   }
 

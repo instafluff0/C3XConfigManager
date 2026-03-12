@@ -112,3 +112,81 @@ test('scenario mode overrides conquests layer and falls back when key missing', 
   assert.equal(path.normalize(String(civTab.sourceDetails.civilopediaScenario || '')), path.normalize(path.join(scenarioDir, 'Text', 'Civilopedia.txt')));
   assert.equal(path.normalize(String(civTab.sourceDetails.pediaIconsScenarioWrite || '')), path.normalize(path.join(scenarioDir, 'Text', 'PediaIcons.txt')));
 });
+
+test('unit era variants are kept when BIQ includes base PRTO key', () => {
+  const root = mkTmpDir();
+
+  writeTextLayer(root, 'Conquests', 'Civilopedia.txt', [
+    '#PRTO_WORKER',
+    'Worker overview',
+    '',
+    '#PRTO_WORKER_ERAS_Industrial_Age',
+    'Worker industrial overview',
+    ''
+  ].join('\n'));
+  writeTextLayer(root, 'Conquests', 'PediaIcons.txt', [
+    '#ANIMNAME_PRTO_WORKER',
+    'Worker',
+    '#ANIMNAME_PRTO_WORKER_ERAS_Industrial_Age',
+    'Worker Modern Times',
+    ''
+  ].join('\n'));
+
+  const biqTab = {
+    sections: [
+      {
+        code: 'PRTO',
+        records: [
+          {
+            index: 0,
+            fields: [{ key: 'civilopediaentry', value: 'PRTO_WORKER' }]
+          }
+        ]
+      }
+    ]
+  };
+
+  const tabs = buildReferenceTabs(root, { mode: 'global', biqTab });
+  const base = getEntryByKey(tabs.units.entries, 'PRTO_WORKER');
+  const era = getEntryByKey(tabs.units.entries, 'PRTO_WORKER_ERAS_Industrial_Age');
+  assert.ok(base, 'expected base worker entry');
+  assert.ok(era, 'expected industrial-era worker variant entry');
+  assert.equal(era.animationName, 'Worker Modern Times');
+});
+
+test('unit era variant animation falls back to base ANIMNAME when era block is missing', () => {
+  const root = mkTmpDir();
+
+  writeTextLayer(root, 'Conquests', 'Civilopedia.txt', [
+    '#PRTO_WORKER',
+    'Worker overview',
+    '',
+    '#PRTO_WORKER_ERAS_Industrial_Age',
+    'Worker industrial overview',
+    ''
+  ].join('\n'));
+  writeTextLayer(root, 'Conquests', 'PediaIcons.txt', [
+    '#ANIMNAME_PRTO_WORKER',
+    'Worker',
+    ''
+  ].join('\n'));
+
+  const biqTab = {
+    sections: [
+      {
+        code: 'PRTO',
+        records: [
+          {
+            index: 0,
+            fields: [{ key: 'civilopediaentry', value: 'PRTO_WORKER' }]
+          }
+        ]
+      }
+    ]
+  };
+
+  const tabs = buildReferenceTabs(root, { mode: 'global', biqTab });
+  const era = getEntryByKey(tabs.units.entries, 'PRTO_WORKER_ERAS_Industrial_Age');
+  assert.ok(era, 'expected industrial-era worker variant entry');
+  assert.equal(era.animationName, 'Worker');
+});

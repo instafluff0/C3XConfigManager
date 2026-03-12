@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('c3xManager', {
   pathExists: (dirPath) => ipcRenderer.invoke('manager:path-exists', dirPath),
   getPathAccess: (paths) => ipcRenderer.invoke('manager:get-path-access', paths),
   listScenarios: (civ3Path) => ipcRenderer.invoke('manager:list-scenarios', civ3Path),
+  createScenario: (payload) => ipcRenderer.invoke('manager:create-scenario', payload),
   relaunch: () => ipcRenderer.invoke('manager:relaunch'),
   onPerformanceModeMenuSelect: (handler) => {
     if (typeof handler !== 'function') {

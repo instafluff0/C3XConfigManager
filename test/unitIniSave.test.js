@@ -172,3 +172,34 @@ test('scenario save writes full unit INI sections when section model is provided
   assert.match(scenarioText, /\[Sound Effects\]/);
   assert.match(scenarioText, /RUN=TemplateRun\.amb/);
 });
+
+test('scenario save blocks unresolved new animation folder names without INI edits', () => {
+  const civ3Root = mkTmpDir();
+  const c3xRoot = mkTmpDir();
+  const scenarioDir = mkTmpDir();
+  fs.writeFileSync(path.join(c3xRoot, 'default.c3x_config.ini'), 'flag = true\n', 'utf8');
+
+  const tabs = {
+    units: {
+      entries: [
+        {
+          civilopediaKey: 'PRTO_TEST',
+          animationName: 'NotARealUnitFolder',
+          originalAnimationName: '',
+          unitAnimationEdited: true
+        }
+      ]
+    }
+  };
+
+  const res = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xRoot,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioDir,
+    tabs
+  });
+  assert.equal(res.ok, false);
+  assert.match(String(res.error || ''), /not resolvable/i);
+  assert.match(String(res.error || ''), /existing unit animation folder/i);
+});
