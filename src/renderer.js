@@ -10126,6 +10126,66 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   return block;
 }
 
+function createBiqTextEditorBlock({ editorKey, titleText, sourceInfo, value, onChange, multiline = false, emptyText = '(empty)' }) {
+  const isEditing = !!state.civilopediaEditorOpen[editorKey];
+  const block = document.createElement('div');
+  block.className = 'section-card source-section';
+  block.style.marginTop = '8px';
+  const title = document.createElement('div');
+  title.className = 'section-top';
+  const left = document.createElement('strong');
+  left.textContent = titleText;
+  title.appendChild(left);
+  const controls = document.createElement('div');
+  controls.className = 'civilopedia-editor-controls';
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.className = 'ghost civilopedia-edit-toggle';
+  editBtn.textContent = isEditing ? '✓ Done' : '✎ Edit';
+  editBtn.addEventListener('click', () => {
+    state.tabContentScrollTop = el.tabContent ? el.tabContent.scrollTop : state.tabContentScrollTop;
+    state.civilopediaEditorOpen[editorKey] = !isEditing;
+    renderActiveTab({ preserveTabScroll: true });
+  });
+  controls.appendChild(editBtn);
+  title.appendChild(controls);
+  attachRichTooltip(title, sourceInfo || '');
+  block.appendChild(title);
+
+  if (!isEditing) {
+    const text = String(value || '').trim();
+    if (text) {
+      if (multiline) {
+        renderCivilopediaRichText(block, text);
+      } else {
+        const p = document.createElement('p');
+        p.className = 'pedia-paragraph';
+        p.textContent = text;
+        block.appendChild(p);
+      }
+    } else {
+      const hint = document.createElement('p');
+      hint.className = 'hint';
+      hint.textContent = emptyText;
+      block.appendChild(hint);
+    }
+    return block;
+  }
+
+  const input = document.createElement(multiline ? 'textarea' : 'input');
+  if (!multiline) {
+    input.type = 'text';
+    input.style.minHeight = 'unset';
+  } else {
+    input.rows = 7;
+  }
+  input.className = 'civilopedia-editor';
+  input.value = String(value || '');
+  input.addEventListener('input', () => onChange(input.value));
+  block.appendChild(input);
+  return block;
+}
+
 function getPreviewRequestForArtSlot(slot) {
   if (!slot || !slot.path) return null;
   return {
@@ -13097,7 +13157,6 @@ function renderBiqTab(tab) {
       });
       const activeTabKey = String(state.activeTab || '').trim();
       const isAlliancePanel = selected.code === 'GAME' && activeGamePanel && activeGamePanel.id === 'alliances';
-      const consumedPinnedFields = new Set();
       let groupedEntries = Array.from(grouped.entries()).filter(([groupName]) => {
         if (selected.code !== 'GAME' || !activeGamePanel || !Array.isArray(activeGamePanel.groups)) return true;
         if (!activeGamePanel.groups.includes(groupName)) return false;
@@ -13111,58 +13170,6 @@ function renderBiqTab(tab) {
           const [timeScaleEntry] = groupedEntries.splice(timeScaleIdx, 1);
           const insertAt = Math.min(startDateIdx + 1, groupedEntries.length);
           groupedEntries.splice(insertAt, 0, timeScaleEntry);
-        }
-      }
-      if (selected.code === 'GAME' && activeGamePanel && activeGamePanel.id === 'scenario') {
-        const titleField = getFieldByBaseKey(record, 'title');
-        const descriptionField = getFieldByBaseKey(record, 'description');
-        const pinnedFields = [titleField, descriptionField].filter(Boolean);
-        if (pinnedFields.length > 0) {
-          const topCard = document.createElement('div');
-          topCard.className = 'rule-group-card';
-          const topTitle = document.createElement('div');
-          topTitle.className = 'rule-group-title';
-          topTitle.textContent = 'Scenario Metadata';
-          topCard.appendChild(topTitle);
-          const editable = !tab.readOnly;
-          pinnedFields.forEach((field) => {
-            consumedPinnedFields.add(field);
-            const row = document.createElement('div');
-            row.className = 'rule-row';
-            const label = document.createElement('label');
-            label.className = 'field-meta';
-            const baseKey = String(field.baseKey || field.key || '').toLowerCase();
-            label.textContent = baseKey === 'title' ? 'Scenario Title' : 'Scenario Description';
-            attachRichTooltip(
-              label,
-              withFieldHelp(
-                `Source: BIQ\nFile: ${compactPathFromCiv3Root(tab.sourcePath || '') || '(not available)'}\nSection: ${selected.title || selected.code}\nSection Code: ${selected.code}\nField: ${String(field.baseKey || field.key || '')}\nRecord: ${record.index + 1}`,
-                { sectionCode: selected.code, fieldKey: String(field.baseKey || field.key || '') }
-              )
-            );
-            row.appendChild(label);
-            const controlWrap = document.createElement('div');
-            controlWrap.className = 'rule-control';
-            if (editable) {
-              const input = document.createElement(baseKey === 'description' ? 'textarea' : 'input');
-              if (input.tagName === 'INPUT') input.type = 'text';
-              input.value = String(field.value || '');
-              input.addEventListener('input', () => {
-                rememberUndoSnapshot();
-                field.value = input.value;
-                setDirty(true);
-              });
-              controlWrap.appendChild(input);
-            } else {
-              const text = document.createElement('div');
-              text.className = 'field-meta';
-              text.textContent = String(field.value || '(none)');
-              controlWrap.appendChild(text);
-            }
-            row.appendChild(controlWrap);
-            topCard.appendChild(row);
-          });
-          rows.appendChild(topCard);
         }
       }
       const allianceNameByIndex = {};
@@ -13438,10 +13445,38 @@ function renderBiqTab(tab) {
           : new Set();
         let refreshTimeProgressionYearRanges = null;
         const consumedSpecialFields = new Set();
+        const consumedRichFields = new Set();
         if (selected.code === 'GAME') {
           groupFields.forEach((field) => {
             const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
             if (/^alliance\d+$/.test(base)) consumedSpecialFields.add(field);
+          });
+        }
+        if (selected.code === 'GAME' && groupName === 'Scenario') {
+          const titleField = groupFields.find((field) => String(field && (field.baseKey || field.key) || '').toLowerCase() === 'title');
+          const descriptionField = groupFields.find((field) => String(field && (field.baseKey || field.key) || '').toLowerCase() === 'description');
+          const richFields = [titleField, descriptionField].filter(Boolean);
+          richFields.forEach((field) => {
+            const base = String(field.baseKey || field.key || '').toLowerCase();
+            consumedRichFields.add(field);
+            const biqFieldKey = String(field.baseKey || field.key || '');
+            const block = createBiqTextEditorBlock({
+              editorKey: `BIQ:${selectionKey}:${selected.code}:${record.index}:${base}`,
+              titleText: base === 'title' ? 'Title' : 'Description',
+              sourceInfo: withFieldHelp(
+                `Source: BIQ\nFile: ${compactPathFromCiv3Root(tab.sourcePath || '') || '(not available)'}\nSection: ${selected.title || selected.code}\nSection Code: ${selected.code}\nField: ${biqFieldKey}\nRecord: ${record.index + 1}`,
+                { sectionCode: selected.code, fieldKey: biqFieldKey }
+              ),
+              value: field.value,
+              multiline: base === 'description',
+              emptyText: base === 'title' ? '(empty title)' : '(empty description)',
+              onChange: (nextValue) => {
+                rememberUndoSnapshot();
+                field.value = String(nextValue || '');
+                setDirty(true);
+              }
+            });
+            groupCard.appendChild(block);
           });
         }
 
@@ -13697,7 +13732,7 @@ function renderBiqTab(tab) {
           groupCard.appendChild(tableRow);
         }
         groupFields.forEach((field, fieldIdx) => {
-          if (consumedPinnedFields.has(field)) return;
+          if (consumedRichFields.has(field)) return;
           if (consumedTimeFields.has(field)) return;
           if (consumedSpecialFields.has(field)) return;
           const row = document.createElement('div');
@@ -13781,6 +13816,35 @@ function renderBiqTab(tab) {
               text.textContent = selectedLabels.length ? selectedLabels.join(', ') : '(none)';
               controlWrap.appendChild(text);
             }
+            row.appendChild(controlWrap);
+            groupCard.appendChild(row);
+            return;
+          }
+          if (editable && selected.code === 'GAME' && baseKey === 'scenariosearchfolders') {
+            const wrapRow = document.createElement('div');
+            wrapRow.className = 'path-row';
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = String(field.value || '');
+            input.addEventListener('input', () => {
+              rememberUndoSnapshot();
+              field.value = input.value;
+              setDirty(true);
+            });
+            const browseBtn = document.createElement('button');
+            browseBtn.type = 'button';
+            browseBtn.textContent = 'Browse';
+            browseBtn.addEventListener('click', async () => {
+              const dir = await window.c3xManager.pickDirectory();
+              if (!dir) return;
+              rememberUndoSnapshot();
+              field.value = String(dir);
+              input.value = String(dir);
+              setDirty(true);
+            });
+            wrapRow.appendChild(input);
+            wrapRow.appendChild(browseBtn);
+            controlWrap.appendChild(wrapRow);
             row.appendChild(controlWrap);
             groupCard.appendChild(row);
             return;
@@ -13940,6 +14004,15 @@ function renderBiqTab(tab) {
                   }
                 });
               }
+              controlWrap.appendChild(input);
+            } else if (selected.code === 'GAME' && baseKey === 'description') {
+              const input = document.createElement('textarea');
+              input.value = String(field.value || '');
+              input.addEventListener('input', () => {
+                rememberUndoSnapshot();
+                field.value = input.value;
+                setDirty(true);
+              });
               controlWrap.appendChild(input);
             } else {
               const input = document.createElement('input');

@@ -1294,19 +1294,42 @@ function parseSectionRecords(buf, section, versionTag, majorVersion) {
   return records;
 }
 
-function parseBiqSectionsFromBuffer(buf) {
+function parseBiqHeaderMetadata(buf) {
   const versionTag = readBiqTag(buf, 0);
   const verHeaderTag = readBiqTag(buf, 4);
-  if (!versionTag.startsWith('BIC') || verHeaderTag !== 'VER#') {
-    throw new Error('Invalid BIQ header');
-  }
-
   const majorVersion = readUInt32LESafe(buf, 24) || 0;
   const minorVersion = readUInt32LESafe(buf, 28) || 0;
   const biqDescription = toBiqString(buf, 32, 672);
   const biqTitle = toBiqString(buf, 672, 736);
   const numHeaders = readUInt32LESafe(buf, 8) || 0;
   const headerLength = readUInt32LESafe(buf, 12) || 0;
+  return {
+    versionTag,
+    verHeaderTag,
+    majorVersion,
+    minorVersion,
+    biqDescription,
+    biqTitle,
+    numHeaders,
+    headerLength
+  };
+}
+
+function parseBiqSectionsFromBuffer(buf) {
+  const header = parseBiqHeaderMetadata(buf);
+  const {
+    versionTag,
+    verHeaderTag,
+    majorVersion,
+    minorVersion,
+    biqDescription,
+    biqTitle,
+    numHeaders,
+    headerLength
+  } = header;
+  if (!versionTag.startsWith('BIC') || verHeaderTag !== 'VER#') {
+    throw new Error('Invalid BIQ header');
+  }
 
   const findSectionStart = (code, fromOffset) => {
     const needle = Buffer.from(code, 'latin1');
@@ -1490,6 +1513,7 @@ function loadBiqTab({ mode, civ3Path, scenarioPath, javaPath }) {
     };
   }
   try {
+    const headerMeta = parseBiqHeaderMetadata(inflated.buffer);
     const bridged = runBiqBridgeOnInflatedBuffer({ buffer: inflated.buffer, javaPath });
     if (bridged.ok) {
       return {
@@ -1499,6 +1523,7 @@ function loadBiqTab({ mode, civ3Path, scenarioPath, javaPath }) {
         sourcePath: biqPath,
         compressedSource: inflated.compressed,
         decompressorPath: inflated.decompressorPath || '',
+        ...headerMeta,
         sections: bridged.sections,
         bridgeMode: true
       };
@@ -2529,6 +2554,8 @@ function buildMapTabFromBiq(biqTab, mode) {
 
 function buildBiqStructureTabs(biqTab, mode) {
   const sections = (biqTab && Array.isArray(biqTab.sections)) ? biqTab.sections : [];
+  const headerTitle = cleanDisplayText((biqTab && biqTab.biqTitle) || '');
+  const headerDescription = cleanDisplayText((biqTab && biqTab.biqDescription) || '');
   const byCode = new Map();
   sections.forEach((section) => {
     byCode.set(String(section.code || '').toUpperCase(), section);
@@ -2553,6 +2580,36 @@ function buildBiqStructureTabs(biqTab, mode) {
           }))
           : []
       }));
+    if (spec.key === 'scenarioSettings') {
+      selectedSections.forEach((section) => {
+        if (String(section && section.code || '').toUpperCase() !== 'GAME') return;
+        const firstRecord = Array.isArray(section.records) ? section.records[0] : null;
+        if (!firstRecord) return;
+        if (!Array.isArray(firstRecord.fields)) firstRecord.fields = [];
+        const hasBaseKey = (targetKey) => {
+          const normalized = String(targetKey || '').trim().toLowerCase();
+          return firstRecord.fields.some((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === normalized);
+        };
+        if (!hasBaseKey('title')) {
+          firstRecord.fields.push({
+            key: 'title',
+            baseKey: 'title',
+            label: 'Title',
+            value: headerTitle,
+            originalValue: headerTitle
+          });
+        }
+        if (!hasBaseKey('description')) {
+          firstRecord.fields.push({
+            key: 'description',
+            baseKey: 'description',
+            label: 'Description',
+            value: headerDescription,
+            originalValue: headerDescription
+          });
+        }
+      });
+    }
     tabs[spec.key] = {
       key: spec.key,
       title: spec.title,
