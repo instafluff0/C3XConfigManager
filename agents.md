@@ -124,12 +124,25 @@ Scenario scope writes:
   - Left list + detail editor.
   - Adding new entries inserts at top (`unshift`).
   - Title in left list syncs live when the name/title field changes.
-  - Known fields are schema-driven; unknown fields remain editable under `Advanced fields`.
+  - Known fields are schema-driven.
+  - Unknown fields are always visible/editable in an `Extra Fields` block (no collapsed `Advanced fields` disclosure).
+  - Wonder Districts schema now includes documented alt-direction and sprite-size keys from `default.districts_wonders_config.txt`:
+    - `img_alt_dir_construct_row`, `img_alt_dir_construct_column`, `img_alt_dir_row`, `img_alt_dir_column`
+    - `custom_width`, `custom_height`
   - Districts tab now shows explicit replacement semantics and active source file context.
   - Districts tab surfaces unresolved scenario reference warnings (tech/improvement/resource/civ/government/natural wonder/district links) with warning badges in the left district list and highlighted issue rows.
   - District detail now renders warnings in a dedicated yellow warning box (validation + unresolved dependency refs); no strip/jump action buttons are shown.
   - Quoted list values in sectioned files (for example `dependent_improvs = "Airport", "Commercial Dock"`) are preserved during parse so tokens remain valid.
   - In Scenario mode, if `scenario.districts_config.txt` is missing and effective districts come from `default.districts_config.txt`, the UI filters out default districts whose dependency fields cannot be resolved against scenario data.
+  - Natural Wonders `terrain_type` now uses clickable terrain chips (with terrain preview thumbnails) instead of a dropdown.
+  - Natural Wonders adjacency selectors (`adjacent_to`, `adjacency_dir`) now use clickable single-select chips, consistent with Districts/Wonder Districts chip-based adjacency controls.
+  - Natural Wonders now prioritize `img_path`, `img_row`, and `img_column` near the top of the form to keep image tuning close to Preview Art.
+  - Natural Wonders `animation` now sits near image fields and is edited as structured subitems (`ini`, timing/offset/direction/day-night/seasons + extra params) with parse/serialize round-trip back into config spec strings.
+  - Natural Wonders animation subitems now use compact structured controls (direction chips, 0-23 day/night hour chips, season chips) rather than freeform text.
+  - Natural Wonders top preview lane now shows animation preview inline to the right of tile art when a valid animation INI is defined.
+  - Natural Wonders animation preview now reuses the same `animationIni` preview path as Tile Animations (shared FLC decode/playback path in renderer/artPreview).
+  - Natural Wonders animation preview skips magenta-only / transparent-only frames during playback to avoid blank-frame stutter loops.
+  - Natural wonder animation `direction` is now lock-synced to `adjacency_dir` in the UI/spec serialization path.
 - Technologies Tech Tree editor:
   - Drag/drop X/Y positioning is an approximation of Civ III's visual layout.
   - The in-game tech tree can render at different resolutions/scales, so positions seen in-app may not exactly match runtime game placement.

@@ -665,10 +665,19 @@ function decodeByPath(filePath, crop, options = {}) {
 }
 
 function parseNaturalWonderAnimationIniPath(animationSpec) {
-  const s = String(animationSpec || '');
-  const m = s.match(/(?:^|[;\s])ini\s*[:=]\s*([^;]+)/i);
-  if (!m) return null;
-  return m[1].trim().replace(/^"|"$/g, '');
+  const s = String(animationSpec || '').trim();
+  if (!s) return null;
+  const chunks = s.split(';').map((chunk) => String(chunk || '').trim()).filter(Boolean);
+  for (const chunk of chunks) {
+    const m = chunk.match(/^([^:=]+)\s*[:=]\s*(.*)$/);
+    if (!m) continue;
+    const rawKey = String(m[1] || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+    if (rawKey !== 'ini' && rawKey !== 'ini_path') continue;
+    return String(m[2] || '').trim().replace(/^"|"$/g, '');
+  }
+  const first = chunks[0] || '';
+  if (!/[:=]/.test(first)) return first.replace(/^"|"$/g, '').trim();
+  return null;
 }
 
 function getPreview(request) {

@@ -705,7 +705,7 @@ const SECTION_SCHEMAS = {
     entityName: 'Wonder District',
     titleKey: 'name',
     fields: [
-      { key: 'name', label: 'Wonder Name', desc: 'Must match the in-game wonder improvement name.', type: 'text', required: true },
+      { key: 'name', label: 'Wonder Name', desc: 'Must match the in-game wonder improvement name.', type: 'select', required: true },
       { key: 'buildable_on', label: 'Buildable Terrain', desc: 'Allowed terrain list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake'] },
       { key: 'buildable_adjacent_to', label: 'Adjacency Requirement', desc: 'Adjacent terrain/city list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake', 'city'] },
       { key: 'buildable_adjacent_to_overlays', label: 'Adjacent Overlays', desc: 'Required adjacent overlays.', type: 'list', options: ['irrigation', 'mine', 'fortress', 'barricade', 'outpost', 'radar-tower', 'airfield', 'jungle', 'forest', 'swamp', 'river'] },
@@ -719,7 +719,13 @@ const SECTION_SCHEMAS = {
       { key: 'img_construct_column', label: 'Construct Column', desc: 'Construction art column index.', type: 'number', required: true },
       { key: 'img_row', label: 'Completed Row', desc: 'Completed wonder art row index.', type: 'number', required: true },
       { key: 'img_column', label: 'Completed Column', desc: 'Completed wonder art column index.', type: 'number', required: true },
-      { key: 'enable_img_alt_dir', label: 'Enable Alt Direction Art', desc: 'Use alternate directional art set.', type: 'bool' }
+      { key: 'enable_img_alt_dir', label: 'Enable Alt Direction Art', desc: 'Use alternate directional art set.', type: 'bool' },
+      { key: 'img_alt_dir_construct_row', label: 'Alt Construct Row', desc: 'Alternate-direction construction art row index.', type: 'number' },
+      { key: 'img_alt_dir_construct_column', label: 'Alt Construct Column', desc: 'Alternate-direction construction art column index.', type: 'number' },
+      { key: 'img_alt_dir_row', label: 'Alt Completed Row', desc: 'Alternate-direction completed art row index.', type: 'number' },
+      { key: 'img_alt_dir_column', label: 'Alt Completed Column', desc: 'Alternate-direction completed art column index.', type: 'number' },
+      { key: 'custom_width', label: 'Custom Width', desc: 'Override wonder sprite width in pixels.', type: 'number' },
+      { key: 'custom_height', label: 'Custom Height', desc: 'Override wonder sprite height in pixels.', type: 'number' }
     ],
     template: {
       name: 'New Wonder',
@@ -2282,6 +2288,15 @@ function applyDirtyBadgeToTabButton(button, key, tab) {
         warningCount
       );
     }
+  } else if (key === 'wonders') {
+    const warningCount = collectWonderIssueIndexes(tab).size;
+    if (warningCount > 0) {
+      appendWarningCountBadge(
+        button,
+        `Wonder Districts has ${warningCount} warning${warningCount === 1 ? '' : 's'}`,
+        warningCount
+      );
+    }
   }
 
   const dirtyCount = getTabDirtyCount(key);
@@ -3729,6 +3744,22 @@ function parseConfigInteger(value, fallback = 0) {
   const normalized = normalizeConfigToken(value);
   const parsed = Number.parseInt(normalized, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseConfigBool(value, fallback = false) {
+  const normalized = normalizeConfigToken(value).toLowerCase();
+  if (!normalized) return fallback;
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') return true;
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false;
+  const parsed = Number.parseInt(normalized, 10);
+  if (Number.isFinite(parsed)) return parsed !== 0;
+  return fallback;
+}
+
+function hasExplicitConfigInteger(value) {
+  const raw = normalizeConfigToken(value);
+  if (!raw) return false;
+  return /^-?\d+$/.test(raw);
 }
 
 function quoteConfigToken(value) {
@@ -5204,10 +5235,165 @@ function fromBase64ToUint8(base64) {
   return out;
 }
 
+const NATURAL_WONDER_ANIMATION_SPEC_ALIASES = new Map([
+  ['ini', 'ini'],
+  ['ini_path', 'ini'],
+  ['frame_time_seconds', 'frame_time_seconds'],
+  ['frame_time', 'frame_time_seconds'],
+  ['x_offset', 'x_offset'],
+  ['y_offset', 'y_offset'],
+  ['offsets', 'offsets'],
+  ['direction', 'direction'],
+  ['hours', 'show_in_day_night_hours'],
+  ['show_in_day_night_hours', 'show_in_day_night_hours'],
+  ['day_night_hours', 'show_in_day_night_hours'],
+  ['show_in_seasons', 'show_in_seasons'],
+  ['seasons', 'show_in_seasons']
+]);
+
+function parseNaturalWonderAnimationSpec(spec) {
+  const parsed = {
+    ini: '',
+    frame_time_seconds: '',
+    x_offset: '',
+    y_offset: '',
+    direction: '',
+    show_in_day_night_hours: '',
+    show_in_seasons: '',
+    extras: []
+  };
+  const chunks = String(spec || '')
+    .split(';')
+    .map((chunk) => String(chunk || '').trim())
+    .filter(Boolean);
+  chunks.forEach((chunk) => {
+    const match = chunk.match(/^([^:=]+)\s*[:=]\s*(.*)$/);
+    const rawKey = match ? String(match[1] || '').trim() : '';
+    const rawValue = match ? String(match[2] || '').trim() : String(chunk || '').trim();
+    const normalizedKey = normalizeConfigToken(rawKey).toLowerCase();
+    const knownKey = NATURAL_WONDER_ANIMATION_SPEC_ALIASES.get(normalizedKey);
+    const value = rawValue.replace(/^"(.*)"$/, '$1').trim();
+    if (knownKey === 'offsets') {
+      const offsetMatch = value.match(/^\s*(-?\d+)\s*,\s*(-?\d+)\s*$/);
+      if (offsetMatch) {
+        parsed.x_offset = offsetMatch[1];
+        parsed.y_offset = offsetMatch[2];
+      } else {
+        parsed.extras.push({ key: rawKey || '', value });
+      }
+      return;
+    }
+    if (knownKey) {
+      parsed[knownKey] = value;
+      return;
+    }
+    if (!match && !parsed.ini) {
+      parsed.ini = value;
+      return;
+    }
+    parsed.extras.push({
+      key: rawKey || '',
+      value
+    });
+  });
+  return parsed;
+}
+
+function serializeNaturalWonderAnimationSpec(spec) {
+  const source = spec && typeof spec === 'object' ? spec : {};
+  const parts = [];
+  const pushIf = (key, value) => {
+    const clean = String(value || '').trim();
+    if (!clean) return;
+    parts.push(`${key}=${clean}`);
+  };
+  pushIf('ini', source.ini);
+  pushIf('frame_time_seconds', source.frame_time_seconds);
+  pushIf('x_offset', source.x_offset);
+  pushIf('y_offset', source.y_offset);
+  pushIf('direction', source.direction);
+  pushIf('show_in_day_night_hours', source.show_in_day_night_hours);
+  pushIf('show_in_seasons', source.show_in_seasons);
+  const extras = Array.isArray(source.extras) ? source.extras : [];
+  extras.forEach((extra) => {
+    const key = String(extra && extra.key || '').trim();
+    const value = String(extra && extra.value || '').trim();
+    if (!key || !value) return;
+    parts.push(`${key}=${value}`);
+  });
+  return parts.join('; ');
+}
+
+function parseDayNightHoursSpec(text) {
+  const selected = new Set();
+  const tokens = String(text || '').split(',').map((part) => String(part || '').trim()).filter(Boolean);
+  tokens.forEach((token) => {
+    const range = token.match(/^(-?\d+)\s*-\s*(-?\d+)$/);
+    if (range) {
+      let start = Number.parseInt(range[1], 10);
+      let end = Number.parseInt(range[2], 10);
+      if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+      start = ((start % 24) + 24) % 24;
+      end = ((end % 24) + 24) % 24;
+      if (start <= end) {
+        for (let h = start; h <= end; h += 1) selected.add(h);
+      } else {
+        for (let h = start; h < 24; h += 1) selected.add(h);
+        for (let h = 0; h <= end; h += 1) selected.add(h);
+      }
+      return;
+    }
+    const value = Number.parseInt(token, 10);
+    if (!Number.isFinite(value)) return;
+    selected.add(((value % 24) + 24) % 24);
+  });
+  return Array.from(selected).sort((a, b) => a - b);
+}
+
+function serializeDayNightHoursSpec(hours) {
+  const list = Array.isArray(hours) ? hours : [];
+  const unique = Array.from(new Set(list.map((h) => Number.parseInt(h, 10)).filter((h) => Number.isFinite(h) && h >= 0 && h <= 23))).sort((a, b) => a - b);
+  if (unique.length === 0) return '';
+  const ranges = [];
+  let start = unique[0];
+  let prev = unique[0];
+  for (let i = 1; i < unique.length; i += 1) {
+    const cur = unique[i];
+    if (cur === prev + 1) {
+      prev = cur;
+      continue;
+    }
+    ranges.push(start === prev ? String(start) : `${start}-${prev}`);
+    start = cur;
+    prev = cur;
+  }
+  ranges.push(start === prev ? String(start) : `${start}-${prev}`);
+  return ranges.join(', ');
+}
+
+function getNaturalWonderAnimationIniPath(spec) {
+  const parsed = parseNaturalWonderAnimationSpec(spec);
+  return String(parsed.ini || '').trim();
+}
+
+function syncNaturalWonderAnimationDirections(section) {
+  const adjacencyDirection = String(getFieldValue(section, 'adjacency_dir') || '').trim();
+  const specs = getFieldValuesRaw(section, 'animation');
+  if (!adjacencyDirection || specs.length === 0) return;
+  const nextSpecs = specs
+    .map((raw) => {
+      const parsed = parseNaturalWonderAnimationSpec(raw);
+      parsed.direction = adjacencyDirection;
+      return serializeNaturalWonderAnimationSpec(parsed);
+    })
+    .map((raw) => String(raw || '').trim())
+    .filter(Boolean);
+  setMultiFieldValues(section, 'animation', nextSpecs);
+}
+
 function parseFrameSecondsFromSpec(spec) {
-  const m = String(spec || '').match(/(?:^|[;\s])frame_time_seconds\s*[:=]\s*([0-9]*\.?[0-9]+)/i);
-  if (!m) return null;
-  const v = Number.parseFloat(m[1]);
+  const parsed = parseNaturalWonderAnimationSpec(spec);
+  const v = Number.parseFloat(parsed.frame_time_seconds);
   if (!Number.isFinite(v) || v <= 0) return null;
   return v;
 }
@@ -5218,7 +5404,7 @@ function getPreviewDelayMs(tabKey, section, title) {
     if (Number.isFinite(seconds) && seconds > 0) return Math.max(16, Math.round(seconds * 1000));
   }
   if (tabKey === 'naturalWonders' && title === 'Animation') {
-    const spec = getFieldValuesRaw(section, 'animation')[0] || '';
+    const spec = getFieldValuesRaw(section, 'animation').find((item) => getNaturalWonderAnimationIniPath(item)) || '';
     const seconds = parseFrameSecondsFromSpec(spec);
     if (seconds) return Math.max(16, Math.round(seconds * 1000));
   }
@@ -5265,29 +5451,92 @@ function renderRgbaPreview(container, preview, title, delayMsProvider, displayWi
     const maxFramesForRender = Number.isFinite(options && options.sampleMaxFrames)
       ? Math.max(0, Number(options.sampleMaxFrames))
       : getDefaultFrameSampleLimit();
-    const rawFrames = (maxFramesForRender > 0 && preview.framesBase64.length > maxFramesForRender)
+    const sampledFrames = (maxFramesForRender > 0 && preview.framesBase64.length > maxFramesForRender)
       ? preview.framesBase64.filter((_f, idx) => (idx % Math.ceil(preview.framesBase64.length / maxFramesForRender)) === 0)
       : preview.framesBase64;
-    const frames = rawFrames.map((b64) =>
-      new ImageData(new Uint8ClampedArray(fromBase64ToUint8(b64)), preview.width, preview.height)
-    );
-    appendDebugLog('preview:animated:init', { title, frames: frames.length, w: preview.width, h: preview.height, sourcePath: preview.sourcePath });
+    const frames = [];
+    const frameRunLengths = [];
+    let prevB64 = null;
+    sampledFrames.forEach((b64) => {
+      if (prevB64 != null && b64 === prevB64 && frameRunLengths.length > 0) {
+        frameRunLengths[frameRunLengths.length - 1] += 1;
+      } else {
+        frames.push(new ImageData(new Uint8ClampedArray(fromBase64ToUint8(b64)), preview.width, preview.height));
+        frameRunLengths.push(1);
+        prevB64 = b64;
+      }
+    });
+    const isMagentaOrTransparentFrame = (imageData) => {
+      const data = imageData && imageData.data;
+      if (!data) return false;
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b2 = data[i + 2];
+        const a = data[i + 3];
+        if (a === 0) continue;
+        if (r === 255 && g === 0 && b2 === 255) continue;
+        return false;
+      }
+      return true;
+    };
+    let skippedBlankFrames = 0;
+    if (options && options.skipBlankMagentaFrames) {
+      const keptFrames = [];
+      const keptRuns = [];
+      for (let i = 0; i < frames.length; i += 1) {
+        if (isMagentaOrTransparentFrame(frames[i])) {
+          skippedBlankFrames += 1;
+          continue;
+        }
+        keptFrames.push(frames[i]);
+        keptRuns.push(frameRunLengths[i]);
+      }
+      if (keptFrames.length > 0) {
+        frames.length = 0;
+        frameRunLengths.length = 0;
+        keptFrames.forEach((f) => frames.push(f));
+        keptRuns.forEach((n) => frameRunLengths.push(n));
+      }
+    }
+    if (frames.length === 0) return;
+    appendDebugLog('preview:animated:init', {
+      title,
+      frames: sampledFrames.length,
+      uniqueFrames: frames.length,
+      skippedBlankFrames,
+      w: preview.width,
+      h: preview.height,
+      sourcePath: preview.sourcePath
+    });
     let frameIdx = 0;
-    let lastTick = performance.now();
+    let lastNow = performance.now();
+    let accumulatorMs = 0;
+    ctx.putImageData(frames[frameIdx], 0, 0);
+    if (onLoopStart) onLoopStart();
     const step = () => {
       if (!canvas.isConnected) return;
       const delay = Math.max(16, Number(delayMsProvider ? delayMsProvider() : 100) || 100);
       const now = performance.now();
-      if (!isPaused() && now - lastTick >= delay) {
-        ctx.putImageData(frames[frameIdx], 0, 0);
-        if (frameIdx === 0 && onLoopStart) onLoopStart();
-        frameIdx = (frameIdx + 1) % frames.length;
-        lastTick = now;
+      if (!isPaused()) {
+        const dt = Math.max(0, now - lastNow);
+        accumulatorMs += dt;
+        let guard = 0;
+        let currentFrameDelay = Math.max(16, delay * Math.max(1, frameRunLengths[frameIdx] || 1));
+        while (accumulatorMs >= currentFrameDelay && guard < frames.length * 4) {
+          accumulatorMs -= currentFrameDelay;
+          frameIdx = (frameIdx + 1) % frames.length;
+          ctx.putImageData(frames[frameIdx], 0, 0);
+          if (frameIdx === 0 && onLoopStart) onLoopStart();
+          currentFrameDelay = Math.max(16, delay * Math.max(1, frameRunLengths[frameIdx] || 1));
+          guard += 1;
+        }
+      } else {
+        accumulatorMs = 0;
       }
+      lastNow = now;
       window.requestAnimationFrame(step);
     };
-    ctx.putImageData(frames[0], 0, 0);
-    if (onLoopStart) onLoopStart();
     window.requestAnimationFrame(step);
   } else if (preview.rgbaBase64) {
     const rgba = fromBase64ToUint8(preview.rgbaBase64);
@@ -5302,17 +5551,38 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
   const previewOptions = (tabKey === 'wonders' || tabKey === 'naturalWonders')
     ? { softBlueFrame: true }
     : null;
+  const getPreviewOptionsForTitle = (taskTitle) => {
+    if (tabKey === 'naturalWonders' && String(taskTitle || '') === 'Animation') {
+      return { ...(previewOptions || {}), skipBlankMagentaFrames: true };
+    }
+    return previewOptions;
+  };
   if (state.previewCache.has(cacheKey)) {
     const cached = state.previewCache.get(cacheKey);
     appendDebugLog('preview:cache-hit', { tabKey, count: cached.length });
-    cached.forEach((p) => renderRgbaPreview(
-      previewWrap,
-      p.preview,
-      p.title,
-      () => getPreviewDelayMs(tabKey, section, p.title),
-      p.displayWidth,
-      previewOptions
-    ));
+    let altWrap = null;
+    cached.forEach((p) => {
+      const lane = String(p && p.lane || 'base');
+      if (tabKey === 'wonders' && lane === 'alt') {
+        if (!altWrap) {
+          altWrap = document.createElement('div');
+          altWrap.className = 'preview-alt-group';
+          const altTitle = document.createElement('div');
+          altTitle.className = 'preview-alt-group-title';
+          altTitle.textContent = 'Alt Direction Art';
+          altWrap.appendChild(altTitle);
+          previewWrap.appendChild(altWrap);
+        }
+      }
+      renderRgbaPreview(
+        (tabKey === 'wonders' && lane === 'alt' && altWrap) ? altWrap : previewWrap,
+        p.preview,
+        p.title,
+        () => getPreviewDelayMs(tabKey, section, p.title),
+        p.displayWidth,
+        getPreviewOptionsForTitle(p.title)
+      );
+    });
     return;
   }
 
@@ -5333,6 +5603,7 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
     const crop = getCropDimensions(section, { w: 128, h: 64 });
     tasks.push({
       title: 'Completed Wonder',
+      lane: 'base',
       request: {
         kind: 'wonder',
         c3xPath: state.settings.c3xPath,
@@ -5344,6 +5615,7 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
     const cc = parseConfigInteger(getFieldValue(section, 'img_construct_column'), 0);
     tasks.push({
       title: 'Construction',
+      lane: 'base',
       request: {
         kind: 'wonder',
         c3xPath: state.settings.c3xPath,
@@ -5351,6 +5623,37 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
         crop: { row: cr, col: cc, w: crop.w, h: crop.h }
       }
     });
+    const hasAltEnabled = parseConfigBool(getFieldValue(section, 'enable_img_alt_dir'));
+    const hasAltCoords = hasExplicitConfigInteger(getFieldValue(section, 'img_alt_dir_construct_row'))
+      && hasExplicitConfigInteger(getFieldValue(section, 'img_alt_dir_construct_column'))
+      && hasExplicitConfigInteger(getFieldValue(section, 'img_alt_dir_row'))
+      && hasExplicitConfigInteger(getFieldValue(section, 'img_alt_dir_column'));
+    if (hasAltEnabled && hasAltCoords) {
+      const altCr = parseConfigInteger(getFieldValue(section, 'img_alt_dir_construct_row'), 0);
+      const altCc = parseConfigInteger(getFieldValue(section, 'img_alt_dir_construct_column'), 0);
+      tasks.push({
+        title: 'Alt Construction',
+        lane: 'alt',
+        request: {
+          kind: 'wonder',
+          c3xPath: state.settings.c3xPath,
+          fileName,
+          crop: { row: altCr, col: altCc, w: crop.w, h: crop.h }
+        }
+      });
+      const altRow = parseConfigInteger(getFieldValue(section, 'img_alt_dir_row'), 0);
+      const altCol = parseConfigInteger(getFieldValue(section, 'img_alt_dir_column'), 0);
+      tasks.push({
+        title: 'Alt Completed Wonder',
+        lane: 'alt',
+        request: {
+          kind: 'wonder',
+          c3xPath: state.settings.c3xPath,
+          fileName,
+          crop: { row: altRow, col: altCol, w: crop.w, h: crop.h }
+        }
+      });
+    }
   } else if (tabKey === 'naturalWonders') {
     const fileName = normalizeConfigToken(getFieldValue(section, 'img_path'));
     const row = parseConfigInteger(getFieldValue(section, 'img_row'), 0);
@@ -5365,12 +5668,15 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
         crop: { row, col, w: crop.w, h: crop.h }
       }
     });
-    getFieldValuesRaw(section, 'animation').slice(0, 1).forEach((spec) => {
+    const firstAnimationSpec = getFieldValuesRaw(section, 'animation').find((spec) => getNaturalWonderAnimationIniPath(spec));
+    if (firstAnimationSpec) {
+      const iniPath = getNaturalWonderAnimationIniPath(firstAnimationSpec);
       tasks.push({
         title: 'Animation',
-        request: { kind: 'naturalWonderAnimationSpec', c3xPath: state.settings.c3xPath, animationSpec: spec }
+        displayWidth: Math.max(120, Math.round(state.previewSize * 0.72)),
+        request: { kind: 'animationIni', c3xPath: state.settings.c3xPath, iniPath }
       });
-    });
+    }
   } else if (tabKey === 'animations') {
     const iniPath = getFieldValue(section, 'ini_path');
     tasks.push({
@@ -5381,21 +5687,38 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
 
   const resolved = [];
   appendDebugLog('preview:load-start', { tabKey, taskCount: tasks.length });
+  let altWrap = null;
   for (const task of tasks) {
     try {
       appendDebugLog('preview:request', { tabKey, title: task.title, request: task.request });
       const res = await window.c3xManager.getPreview(task.request);
       if (res && res.ok) {
+        const prepared = (tabKey === 'animations')
+          ? (() => {
+              const dirIndex = resolveAnimationDirectionIndex(section);
+              return Number.isInteger(dirIndex) ? sliceUnitPreviewByDirection(res, dirIndex) : res;
+            })()
+          : res;
         appendDebugLog('preview:response:ok', { tabKey, title: task.title, animated: !!res.animated, width: res.width, height: res.height, sourcePath: res.sourcePath, frames: res.framesBase64 ? res.framesBase64.length : 0, debug: res.debug || null });
+        const lane = String(task && task.lane || 'base');
+        if (tabKey === 'wonders' && lane === 'alt' && !altWrap) {
+          altWrap = document.createElement('div');
+          altWrap.className = 'preview-alt-group';
+          const altTitle = document.createElement('div');
+          altTitle.className = 'preview-alt-group-title';
+          altTitle.textContent = 'Alt Direction Art';
+          altWrap.appendChild(altTitle);
+          previewWrap.appendChild(altWrap);
+        }
         renderRgbaPreview(
-          previewWrap,
-          res,
+          (tabKey === 'wonders' && lane === 'alt' && altWrap) ? altWrap : previewWrap,
+          prepared,
           task.title,
           () => getPreviewDelayMs(tabKey, section, task.title),
           task.displayWidth,
-          previewOptions
+          getPreviewOptionsForTitle(task.title)
         );
-        resolved.push({ title: task.title, preview: res, displayWidth: task.displayWidth || null });
+        resolved.push({ title: task.title, lane, preview: prepared, displayWidth: task.displayWidth || null });
       } else {
         appendDebugLog('preview:response:err', { tabKey, title: task.title, error: res && res.error });
       }
@@ -6515,9 +6838,76 @@ function getSectionNamesFromTab(tabKey, fieldKey = 'name') {
   return Array.from(out).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
 }
 
+const DISTRICT_TRAIT_OPTIONS = [
+  'militaristic',
+  'religious',
+  'commercial',
+  'industrious',
+  'expansionist',
+  'scientific',
+  'agricultural',
+  'seafaring'
+];
+
+const DISTRICT_CULTURE_OPTIONS = [
+  'american',
+  'european',
+  'roman',
+  'mideast',
+  'asian'
+];
+
+function getConfiguredSectionListValues(tabKeys, fieldKey) {
+  const seen = new Set();
+  (Array.isArray(tabKeys) ? tabKeys : []).forEach((tabKey) => {
+    const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+    const sections = tab && tab.model && Array.isArray(tab.model.sections) ? tab.model.sections : [];
+    sections.forEach((section) => {
+      const raw = String(getFieldValue(section, fieldKey) || '').trim();
+      if (!raw) return;
+      tokenizeListPreservingQuotes(raw).forEach((token) => {
+        const clean = normalizeConfigToken(token).toLowerCase();
+        if (clean) seen.add(clean);
+      });
+    });
+  });
+  return Array.from(seen).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+}
+
+function mergeOptionLists(primaryOptions, discoveredOptions) {
+  const seen = new Set();
+  const out = [];
+  [...(Array.isArray(primaryOptions) ? primaryOptions : []), ...(Array.isArray(discoveredOptions) ? discoveredOptions : [])].forEach((value) => {
+    const clean = String(value || '').trim();
+    if (!clean) return;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(clean);
+  });
+  return out;
+}
+
 function getDynamicSectionFieldOptions(tabKey, schemaField, section) {
   const key = String(schemaField && schemaField.key || '').trim();
   if (!key) return [];
+  if (tabKey === 'wonders' && key === 'name') {
+    return getFilteredImprovementOptions(['wonder', 'small_wonder']).map((opt) => String(opt.value || '')).filter(Boolean);
+  }
+  if (tabKey === 'wonders' && key === 'buildable_by_civs') {
+    return getNamedReferenceOptionsForTab('civilizations').map((opt) => String(opt.value || ''));
+  }
+  if (tabKey === 'wonders' && key === 'buildable_by_civ_govs') {
+    return getNamedReferenceOptionsForTab('governments').map((opt) => String(opt.value || ''));
+  }
+  if (tabKey === 'wonders' && key === 'buildable_by_civ_traits') {
+    const discovered = getConfiguredSectionListValues(['districts', 'wonders'], 'buildable_by_civ_traits');
+    return mergeOptionLists(DISTRICT_TRAIT_OPTIONS, discovered);
+  }
+  if (tabKey === 'wonders' && key === 'buildable_by_civ_cultures') {
+    const discovered = getConfiguredSectionListValues(['districts', 'wonders'], 'buildable_by_civ_cultures');
+    return mergeOptionLists(DISTRICT_CULTURE_OPTIONS, discovered);
+  }
   if (tabKey !== 'districts') return [];
 
   if (key === 'advance_prereqs' || key === 'obsoleted_by') {
@@ -6535,6 +6925,14 @@ function getDynamicSectionFieldOptions(tabKey, schemaField, section) {
   if (key === 'buildable_by_civ_govs') {
     return getNamedReferenceOptionsForTab('governments').map((opt) => String(opt.value || ''));
   }
+  if (key === 'buildable_by_civ_traits') {
+    const discovered = getConfiguredSectionListValues(['districts', 'wonders'], 'buildable_by_civ_traits');
+    return mergeOptionLists(DISTRICT_TRAIT_OPTIONS, discovered);
+  }
+  if (key === 'buildable_by_civ_cultures') {
+    const discovered = getConfiguredSectionListValues(['districts', 'wonders'], 'buildable_by_civ_cultures');
+    return mergeOptionLists(DISTRICT_CULTURE_OPTIONS, discovered);
+  }
   if (key === 'buildable_on_districts' || key === 'buildable_adjacent_to_districts') {
     const options = getSectionNamesFromTab('districts', 'name');
     const selfName = getFieldValue(section, 'name');
@@ -6548,6 +6946,11 @@ function getDynamicSectionFieldOptions(tabKey, schemaField, section) {
 
 function getReferenceTabForSectionField(tabKey, fieldKey) {
   const key = String(fieldKey || '').trim();
+  if (tabKey === 'wonders') {
+    if (key === 'buildable_by_civs') return 'civilizations';
+    if (key === 'buildable_by_civ_govs') return 'governments';
+    return '';
+  }
   if (tabKey !== 'districts') return '';
   if (key === 'advance_prereqs' || key === 'obsoleted_by') return 'technologies';
   if (key === 'dependent_improvs' || key === 'wonder_prereqs') return 'improvements';
@@ -6607,6 +7010,75 @@ function orderSectionFieldsByDocs(schemaFields, fieldDocs) {
   });
 }
 
+function applyPreferredSectionFieldOrder(tabKey, orderedFields) {
+  const fields = Array.isArray(orderedFields) ? orderedFields.slice() : [];
+  let priorityByKey = null;
+  if (tabKey === 'wonders') {
+    priorityByKey = new Map([
+      ['name', 0],
+      ['img_path', 1],
+      ['img_construct_row', 2],
+      ['img_construct_column', 3],
+      ['img_row', 4],
+      ['img_column', 5],
+      ['enable_img_alt_dir', 6],
+      ['img_alt_dir_construct_row', 7],
+      ['img_alt_dir_construct_column', 8],
+      ['img_alt_dir_row', 9],
+      ['img_alt_dir_column', 10],
+      ['custom_width', 11],
+      ['custom_height', 12]
+    ]);
+  } else if (tabKey === 'naturalWonders') {
+    priorityByKey = new Map([
+      ['name', 0],
+      ['img_path', 1],
+      ['img_row', 2],
+      ['img_column', 3],
+      ['animation', 4],
+      ['terrain_type', 5],
+      ['adjacent_to', 6],
+      ['adjacency_dir', 7]
+    ]);
+  } else {
+    return fields;
+  }
+  return fields.sort((a, b) => {
+    const aKey = String(a && a.key || '');
+    const bKey = String(b && b.key || '');
+    const ai = priorityByKey.has(aKey) ? priorityByKey.get(aKey) : Number.MAX_SAFE_INTEGER;
+    const bi = priorityByKey.has(bKey) ? priorityByKey.get(bKey) : Number.MAX_SAFE_INTEGER;
+    if (ai !== bi) return ai - bi;
+    return 0;
+  });
+}
+
+function shouldShowAnimationFieldForType(fieldKey, typeValue) {
+  const key = String(fieldKey || '').trim().toLowerCase();
+  const type = String(typeValue || '').trim().toLowerCase();
+  if (key === 'resource_type') return type === 'resource';
+  if (key === 'pcx_file' || key === 'pcx_index') return type === 'pcx';
+  if (key === 'terrain_types' || key === 'adjacent_to') return type === 'terrain';
+  if (key === 'direction') return true;
+  return true;
+}
+
+function resolveAnimationDirectionIndex(section) {
+  const direction = normalizeConfigToken(getFieldValue(section, 'direction')).toLowerCase();
+  if (!direction) return null;
+  const map = {
+    northeast: 4,
+    east: 3,
+    southeast: 2,
+    south: 1,
+    southwest: 0,
+    west: 7,
+    northwest: 6,
+    north: 5
+  };
+  return Number.isInteger(map[direction]) ? map[direction] : null;
+}
+
 const DISTRICT_DEPENDENCY_RULES = [
   { key: 'advance_prereqs', label: 'Tech Prerequisites', setKey: 'technologies' },
   { key: 'obsoleted_by', label: 'Obsoleted By', setKey: 'technologies' },
@@ -6618,6 +7090,14 @@ const DISTRICT_DEPENDENCY_RULES = [
   { key: 'natural_wonder_prereqs', label: 'Natural Wonder Prerequisites', setKey: 'naturalWonders' },
   { key: 'buildable_on_districts', label: 'Buildable On Districts', setKey: 'districts' },
   { key: 'buildable_adjacent_to_districts', label: 'Adjacent Districts', setKey: 'districts' }
+];
+
+const WONDER_DEPENDENCY_RULES = [
+  { key: 'name', label: 'Wonder Name', setKey: 'wonders', single: true },
+  { key: 'buildable_by_civs', label: 'Allowed Civs', setKey: 'civilizations' },
+  { key: 'buildable_by_civ_govs', label: 'Allowed Governments', setKey: 'governments' },
+  { key: 'buildable_by_civ_traits', label: 'Allowed Traits', setKey: 'traits' },
+  { key: 'buildable_by_civ_cultures', label: 'Allowed Cultures', setKey: 'cultures' }
 ];
 
 function getReferenceEntryDisplayName(tabKey, entry) {
@@ -6640,14 +7120,17 @@ function toNormalizedLookupSet(values) {
   return out;
 }
 
+function getReferenceSetFromBundle(bundle, tabKey, filterFn = null) {
+  const tabs = (bundle && bundle.tabs) || {};
+  const tab = tabs[tabKey];
+  if (!tab || !Array.isArray(tab.entries)) return new Set();
+  const entries = typeof filterFn === 'function' ? tab.entries.filter((entry) => filterFn(entry)) : tab.entries;
+  return toNormalizedLookupSet(entries.map((entry) => getReferenceEntryDisplayName(tabKey, entry)));
+}
+
 function buildDistrictCompatibilityContext(bundle, districtSectionsOverride = null) {
   const sourceBundle = bundle || state.bundle || {};
   const tabs = sourceBundle.tabs || {};
-  const getReferenceSet = (tabKey) => {
-    const tab = tabs[tabKey];
-    if (!tab || !Array.isArray(tab.entries)) return new Set();
-    return toNormalizedLookupSet(tab.entries.map((entry) => getReferenceEntryDisplayName(tabKey, entry)));
-  };
   const naturalWonderSections = (((tabs.naturalWonders || {}).model || {}).sections || []);
   const districtSections = Array.isArray(districtSectionsOverride)
     ? districtSectionsOverride
@@ -6655,13 +7138,27 @@ function buildDistrictCompatibilityContext(bundle, districtSectionsOverride = nu
   const naturalWonders = toNormalizedLookupSet(naturalWonderSections.map((section) => getFieldValue(section, 'name')));
   const districts = toNormalizedLookupSet(districtSections.map((section) => getFieldValue(section, 'name')));
   return {
-    technologies: getReferenceSet('technologies'),
-    improvements: getReferenceSet('improvements'),
-    resources: getReferenceSet('resources'),
-    civilizations: getReferenceSet('civilizations'),
-    governments: getReferenceSet('governments'),
+    technologies: getReferenceSetFromBundle(sourceBundle, 'technologies'),
+    improvements: getReferenceSetFromBundle(sourceBundle, 'improvements'),
+    resources: getReferenceSetFromBundle(sourceBundle, 'resources'),
+    civilizations: getReferenceSetFromBundle(sourceBundle, 'civilizations'),
+    governments: getReferenceSetFromBundle(sourceBundle, 'governments'),
     naturalWonders,
     districts
+  };
+}
+
+function buildWonderCompatibilityContext(bundle) {
+  const sourceBundle = bundle || state.bundle || {};
+  return {
+    wonders: getReferenceSetFromBundle(sourceBundle, 'improvements', (entry) => {
+      const kind = String(entry && entry.improvementKind || '').trim().toLowerCase();
+      return kind === 'wonder' || kind === 'small_wonder';
+    }),
+    civilizations: getReferenceSetFromBundle(sourceBundle, 'civilizations'),
+    governments: getReferenceSetFromBundle(sourceBundle, 'governments'),
+    traits: toNormalizedLookupSet(DISTRICT_TRAIT_OPTIONS),
+    cultures: toNormalizedLookupSet(DISTRICT_CULTURE_OPTIONS)
   };
 }
 
@@ -6728,6 +7225,68 @@ function collectDistrictIssueIndexes(tab, compatibility = null) {
   return out;
 }
 
+function collectWonderDependencyIssues(section, index, context) {
+  const issues = [];
+  const ctx = context || buildWonderCompatibilityContext();
+  WONDER_DEPENDENCY_RULES.forEach((rule) => {
+    const tokenValues = rule.single
+      ? [normalizeConfigToken(getFieldValue(section, rule.key))]
+      : tokenizeListPreservingQuotes(getFieldValue(section, rule.key)).map((value) => normalizeConfigToken(value));
+    const cleaned = tokenValues.filter(Boolean);
+    if (cleaned.length <= 0) return;
+    const allowedSet = ctx[rule.setKey] || new Set();
+    if (!(allowedSet instanceof Set) || allowedSet.size <= 0) return;
+    const invalidValues = cleaned.filter((value) => !allowedSet.has(normalizeConfigToken(value).toLowerCase()));
+    if (invalidValues.length <= 0) return;
+    issues.push({
+      key: rule.key,
+      label: rule.label,
+      invalidValues
+    });
+  });
+  return issues;
+}
+
+function collectWonderCompatibilityIssuesForTab(tab) {
+  const wonderTab = tab || (state.bundle && state.bundle.tabs && state.bundle.tabs.wonders);
+  const sections = wonderTab && wonderTab.model && Array.isArray(wonderTab.model.sections)
+    ? wonderTab.model.sections
+    : [];
+  const context = buildWonderCompatibilityContext(state.bundle);
+  const bySection = new Map();
+  let totalIssues = 0;
+  sections.forEach((section, idx) => {
+    const issues = collectWonderDependencyIssues(section, idx, context);
+    if (issues.length > 0) {
+      bySection.set(idx, issues);
+      totalIssues += issues.reduce((sum, issue) => sum + issue.invalidValues.length, 0);
+    }
+  });
+  return {
+    bySection,
+    totalIssues,
+    sectionCount: bySection.size
+  };
+}
+
+function collectWonderIssueIndexes(tab, compatibility = null) {
+  const wonderTab = tab || (state.bundle && state.bundle.tabs && state.bundle.tabs.wonders);
+  const sections = wonderTab && wonderTab.model && Array.isArray(wonderTab.model.sections)
+    ? wonderTab.model.sections
+    : [];
+  const out = new Set();
+  const bySection = compatibility && compatibility.bySection instanceof Map ? compatibility.bySection : null;
+  sections.forEach((section, idx) => {
+    if (bySection && bySection.has(idx)) {
+      out.add(idx);
+      return;
+    }
+    const validationError = validateWonderSection(section, idx);
+    if (validationError) out.add(idx);
+  });
+  return out;
+}
+
 function filterDistrictSectionsForScenarioFallback(bundle) {
   const b = bundle || state.bundle;
   if (!b || b.mode !== 'scenario' || !b.tabs || !b.tabs.districts) return;
@@ -6768,6 +7327,37 @@ function filterDistrictSectionsForScenarioFallback(bundle) {
   };
 }
 
+function filterWonderSectionsForScenarioFallback(bundle) {
+  const b = bundle || state.bundle;
+  if (!b || b.mode !== 'scenario' || !b.tabs || !b.tabs.wonders) return;
+  const wonderTab = b.tabs.wonders;
+  const sourceDetails = wonderTab.sourceDetails || {};
+  const effectiveSource = String(wonderTab.effectiveSource || '').toLowerCase();
+  if (effectiveSource === 'scenario' || sourceDetails.hasScenario) return;
+  const sections = wonderTab.model && Array.isArray(wonderTab.model.sections)
+    ? wonderTab.model.sections
+    : [];
+  if (sections.length <= 0) return;
+
+  const context = buildWonderCompatibilityContext(b);
+  const kept = [];
+  sections.forEach((section, idx) => {
+    const issues = collectWonderDependencyIssues(section, idx, context);
+    const validationError = validateWonderSection(section, idx);
+    if (issues.length > 0 || validationError) return;
+    kept.push(section);
+  });
+  if (kept.length === sections.length) return;
+  wonderTab.model.sections = kept;
+  wonderTab.filteredFromScenarioFallback = {
+    applied: true,
+    source: effectiveSource || 'effective',
+    removedCount: sections.length - kept.length,
+    keptCount: kept.length,
+    originalCount: sections.length
+  };
+}
+
 function validateDistrictSection(section, index) {
   const paths = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths')).map((p) => String(p || '').trim()).filter(Boolean);
   const label = getDistrictSectionDisplay(section, index).primary;
@@ -6787,14 +7377,42 @@ function validateDistrictSection(section, index) {
   return '';
 }
 
+function validateWonderSection(section, index) {
+  const name = normalizeConfigToken(getFieldValue(section, 'name'));
+  const label = name || `Wonder District ${index + 1}`;
+  if (!name) return `${label}: Wonder Name is required.`;
+  if (parseConfigBool(getFieldValue(section, 'enable_img_alt_dir'))) {
+    const missing = [];
+    if (!hasExplicitConfigInteger(getFieldValue(section, 'img_alt_dir_construct_row'))) missing.push('Alt Construct Row');
+    if (!hasExplicitConfigInteger(getFieldValue(section, 'img_alt_dir_construct_column'))) missing.push('Alt Construct Column');
+    if (!hasExplicitConfigInteger(getFieldValue(section, 'img_alt_dir_row'))) missing.push('Alt Completed Row');
+    if (!hasExplicitConfigInteger(getFieldValue(section, 'img_alt_dir_column'))) missing.push('Alt Completed Column');
+    if (missing.length > 0) {
+      return `${label}: Enable Alt Direction Art requires values for ${missing.join(', ')}.`;
+    }
+  }
+  return '';
+}
+
 function getSectionValidationError() {
   if (!state.bundle || !state.bundle.tabs) return '';
-  if (getTabDirtyCount('districts') <= 0) return '';
-  const districtTab = state.bundle.tabs.districts;
-  if (!districtTab || !districtTab.model || !Array.isArray(districtTab.model.sections)) return '';
-  for (let i = 0; i < districtTab.model.sections.length; i += 1) {
-    const err = validateDistrictSection(districtTab.model.sections[i], i);
-    if (err) return err;
+  if (getTabDirtyCount('districts') > 0) {
+    const districtTab = state.bundle.tabs.districts;
+    if (districtTab && districtTab.model && Array.isArray(districtTab.model.sections)) {
+      for (let i = 0; i < districtTab.model.sections.length; i += 1) {
+        const err = validateDistrictSection(districtTab.model.sections[i], i);
+        if (err) return err;
+      }
+    }
+  }
+  if (getTabDirtyCount('wonders') > 0) {
+    const wonderTab = state.bundle.tabs.wonders;
+    if (wonderTab && wonderTab.model && Array.isArray(wonderTab.model.sections)) {
+      for (let i = 0; i < wonderTab.model.sections.length; i += 1) {
+        const err = validateWonderSection(wonderTab.model.sections[i], i);
+        if (err) return err;
+      }
+    }
   }
   return '';
 }
@@ -19137,18 +19755,30 @@ function createFieldInput(schemaField, value, onChange) {
     empty.value = '';
     empty.textContent = '(not set)';
     select.appendChild(empty);
+    const formatSelectOptionLabel = (optValue) => {
+      const raw = String(optValue == null ? '' : optValue).trim();
+      if (!raw) return raw;
+      if (state.activeTab === 'animations' && String(schemaField && schemaField.key || '').trim() === 'type') {
+        return raw
+          .split(/[-_\s]+/)
+          .filter(Boolean)
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+          .join(' ');
+      }
+      return raw;
+    };
     const options = schemaField.options || [];
     options.forEach((opt) => {
       const o = document.createElement('option');
       o.value = opt;
-      o.textContent = opt;
+      o.textContent = formatSelectOptionLabel(opt);
       select.appendChild(o);
     });
     const hasCurrent = options.some((opt) => String(opt) === String(value || ''));
     if (!hasCurrent && value) {
       const current = document.createElement('option');
       current.value = value;
-      current.textContent = value;
+      current.textContent = formatSelectOptionLabel(value);
       select.appendChild(current);
     }
     select.value = value || '';
@@ -19222,6 +19852,52 @@ function makeSegmentedMultiValueEditor(options, values, onValuesChange, fieldKey
       else selected.add(opt);
       btn.classList.toggle('active', selected.has(opt));
       if (onValuesChange) onValuesChange(optionList.filter((entry) => selected.has(entry)));
+    });
+    wrap.appendChild(btn);
+  });
+  return wrap;
+}
+
+function makeSegmentedSingleValueEditor(options, value, onValueChange, fieldKey = '', config = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'segmented-multi-list';
+  const showTokenIcon = config.showTokenIcon !== false;
+  const iconRenderer = typeof config.iconRenderer === 'function' ? config.iconRenderer : null;
+  const includeEmpty = config.includeEmpty !== false;
+  const emptyLabel = String(config.emptyLabel || '(not set)');
+  const selected = String(value || '').trim();
+  const optionSet = new Set((Array.isArray(options) ? options : []).map((opt) => String(opt || '').trim()).filter(Boolean));
+  if (selected) optionSet.add(selected);
+  const optionList = Array.from(optionSet);
+  if (includeEmpty) optionList.unshift('');
+  optionList.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'segmented-multi-btn';
+    const text = document.createElement('span');
+    text.textContent = opt || emptyLabel;
+    if (opt) {
+      let usedCustomIcon = false;
+      if (iconRenderer) {
+        const customIcon = iconRenderer(opt, fieldKey);
+        if (customIcon) {
+          btn.appendChild(customIcon);
+          usedCustomIcon = true;
+        }
+      }
+      if (!usedCustomIcon && showTokenIcon) {
+        const icon = document.createElement('span');
+        icon.className = 'segmented-multi-icon';
+        icon.style.background = getTokenColor(opt, fieldKey);
+        btn.appendChild(icon);
+      }
+    }
+    btn.appendChild(text);
+    btn.classList.toggle('active', opt === selected);
+    btn.addEventListener('click', () => {
+      Array.from(wrap.querySelectorAll('.segmented-multi-btn')).forEach((node) => node.classList.remove('active'));
+      btn.classList.add('active');
+      if (onValueChange) onValueChange(opt);
     });
     wrap.appendChild(btn);
   });
@@ -19753,6 +20429,451 @@ function renderDistrictImagePathsEditor(section, onValueChange) {
   return wrap;
 }
 
+function parseAnimationAdjacentToToken(token) {
+  const raw = normalizeConfigToken(token);
+  if (!raw) return { terrain: '', direction: '' };
+  const splitAt = raw.indexOf(':');
+  if (splitAt < 0) return { terrain: raw, direction: '' };
+  const terrain = raw.slice(0, splitAt).trim();
+  const direction = raw.slice(splitAt + 1).trim().toLowerCase();
+  return { terrain, direction };
+}
+
+function serializeAnimationAdjacentToToken(entry) {
+  const terrain = normalizeConfigToken(entry && entry.terrain);
+  const direction = normalizeConfigToken(entry && entry.direction).toLowerCase();
+  if (!terrain) return '';
+  return direction ? `${terrain}:${direction}` : terrain;
+}
+
+function renderAnimationAdjacentToEditor(section, onValueChange) {
+  const wrap = document.createElement('div');
+  wrap.className = 'structured-list';
+  const terrainBase = [...TERRAIN_OPTIONS, 'land', 'river', 'lake', 'coast', 'sea', 'ocean'];
+  const rawTokens = tokenizeListPreservingQuotes(getFieldValue(section, 'adjacent_to'));
+  const rows = rawTokens.map((token) => parseAnimationAdjacentToToken(token)).filter((entry) => !!entry.terrain);
+  if (rows.length === 0) rows.push({ terrain: '', direction: '' });
+
+  const commit = () => {
+    const serialized = rows
+      .map((entry) => serializeAnimationAdjacentToToken(entry))
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    setSingleFieldValue(section, 'adjacent_to', serialized.join(', '));
+    if (onValueChange) onValueChange('adjacent_to', serialized.join(', '));
+  };
+
+  const renderRows = () => {
+    wrap.innerHTML = '';
+    rows.forEach((entry, idx) => {
+      const line = document.createElement('div');
+      line.className = 'kv-row compact';
+
+      const terrainSelect = document.createElement('select');
+      const terrainOpts = Array.from(new Set([...terrainBase, ...rows.map((item) => normalizeConfigToken(item.terrain)).filter(Boolean)]));
+      const terrainEmpty = document.createElement('option');
+      terrainEmpty.value = '';
+      terrainEmpty.textContent = 'Terrain...';
+      terrainSelect.appendChild(terrainEmpty);
+      terrainOpts.forEach((opt) => {
+        const node = document.createElement('option');
+        node.value = opt;
+        node.textContent = opt;
+        terrainSelect.appendChild(node);
+      });
+      terrainSelect.value = normalizeConfigToken(entry.terrain);
+      terrainSelect.addEventListener('change', () => {
+        rows[idx].terrain = terrainSelect.value;
+        commit();
+      });
+      line.appendChild(terrainSelect);
+
+      const dirSelect = document.createElement('select');
+      const dirEmpty = document.createElement('option');
+      dirEmpty.value = '';
+      dirEmpty.textContent = '(any direction)';
+      dirSelect.appendChild(dirEmpty);
+      const dirOptions = Array.from(new Set([...DIRECTION_OPTIONS, ...rows.map((item) => normalizeConfigToken(item.direction).toLowerCase()).filter(Boolean)]));
+      dirOptions.forEach((opt) => {
+        const node = document.createElement('option');
+        node.value = opt;
+        node.textContent = opt;
+        dirSelect.appendChild(node);
+      });
+      dirSelect.value = normalizeConfigToken(entry.direction).toLowerCase();
+      dirSelect.addEventListener('change', () => {
+        rows[idx].direction = dirSelect.value;
+        commit();
+      });
+      line.appendChild(dirSelect);
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      withRemoveIcon(del, ' Remove');
+      del.addEventListener('click', () => {
+        rows.splice(idx, 1);
+        if (rows.length === 0) rows.push({ terrain: '', direction: '' });
+        commit();
+        renderRows();
+      });
+      line.appendChild(del);
+      wrap.appendChild(line);
+    });
+
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.textContent = 'Add Adjacent Rule';
+    add.addEventListener('click', () => {
+      rows.push({ terrain: '', direction: '' });
+      renderRows();
+    });
+    wrap.appendChild(add);
+  };
+
+  renderRows();
+  return wrap;
+}
+
+function renderNaturalWonderAnimationSpecsEditor(section, onValueChange) {
+  const wrap = document.createElement('div');
+  wrap.className = 'natural-animation-spec-list';
+  const rawSpecs = getFieldValuesRaw(section, 'animation');
+  const specs = rawSpecs.map((raw) => parseNaturalWonderAnimationSpec(raw));
+  const adjacencyDirection = String(getFieldValue(section, 'adjacency_dir') || '').trim();
+  if (adjacencyDirection) {
+    specs.forEach((entry) => {
+      entry.direction = adjacencyDirection;
+    });
+  }
+
+  const commit = (config = null) => {
+    const shouldNotify = !(config && config.notify === false);
+    if (adjacencyDirection) {
+      specs.forEach((entry) => {
+        entry.direction = adjacencyDirection;
+      });
+    }
+    const serialized = specs
+      .map((entry) => serializeNaturalWonderAnimationSpec(entry))
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean);
+    setMultiFieldValues(section, 'animation', serialized);
+    if (shouldNotify && onValueChange) onValueChange('animation', serialized.join('\n'));
+  };
+
+  const addExtraRow = (entry, extrasWrap, valueChangeHook) => {
+    const extra = { key: '', value: '' };
+    entry.extras.push(extra);
+    valueChangeHook();
+    const row = document.createElement('div');
+    row.className = 'kv-row compact';
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.placeholder = 'key';
+    keyInput.value = '';
+    keyInput.addEventListener('input', () => {
+      extra.key = keyInput.value;
+      valueChangeHook();
+    });
+    const valueInput = document.createElement('input');
+    valueInput.type = 'text';
+    valueInput.placeholder = 'value';
+    valueInput.value = '';
+    valueInput.addEventListener('input', () => {
+      extra.value = valueInput.value;
+      valueChangeHook();
+    });
+    const del = document.createElement('button');
+    del.type = 'button';
+    withRemoveIcon(del, ' Remove');
+    del.addEventListener('click', () => {
+      const idx = entry.extras.indexOf(extra);
+      if (idx >= 0) entry.extras.splice(idx, 1);
+      valueChangeHook();
+      row.remove();
+    });
+    row.appendChild(keyInput);
+    row.appendChild(valueInput);
+    row.appendChild(del);
+    extrasWrap.appendChild(row);
+  };
+
+  if (specs.length === 0) {
+    const hint = document.createElement('div');
+    hint.className = 'hint';
+    hint.textContent = 'No animation specs configured.';
+    wrap.appendChild(hint);
+  }
+
+  specs.forEach((entry, idx) => {
+    const card = document.createElement('div');
+    card.className = 'section-card natural-animation-spec-card';
+
+    const top = document.createElement('div');
+    top.className = 'section-top';
+    top.innerHTML = `<strong>Animation ${idx + 1}</strong><span class="hint">Rendered from this natural wonder tile</span>`;
+    card.appendChild(top);
+
+    const iniWrap = document.createElement('div');
+    iniWrap.className = 'path-input-with-btn';
+    const iniInput = document.createElement('input');
+    iniInput.type = 'text';
+    iniInput.placeholder = 'Art\\Animations\\...\\*.ini';
+    iniInput.value = entry.ini || '';
+    iniInput.addEventListener('input', () => {
+      entry.ini = iniInput.value;
+      commit();
+    });
+    const iniBrowse = document.createElement('button');
+    iniBrowse.type = 'button';
+    iniBrowse.textContent = 'Browse';
+    iniBrowse.addEventListener('click', async () => {
+      const filePath = await window.c3xManager.pickFile(getFilePickerOptionsForSectionField({ key: 'ini_path' }, iniInput.value));
+      if (!filePath) return;
+      iniInput.value = filePath;
+      entry.ini = filePath;
+      commit();
+    });
+    iniWrap.appendChild(iniInput);
+    iniWrap.appendChild(iniBrowse);
+    card.appendChild(iniWrap);
+
+    const grid = document.createElement('div');
+    grid.className = 'kv-grid natural-animation-spec-grid';
+
+    const frameWrap = document.createElement('label');
+    frameWrap.className = 'hint';
+    frameWrap.textContent = 'Frame Time (seconds)';
+    const frameRow = document.createElement('div');
+    frameRow.style.display = 'grid';
+    frameRow.style.gridTemplateColumns = 'minmax(0, 1fr) auto';
+    frameRow.style.gap = '8px';
+    frameRow.style.alignItems = 'center';
+    const frameInput = document.createElement('input');
+    frameInput.type = 'range';
+    frameInput.min = '0.02';
+    frameInput.max = '1.00';
+    frameInput.step = '0.01';
+    const parsedFrame = Number.parseFloat(entry.frame_time_seconds);
+    const frameValue = Number.isFinite(parsedFrame) ? Math.max(0.02, Math.min(1.00, parsedFrame)) : 0.12;
+    frameInput.value = frameValue.toFixed(2);
+    const frameValueText = document.createElement('span');
+    frameValueText.className = 'field-meta';
+    frameValueText.textContent = `${frameInput.value}s`;
+    frameInput.addEventListener('input', () => {
+      const next = Number.parseFloat(frameInput.value);
+      const clamped = Number.isFinite(next) ? Math.max(0.02, Math.min(1.00, next)) : 0.12;
+      frameValueText.textContent = `${clamped.toFixed(2)}s`;
+    });
+    frameInput.addEventListener('change', () => {
+      const next = Number.parseFloat(frameInput.value);
+      const clamped = Number.isFinite(next) ? Math.max(0.02, Math.min(1.00, next)) : 0.12;
+      entry.frame_time_seconds = clamped.toFixed(2);
+      frameValueText.textContent = `${entry.frame_time_seconds}s`;
+      commit({ notify: false });
+    });
+    frameRow.appendChild(frameInput);
+    frameRow.appendChild(frameValueText);
+    frameWrap.appendChild(frameRow);
+    grid.appendChild(frameWrap);
+
+    const xWrap = document.createElement('label');
+    xWrap.className = 'hint';
+    xWrap.textContent = 'X Offset';
+    const xInput = document.createElement('input');
+    xInput.type = 'number';
+    xInput.value = entry.x_offset || '';
+    xInput.addEventListener('input', () => {
+      entry.x_offset = xInput.value;
+      commit();
+    });
+    xWrap.appendChild(xInput);
+    grid.appendChild(xWrap);
+
+    const yWrap = document.createElement('label');
+    yWrap.className = 'hint';
+    yWrap.textContent = 'Y Offset';
+    const yInput = document.createElement('input');
+    yInput.type = 'number';
+    yInput.value = entry.y_offset || '';
+    yInput.addEventListener('input', () => {
+      entry.y_offset = yInput.value;
+      commit();
+    });
+    yWrap.appendChild(yInput);
+    grid.appendChild(yWrap);
+
+    const dirWrap = document.createElement('div');
+    dirWrap.className = 'hint';
+    dirWrap.textContent = 'Direction (from Adjacency Direction)';
+    const dirChips = makeSegmentedSingleValueEditor(
+      DIRECTION_OPTIONS,
+      adjacencyDirection || entry.direction || '',
+      null,
+      'direction',
+      { includeEmpty: true, showTokenIcon: false }
+    );
+    dirChips.classList.add('natural-animation-readonly-chips');
+    Array.from(dirChips.querySelectorAll('button')).forEach((btn) => {
+      btn.disabled = true;
+      btn.tabIndex = -1;
+    });
+    dirWrap.appendChild(dirChips);
+    grid.appendChild(dirWrap);
+
+    const dayNightWrap = document.createElement('div');
+    dayNightWrap.className = 'hint';
+    dayNightWrap.textContent = 'Day/Night Hours';
+    const hourState = new Set(parseDayNightHoursSpec(entry.show_in_day_night_hours));
+    const quickActions = document.createElement('div');
+    quickActions.className = 'inline-btn-row';
+    const allHoursBtn = document.createElement('button');
+    allHoursBtn.type = 'button';
+    allHoursBtn.className = 'ghost';
+    allHoursBtn.textContent = 'All';
+    allHoursBtn.addEventListener('click', () => {
+      hourState.clear();
+      for (let h = 0; h < 24; h += 1) hourState.add(h);
+      entry.show_in_day_night_hours = serializeDayNightHoursSpec(Array.from(hourState));
+      commit();
+      renderActiveTab({ preserveTabScroll: true });
+    });
+    const clearHoursBtn = document.createElement('button');
+    clearHoursBtn.type = 'button';
+    clearHoursBtn.className = 'ghost';
+    clearHoursBtn.textContent = 'None';
+    clearHoursBtn.addEventListener('click', () => {
+      hourState.clear();
+      entry.show_in_day_night_hours = '';
+      commit();
+      renderActiveTab({ preserveTabScroll: true });
+    });
+    quickActions.appendChild(allHoursBtn);
+    quickActions.appendChild(clearHoursBtn);
+    dayNightWrap.appendChild(quickActions);
+    const hoursGrid = document.createElement('div');
+    hoursGrid.className = 'natural-animation-hours-grid';
+    for (let h = 0; h < 24; h += 1) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'segmented-multi-btn';
+      btn.textContent = String(h);
+      btn.classList.toggle('active', hourState.has(h));
+      btn.addEventListener('click', () => {
+        if (hourState.has(h)) hourState.delete(h);
+        else hourState.add(h);
+        btn.classList.toggle('active', hourState.has(h));
+        entry.show_in_day_night_hours = serializeDayNightHoursSpec(Array.from(hourState));
+        commit();
+      });
+      hoursGrid.appendChild(btn);
+    }
+    dayNightWrap.appendChild(hoursGrid);
+    grid.appendChild(dayNightWrap);
+
+    const seasonsWrap = document.createElement('div');
+    seasonsWrap.className = 'hint';
+    seasonsWrap.textContent = 'Seasons';
+    const seasonValues = tokenizeListPreservingQuotes(entry.show_in_seasons || '').map((v) => String(v || '').trim()).filter(Boolean);
+    const seasonChips = makeSegmentedMultiValueEditor(['spring', 'summer', 'fall', 'winter'], seasonValues, (nextValues) => {
+      entry.show_in_seasons = nextValues.join(', ');
+      commit();
+    }, 'show_in_seasons', {
+      showTokenIcon: false
+    });
+    seasonsWrap.appendChild(seasonChips);
+    grid.appendChild(seasonsWrap);
+    card.appendChild(grid);
+
+    const extrasBlock = document.createElement('div');
+    extrasBlock.className = 'multi-value-group';
+    const extrasTitle = document.createElement('div');
+    extrasTitle.className = 'hint';
+    extrasTitle.textContent = 'Extra Parameters';
+    extrasBlock.appendChild(extrasTitle);
+    const extrasRows = document.createElement('div');
+    extrasRows.className = 'kv-grid';
+    const refreshExtras = () => {
+      commit();
+    };
+    (Array.isArray(entry.extras) ? entry.extras : []).forEach((extra) => {
+      const row = document.createElement('div');
+      row.className = 'kv-row compact';
+      const keyInput = document.createElement('input');
+      keyInput.type = 'text';
+      keyInput.placeholder = 'key';
+      keyInput.value = String(extra && extra.key || '');
+      keyInput.addEventListener('input', () => {
+        extra.key = keyInput.value;
+        refreshExtras();
+      });
+      const valueInput = document.createElement('input');
+      valueInput.type = 'text';
+      valueInput.placeholder = 'value';
+      valueInput.value = String(extra && extra.value || '');
+      valueInput.addEventListener('input', () => {
+        extra.value = valueInput.value;
+        refreshExtras();
+      });
+      const del = document.createElement('button');
+      del.type = 'button';
+      withRemoveIcon(del, ' Remove');
+      del.addEventListener('click', () => {
+        const extraIdx = entry.extras.indexOf(extra);
+        if (extraIdx >= 0) entry.extras.splice(extraIdx, 1);
+        refreshExtras();
+        row.remove();
+      });
+      row.appendChild(keyInput);
+      row.appendChild(valueInput);
+      row.appendChild(del);
+      extrasRows.appendChild(row);
+    });
+    extrasBlock.appendChild(extrasRows);
+    const addExtra = document.createElement('button');
+    addExtra.type = 'button';
+    addExtra.textContent = 'Add Extra Param';
+    addExtra.addEventListener('click', () => {
+      addExtraRow(entry, extrasRows, refreshExtras);
+    });
+    extrasBlock.appendChild(addExtra);
+    card.appendChild(extrasBlock);
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'danger';
+    remove.innerHTML = '<span class="btn-icon">🗑</span>Remove Animation';
+    remove.addEventListener('click', () => {
+      specs.splice(idx, 1);
+      commit();
+      renderActiveTab({ preserveTabScroll: true });
+    });
+    card.appendChild(remove);
+    wrap.appendChild(card);
+  });
+
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.textContent = 'Add Animation';
+  add.addEventListener('click', () => {
+    specs.push({
+      ini: '',
+      frame_time_seconds: '',
+      x_offset: '',
+      y_offset: '',
+      direction: '',
+      show_in_day_night_hours: '',
+      show_in_seasons: '',
+      extras: []
+    });
+    commit();
+    renderActiveTab({ preserveTabScroll: true });
+  });
+  wrap.appendChild(add);
+
+  return wrap;
+}
+
 function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
   const dynamicOptions = getDynamicSectionFieldOptions(state.activeTab, schemaField, section);
   const effectiveOptions = dynamicOptions.length > 0 ? dynamicOptions : (schemaField.options || []);
@@ -19794,6 +20915,18 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
     if (onValueChange) onValueChange(effectiveField.key, cleaned.join(', '));
   };
 
+  if (state.activeTab === 'naturalWonders' && effectiveField.key === 'animation') {
+    controlWrap.appendChild(renderNaturalWonderAnimationSpecsEditor(section, onValueChange));
+    row.appendChild(controlWrap);
+    return row;
+  }
+
+  if (state.activeTab === 'animations' && effectiveField.key === 'adjacent_to') {
+    controlWrap.appendChild(renderAnimationAdjacentToEditor(section, onValueChange));
+    row.appendChild(controlWrap);
+    return row;
+  }
+
   if (effectiveField.multi || effectiveField.type === 'list') {
     const list = (effectiveField.type === 'list' && !effectiveField.multi)
       ? (values[0] ? tokenizeListPreservingQuotes(values[0]) : [''])
@@ -19827,7 +20960,8 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
         'buildable_on_overlays',
         'buildable_without_removal',
         'buildable_adjacent_to',
-        'buildable_adjacent_to_overlays'
+        'buildable_adjacent_to_overlays',
+        'terrain_types'
       ]);
       const districtPreviewIconKeys = new Set(['buildable_on_districts', 'buildable_adjacent_to_districts']);
       const chips = makeSegmentedMultiValueEditor(effectiveField.options, list.filter(Boolean), (nextValues) => {
@@ -19914,6 +21048,149 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
     return row;
   }
 
+  if (state.activeTab === 'wonders' && effectiveField.key === 'name') {
+    const normalizedCurrent = normalizeConfigToken(values[0] || '');
+    const wonderOptions = getFilteredImprovementOptions(['wonder', 'small_wonder']).slice();
+    const hasCurrent = wonderOptions.some((opt) => String(opt && opt.value || '').trim() === normalizedCurrent);
+    if (normalizedCurrent && !hasCurrent) {
+      wonderOptions.unshift({ value: normalizedCurrent, label: normalizedCurrent, entry: null });
+    }
+    const picker = createReferencePicker({
+      options: wonderOptions,
+      targetTabKey: 'improvements',
+      currentValue: normalizedCurrent || '-1',
+      searchPlaceholder: 'Search Wonder...',
+      noneLabel: '(not set)',
+      onSelect: (next) => {
+        const selected = String(next || '').trim();
+        const value = selected === '-1' ? '' : selected;
+        setSingleFieldValue(section, effectiveField.key, value);
+        if (onValueChange) onValueChange(effectiveField.key, value);
+      }
+    });
+    controlWrap.appendChild(picker);
+    row.appendChild(controlWrap);
+    return row;
+  }
+
+  const naturalWonderSingleChoiceKeys = new Set(['terrain_type', 'adjacent_to', 'adjacency_dir']);
+  if (state.activeTab === 'naturalWonders' && naturalWonderSingleChoiceKeys.has(effectiveField.key) && Array.isArray(effectiveField.options) && effectiveField.options.length > 0) {
+    const key = String(effectiveField.key || '');
+    const allowTerrainThumbs = key === 'terrain_type' || key === 'adjacent_to';
+    const terrainOptionSet = new Set(TERRAIN_OPTIONS.map((opt) => String(opt || '').trim()));
+    const chips = makeSegmentedSingleValueEditor(
+      effectiveField.options,
+      values[0] || '',
+      (nextValue) => {
+        const value = String(nextValue || '').trim();
+        setSingleFieldValue(section, effectiveField.key, value);
+        if (onValueChange) onValueChange(effectiveField.key, value);
+      },
+      effectiveField.key,
+      {
+        showTokenIcon: key !== 'terrain_type',
+        iconRenderer: allowTerrainThumbs
+          ? ((optionName) => (terrainOptionSet.has(String(optionName || '').trim()) ? makeTerrainOptionPreviewIcon(optionName) : null))
+          : null,
+        includeEmpty: !effectiveField.required
+      }
+    );
+    controlWrap.appendChild(chips);
+    row.appendChild(controlWrap);
+    return row;
+  }
+
+  if (state.activeTab === 'animations' && effectiveField.key === 'direction') {
+    const chips = makeSegmentedSingleValueEditor(
+      DIRECTION_OPTIONS,
+      values[0] || '',
+      (nextValue) => {
+        const normalized = String(nextValue || '').trim();
+        setSingleFieldValue(section, effectiveField.key, normalized);
+        if (onValueChange) onValueChange(effectiveField.key, normalized);
+      },
+      effectiveField.key,
+      {
+        includeEmpty: true,
+        emptyLabel: '(not set)',
+        showTokenIcon: false
+      }
+    );
+    controlWrap.appendChild(chips);
+    row.appendChild(controlWrap);
+    return row;
+  }
+
+  if (state.activeTab === 'animations' && effectiveField.key === 'frame_time_seconds') {
+    const parsed = Number.parseFloat(String(values[0] || '').trim());
+    const min = 0.02;
+    const max = 1.0;
+    const step = 0.01;
+    const fallback = 0.1;
+    const current = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    const sliderValue = Math.min(max, Math.max(min, current));
+
+    const wrap = document.createElement('div');
+    wrap.className = 'preview-tools';
+    const label = document.createElement('span');
+    label.className = 'preview-size-label';
+    label.textContent = 'Frame Time';
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = String(min);
+    slider.max = String(max);
+    slider.step = String(step);
+    slider.value = sliderValue.toFixed(2);
+    const valueLabel = document.createElement('span');
+    valueLabel.className = 'preview-size-value';
+    const syncValueLabel = (seconds) => {
+      const ms = Math.round(Math.max(0, seconds) * 1000);
+      valueLabel.textContent = `${seconds.toFixed(2)}s (${ms}ms)`;
+    };
+    syncValueLabel(sliderValue);
+
+    slider.addEventListener('input', () => {
+      const next = Number.parseFloat(slider.value);
+      const seconds = Number.isFinite(next) ? next : fallback;
+      const serialized = seconds.toFixed(2).replace(/\.00$/, '');
+      syncValueLabel(seconds);
+      setSingleFieldValue(section, effectiveField.key, serialized);
+      if (onValueChange) onValueChange(effectiveField.key, serialized);
+    });
+
+    wrap.appendChild(label);
+    wrap.appendChild(slider);
+    wrap.appendChild(valueLabel);
+    controlWrap.appendChild(wrap);
+    row.appendChild(controlWrap);
+    return row;
+  }
+
+  if (state.activeTab === 'animations' && effectiveField.key === 'resource_type') {
+    const normalizedCurrent = normalizeConfigToken(values[0] || '');
+    const resourceOptions = getNamedReferenceOptionsForTab('resources').slice();
+    const hasCurrent = resourceOptions.some((opt) => String(opt && opt.value || '').trim() === normalizedCurrent);
+    if (normalizedCurrent && !hasCurrent) {
+      resourceOptions.unshift({ value: normalizedCurrent, label: normalizedCurrent, entry: null });
+    }
+    const picker = createReferencePicker({
+      options: resourceOptions,
+      targetTabKey: 'resources',
+      currentValue: normalizedCurrent || '-1',
+      searchPlaceholder: 'Search Resource...',
+      noneLabel: '(not set)',
+      onSelect: (next) => {
+        const selected = String(next || '').trim();
+        const value = selected === '-1' ? '' : selected;
+        setSingleFieldValue(section, effectiveField.key, value);
+        if (onValueChange) onValueChange(effectiveField.key, value);
+      }
+    });
+    controlWrap.appendChild(picker);
+    row.appendChild(controlWrap);
+    return row;
+  }
+
   const input = createFieldInput(effectiveField, values[0] || '', (newValue) => {
     setSingleFieldValue(section, effectiveField.key, String(newValue || '').trim());
     if (onValueChange) onValueChange(effectiveField.key, String(newValue || '').trim());
@@ -19926,90 +21203,6 @@ function renderKnownField(section, schemaField, fieldDocs, onValueChange) {
   row.appendChild(controlWrap);
 
   return row;
-}
-
-function renderAdvancedFields(section, schemaKeys) {
-  const wrap = document.createElement('details');
-  wrap.className = 'advanced-wrap';
-
-  const summary = document.createElement('summary');
-  summary.textContent = 'Advanced fields';
-  wrap.appendChild(summary);
-
-  const unknownFields = section.fields.filter((f) => !schemaKeys.has(f.key));
-
-  const list = document.createElement('div');
-  list.className = 'kv-grid';
-  unknownFields.forEach((field, idx) => {
-    const row = document.createElement('div');
-    row.className = 'kv-row compact advanced-kv-row';
-
-    const keyInput = document.createElement('input');
-    keyInput.value = field.key || '';
-    keyInput.placeholder = 'config key';
-    keyInput.addEventListener('input', () => {
-      rememberUndoSnapshot();
-      field.key = keyInput.value;
-      setDirty(true);
-    });
-
-    const valueInput = document.createElement('input');
-    valueInput.value = field.value || '';
-    valueInput.placeholder = 'value';
-    valueInput.addEventListener('input', () => {
-      rememberUndoSnapshot();
-      field.value = valueInput.value;
-      setDirty(true);
-    });
-
-    const del = document.createElement('button');
-    withRemoveIcon(del, ' Remove');
-    del.addEventListener('click', () => {
-      rememberUndoSnapshot();
-      const allUnknown = section.fields.filter((f) => !schemaKeys.has(f.key));
-      const target = allUnknown[idx];
-      const pos = section.fields.indexOf(target);
-      if (pos >= 0) {
-        section.fields.splice(pos, 1);
-      }
-      setDirty(true);
-      renderActiveTab();
-    });
-
-    const keyCell = document.createElement('div');
-    keyCell.className = 'advanced-kv-cell';
-    const keyLabel = document.createElement('span');
-    keyLabel.className = 'advanced-kv-label';
-    keyLabel.textContent = 'Key';
-    keyCell.appendChild(keyLabel);
-    keyCell.appendChild(keyInput);
-
-    const valueCell = document.createElement('div');
-    valueCell.className = 'advanced-kv-cell';
-    const valueLabel = document.createElement('span');
-    valueLabel.className = 'advanced-kv-label';
-    valueLabel.textContent = 'Value';
-    valueCell.appendChild(valueLabel);
-    valueCell.appendChild(valueInput);
-
-    row.appendChild(keyCell);
-    row.appendChild(valueCell);
-    row.appendChild(del);
-    list.appendChild(row);
-  });
-
-  const add = document.createElement('button');
-  add.textContent = 'Add Advanced Field';
-  add.addEventListener('click', () => {
-    rememberUndoSnapshot();
-    section.fields.push({ key: '', value: '' });
-    setDirty(true);
-    renderActiveTab();
-  });
-
-  wrap.appendChild(list);
-  wrap.appendChild(add);
-  return wrap;
 }
 
 function createSectionFromTemplate(tabKey) {
@@ -20029,12 +21222,39 @@ function addSection(tab, tabKey) {
   renderActiveTab();
 }
 
+function deleteSelectedSection(tab, tabKey) {
+  if (!tab || !tab.model || !Array.isArray(tab.model.sections) || tab.model.sections.length <= 0) return;
+  const selectedIndex = Math.max(0, Math.min(state.sectionSelection[tabKey] || 0, tab.model.sections.length - 1));
+  rememberUndoSnapshot();
+  tab.model.sections.splice(selectedIndex, 1);
+  state.sectionSelection[tabKey] = Math.max(0, selectedIndex - 1);
+  setDirty(true);
+  renderActiveTab();
+}
+
+function syncSectionStickyOffsets(container, header) {
+  if (!container || !header) return;
+  window.requestAnimationFrame(() => {
+    if (!container.isConnected || !header.isConnected) return;
+    const headerHeight = Math.ceil(header.getBoundingClientRect().height || 0);
+    const stickyInsetPx = 3;
+    if (headerHeight > 0) {
+      container.style.setProperty('--sticky-search-top', `${headerHeight + stickyInsetPx}px`);
+    } else {
+      container.style.removeProperty('--sticky-search-top');
+    }
+  });
+}
+
 function renderSectionTab(tab, tabKey) {
   const schema = SECTION_SCHEMAS[tabKey];
+  const useCompactEntityActions = tabKey === 'districts' || tabKey === 'wonders' || tabKey === 'naturalWonders';
   const sourceMeta = getSectionTabSourceMeta(tab);
   const sourceFile = compactPathFromCiv3Root(sourceMeta.readPath || sourceMeta.writePath) || '(not found)';
   const districtCompatibility = tabKey === 'districts' ? collectDistrictCompatibilityIssuesForTab(tab) : null;
   const districtIssueIndexes = tabKey === 'districts' ? collectDistrictIssueIndexes(tab, districtCompatibility) : null;
+  const wonderCompatibility = tabKey === 'wonders' ? collectWonderCompatibilityIssuesForTab(tab) : null;
+  const wonderIssueIndexes = tabKey === 'wonders' ? collectWonderIssueIndexes(tab, wonderCompatibility) : null;
   const wrap = document.createElement('div');
   wrap.className = 'section-editor';
 
@@ -20043,12 +21263,31 @@ function renderSectionTab(tab, tabKey) {
   header.appendChild(createIcon(TAB_ICONS[tabKey]));
   header.insertAdjacentHTML('beforeend', `<h3>${tab.title}</h3><span class="source-tag">effective: ${prettySourceLabel(tab.effectiveSource)}</span>`);
 
-  const addSectionBtn = document.createElement('button');
-  addSectionBtn.textContent = `Add ${schema.entityName}`;
-  addSectionBtn.className = 'add-section';
-  addSectionBtn.addEventListener('click', () => addSection(tab, tabKey));
+  if (useCompactEntityActions) {
+    const actionRow = document.createElement('div');
+    actionRow.className = 'reference-entity-actions section-header-actions';
+    const addSectionBtn = document.createElement('button');
+    addSectionBtn.type = 'button';
+    addSectionBtn.className = 'ghost action-add';
+    addSectionBtn.textContent = '+ Add';
+    addSectionBtn.addEventListener('click', () => addSection(tab, tabKey));
+    actionRow.appendChild(addSectionBtn);
 
-  header.appendChild(addSectionBtn);
+    const deleteSectionBtn = document.createElement('button');
+    deleteSectionBtn.type = 'button';
+    deleteSectionBtn.className = 'ghost action-delete';
+    deleteSectionBtn.innerHTML = '<span class="btn-icon">🗑</span>Delete';
+    deleteSectionBtn.disabled = !tab.model || !Array.isArray(tab.model.sections) || tab.model.sections.length <= 0;
+    deleteSectionBtn.addEventListener('click', () => deleteSelectedSection(tab, tabKey));
+    actionRow.appendChild(deleteSectionBtn);
+    header.appendChild(actionRow);
+  } else {
+    const addSectionBtn = document.createElement('button');
+    addSectionBtn.textContent = `Add ${schema.entityName}`;
+    addSectionBtn.className = 'add-section';
+    addSectionBtn.addEventListener('click', () => addSection(tab, tabKey));
+    header.appendChild(addSectionBtn);
+  }
   wrap.appendChild(header);
 
   const helper = document.createElement('p');
@@ -20067,6 +21306,14 @@ function renderSectionTab(tab, tabKey) {
       filtered.textContent = `Scenario fallback filtered incompatible default districts: kept ${tab.filteredFromDefault.keptCount} of ${tab.filteredFromDefault.originalCount}.`;
       wrap.appendChild(filtered);
     }
+  } else if (tabKey === 'wonders') {
+    if (tab.filteredFromScenarioFallback && tab.filteredFromScenarioFallback.applied) {
+      const filtered = document.createElement('p');
+      filtered.className = 'warning';
+      const sourceLabel = String(tab.filteredFromScenarioFallback.source || '').trim() || 'effective';
+      filtered.textContent = `Scenario fallback filtered incompatible ${sourceLabel} wonder districts: kept ${tab.filteredFromScenarioFallback.keptCount} of ${tab.filteredFromScenarioFallback.originalCount}.`;
+      wrap.appendChild(filtered);
+    }
   }
 
   const listFilterRow = document.createElement('div');
@@ -20079,7 +21326,6 @@ function renderSectionTab(tab, tabKey) {
   listFilterRow.appendChild(listSearch);
   wrap.appendChild(listFilterRow);
 
-  const schemaKeys = new Set(schema.fields.map((f) => f.key));
   const selectedIndex = Math.max(0, Math.min(state.sectionSelection[tabKey] || 0, Math.max(0, tab.model.sections.length - 1)));
   state.sectionSelection[tabKey] = selectedIndex;
 
@@ -20176,6 +21422,8 @@ function renderSectionTab(tab, tabKey) {
         `${formatSourceInfo(getSectionTabSourceMeta(tab), 'C3X Config')}\nDisplay Name: ${districtDisplay.primary}\nInternal Name: ${districtDisplay.secondary || '(same as display)'}\nTooltip: ${districtDisplay.tooltip || '(not set)'}`
       );
     } else if (tabKey === 'wonders' || tabKey === 'naturalWonders') {
+      const hasSectionIssue = tabKey === 'wonders' && !!(wonderIssueIndexes && wonderIssueIndexes.has(sectionIndex));
+      if (hasSectionIssue) itemBtn.classList.add('district-entry-item-has-issue');
       const thumb = document.createElement('span');
       thumb.className = 'entry-thumb district-entry-thumb section-entry-thumb-large';
       itemBtn.appendChild(thumb);
@@ -20194,6 +21442,13 @@ function renderSectionTab(tab, tabKey) {
         });
       }
       itemBtn.insertAdjacentHTML('beforeend', `<strong>${sectionTitle}</strong>`);
+      if (hasSectionIssue) {
+        const issueBadge = document.createElement('span');
+        issueBadge.className = 'district-issue-badge';
+        issueBadge.textContent = '⚠';
+        issueBadge.title = 'This wonder district has unresolved config references.';
+        itemBtn.appendChild(issueBadge);
+      }
     } else {
       itemBtn.innerHTML = `<strong>${sectionTitle}</strong>`;
     }
@@ -20234,7 +21489,12 @@ function renderSectionTab(tab, tabKey) {
     empty.className = 'section-card';
     empty.innerHTML = `<p class="hint">No ${schema.entityName.toLowerCase()} entries yet.</p>`;
     const addFirst = document.createElement('button');
-    addFirst.textContent = `Add ${schema.entityName}`;
+    if (useCompactEntityActions) {
+      addFirst.className = 'ghost action-add';
+      addFirst.textContent = '+ Add';
+    } else {
+      addFirst.textContent = `Add ${schema.entityName}`;
+    }
     addFirst.addEventListener('click', () => addSection(tab, tabKey));
     empty.appendChild(addFirst);
     detailPane.appendChild(empty);
@@ -20265,16 +21525,6 @@ function renderSectionTab(tab, tabKey) {
       );
     }
 
-    const removeSectionBtn = document.createElement('button');
-    withRemoveIcon(removeSectionBtn, ` Remove ${schema.entityName}`);
-    removeSectionBtn.addEventListener('click', () => {
-      rememberUndoSnapshot();
-      tab.model.sections.splice(selectedIndex, 1);
-      state.sectionSelection[tabKey] = Math.max(0, selectedIndex - 1);
-      setDirty(true);
-      renderActiveTab();
-    });
-    top.appendChild(removeSectionBtn);
     card.appendChild(top);
     if (tabKey === 'districts') {
       const warningLines = [];
@@ -20307,11 +21557,43 @@ function renderSectionTab(tab, tabKey) {
         warningBox.appendChild(warningList);
         card.appendChild(warningBox);
       }
+    } else if (tabKey === 'wonders') {
+      const warningLines = [];
+      const wonderValidationError = validateWonderSection(section, selectedIndex);
+      if (wonderValidationError) {
+        warningLines.push(wonderValidationError);
+      }
+      const sectionIssues = wonderCompatibility && wonderCompatibility.bySection
+        ? wonderCompatibility.bySection.get(selectedIndex)
+        : null;
+      if (sectionIssues && sectionIssues.length > 0) {
+        sectionIssues.forEach((issue) => {
+          warningLines.push(`${issue.label}: ${issue.invalidValues.join(', ')}`);
+        });
+      }
+      if (warningLines.length > 0) {
+        const warningBox = document.createElement('div');
+        warningBox.className = 'district-warning-box';
+        const warningTitle = document.createElement('div');
+        warningTitle.className = 'district-warning-title';
+        warningTitle.textContent = 'Warning';
+        warningBox.appendChild(warningTitle);
+        const warningList = document.createElement('ul');
+        warningList.className = 'district-warning-list';
+        warningLines.forEach((line) => {
+          const item = document.createElement('li');
+          item.textContent = line;
+          warningList.appendChild(item);
+        });
+        warningBox.appendChild(warningList);
+        card.appendChild(warningBox);
+      }
     }
 
     const refreshPreviews = (() => {
       const previewWrap = document.createElement('div');
       previewWrap.className = 'preview-wrap';
+      if (tabKey === 'naturalWonders') previewWrap.classList.add('natural-wonder-preview-wrap');
       card.appendChild(previewWrap);
       if (tabKey === 'districts') {
         const refreshDistrict = () => {
@@ -20320,35 +21602,6 @@ function renderSectionTab(tab, tabKey) {
         };
         refreshDistrict();
         return refreshDistrict;
-      }
-      if (tabKey === 'animations') {
-        const previewTools = document.createElement('div');
-        previewTools.className = 'preview-tools';
-        const sizeLabel = document.createElement('label');
-        sizeLabel.className = 'preview-size-label';
-        sizeLabel.textContent = 'Preview Size';
-        const sizeValue = document.createElement('span');
-        sizeValue.className = 'preview-size-value';
-        sizeValue.textContent = `${state.previewSize}px`;
-        const sizeSlider = document.createElement('input');
-        sizeSlider.type = 'range';
-        sizeSlider.min = '120';
-        sizeSlider.max = '420';
-        sizeSlider.step = '10';
-        sizeSlider.value = String(state.previewSize);
-        sizeSlider.addEventListener('input', () => {
-          state.previewSize = Number.parseInt(sizeSlider.value, 10) || 220;
-          sizeValue.textContent = `${state.previewSize}px`;
-          card.style.setProperty('--preview-size', `${state.previewSize}px`);
-          card.querySelectorAll('canvas.preview-canvas').forEach((c) => {
-            c.style.width = `${state.previewSize}px`;
-            c.style.height = 'auto';
-          });
-        });
-        previewTools.appendChild(sizeLabel);
-        previewTools.appendChild(sizeSlider);
-        previewTools.appendChild(sizeValue);
-        card.insertBefore(previewTools, previewWrap);
       }
       const refresh = () => {
         const scopedKey = JSON.stringify({ tabKey, section: section.fields });
@@ -20367,7 +21620,7 @@ function renderSectionTab(tab, tabKey) {
 
     const previewFieldKeysByTab = {
       districts: new Set(['img_paths', 'custom_width', 'custom_height']),
-      wonders: new Set(['img_path', 'img_row', 'img_column', 'img_construct_row', 'img_construct_column', 'custom_width', 'custom_height']),
+      wonders: new Set(['img_path', 'img_row', 'img_column', 'img_construct_row', 'img_construct_column', 'enable_img_alt_dir', 'img_alt_dir_construct_row', 'img_alt_dir_construct_column', 'img_alt_dir_row', 'img_alt_dir_column', 'custom_width', 'custom_height']),
       naturalWonders: new Set(['img_path', 'img_row', 'img_column', 'animation', 'custom_width', 'custom_height']),
       animations: new Set(['ini_path', 'frame_time_seconds'])
     };
@@ -20375,7 +21628,21 @@ function renderSectionTab(tab, tabKey) {
 
     const form = document.createElement('div');
     form.className = 'form-grid';
-    const orderedSchemaFields = orderSectionFieldsByDocs(schema.fields, tab.fieldDocs);
+    let orderedSchemaFields = orderSectionFieldsByDocs(schema.fields, tab.fieldDocs);
+    orderedSchemaFields = applyPreferredSectionFieldOrder(tabKey, orderedSchemaFields);
+    if (tabKey === 'wonders' && !parseConfigBool(getFieldValue(section, 'enable_img_alt_dir'))) {
+      const hiddenAltKeys = new Set([
+        'img_alt_dir_construct_row',
+        'img_alt_dir_construct_column',
+        'img_alt_dir_row',
+        'img_alt_dir_column'
+      ]);
+      orderedSchemaFields = orderedSchemaFields.filter((field) => !hiddenAltKeys.has(String(field && field.key || '')));
+    }
+    if (tabKey === 'animations') {
+      const animationType = normalizeConfigToken(getFieldValue(section, 'type')).toLowerCase();
+      orderedSchemaFields = orderedSchemaFields.filter((field) => shouldShowAnimationFieldForType(field && field.key, animationType));
+    }
     orderedSchemaFields
       .forEach((schemaField) => {
       form.appendChild(renderKnownField(section, schemaField, tab.fieldDocs, (key, value) => {
@@ -20420,6 +21687,21 @@ function renderSectionTab(tab, tabKey) {
           renderActiveTab({ preserveTabScroll: true });
           return;
         }
+        if (tabKey === 'wonders' && key === 'enable_img_alt_dir') {
+          renderActiveTab({ preserveTabScroll: true });
+          return;
+        }
+        if (tabKey === 'animations' && key === 'type') {
+          state.tabContentScrollTop = el.tabContent ? el.tabContent.scrollTop : state.tabContentScrollTop;
+          renderActiveTab({ preserveTabScroll: true });
+          return;
+        }
+        if (tabKey === 'naturalWonders' && key === 'adjacency_dir') {
+          syncNaturalWonderAnimationDirections(section);
+          refreshPreviews();
+          renderActiveTab({ preserveTabScroll: true });
+          return;
+        }
         if (previewFields.has(key)) {
           refreshPreviews();
         }
@@ -20427,9 +21709,6 @@ function renderSectionTab(tab, tabKey) {
       }));
       });
     card.appendChild(form);
-    if (tabKey !== 'districts') {
-      card.appendChild(renderAdvancedFields(section, schemaKeys));
-    }
     detailPane.appendChild(card);
   }
 
@@ -20440,13 +21719,7 @@ function renderSectionTab(tab, tabKey) {
     detailPane.scrollTop = savedDetailTop;
   });
 
-  if (isScenarioMode() && tabKey !== 'districts') {
-    const warning = document.createElement('p');
-    warning.className = 'warning';
-    warning.textContent = 'This tab is replacement-based in Scenario mode: scenario file replaces user/default content.';
-    wrap.appendChild(warning);
-  }
-
+  syncSectionStickyOffsets(wrap, header);
   return wrap;
 }
 
@@ -20592,9 +21865,10 @@ async function loadBundleAndRender(options = {}) {
     if (bundle && bundle.tabs && bundle.tabs.districts && bundle.tabs.districts.model && Array.isArray(bundle.tabs.districts.model.sections)) {
       // Always backfill known district defaults first so fallback scenarios retain expected art/flags.
       applySpecialDistrictDefaultsToSections(bundle.tabs.districts.model.sections);
-      if (state.settings.mode === 'scenario') {
-        filterDistrictSectionsForScenarioFallback(bundle);
-      }
+    }
+    if (bundle && state.settings.mode === 'scenario') {
+      filterDistrictSectionsForScenarioFallback(bundle);
+      filterWonderSectionsForScenarioFallback(bundle);
     }
 
     const previousActiveTab = state.activeTab;

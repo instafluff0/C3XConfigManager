@@ -2205,6 +2205,10 @@ button.danger:hover {
   margin: 0;
 }
 
+.section-header-actions {
+  margin-left: auto;
+}
+
 .source-tag {
   background: #f2f4ff;
   border: 1px solid #d7def6;
@@ -2460,6 +2464,21 @@ button.danger:hover {
   margin: 6px 0 8px;
 }
 
+.preview-alt-group {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.preview-alt-group-title {
+  flex: 0 0 100%;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #6a5a23;
+}
+
 .preview-wrap.compact {
   margin: 0;
 }
@@ -2514,6 +2533,59 @@ button.danger:hover {
   margin-top: 4px;
   font-size: 0.66rem;
   color: #5b668b;
+}
+
+.natural-animation-spec-list {
+  display: grid;
+  gap: 6px;
+}
+
+.natural-animation-spec-card {
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(73, 69, 98, 0.14);
+  border-radius: 10px;
+}
+
+.natural-animation-spec-card .section-top {
+  margin-bottom: 0;
+}
+
+.natural-animation-spec-card .section-top strong {
+  font-size: 0.78rem;
+}
+
+.natural-animation-spec-card .hint {
+  font-size: 0.7rem;
+}
+
+.natural-animation-spec-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 8px;
+}
+
+.natural-animation-readonly-chips {
+  margin-top: 4px;
+}
+
+.natural-animation-readonly-chips .segmented-multi-btn {
+  cursor: default;
+}
+
+.natural-animation-hours-grid {
+  margin-top: 4px;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.natural-animation-hours-grid .segmented-multi-btn {
+  min-height: 24px;
+  padding: 3px 6px;
+  font-size: 0.68rem;
 }
 
 .reference-detail-layout {
@@ -4812,10 +4884,11 @@ details > summary:focus-visible {
   padding-top: 4px;
 }
 
-.advanced-wrap summary {
+.advanced-fields-title {
+  margin: 0 0 6px 0;
   font-weight: 700;
   color: var(--ink-dim);
-  margin-bottom: 6px;
+  font-size: 0.9rem;
 }
 
 .workspace .tab-content {

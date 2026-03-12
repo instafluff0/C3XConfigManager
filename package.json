@@ -15,6 +15,7 @@
   },
   "build": {
     "appId": "com.nacdobbins.c3xconfigmanager",
+    "icon": "build/icon.png",
     "files": [
       "main.js",
       "preload.js",

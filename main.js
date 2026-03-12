@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, shell, nativeImage } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadBundle, saveBundle, previewSavePlan, previewFileDiff, createScenario } = require('./src/configCore');
@@ -6,11 +6,24 @@ const { getPreview } = require('./src/artPreview');
 
 const APP_SETTINGS_FILE = 'settings.json';
 const APP_NAME = 'Civ 3 C3X Modern Configuration Manager';
+const DEV_APP_ICON_PATH = path.join(__dirname, 'build', 'icon.png');
 const JAVA_BIN_RELATIVE_PATHS = process.platform === 'win32'
   ? [path.join('bin', 'javaw.exe'), path.join('bin', 'java.exe')]
   : [path.join('bin', 'java')];
 
 app.setName(APP_NAME);
+app.name = APP_NAME;
+
+function applyAppIdentity() {
+  app.setName(APP_NAME);
+  app.name = APP_NAME;
+  if (process.platform === 'darwin') {
+    app.setAboutPanelOptions({
+      applicationName: APP_NAME,
+      applicationVersion: app.getVersion()
+    });
+  }
+}
 
 function getSettingsPathUnsafe() {
   try {
@@ -187,12 +200,14 @@ function writeJson(filePath, data) {
 }
 
 function createWindow() {
+  const windowIcon = fs.existsSync(DEV_APP_ICON_PATH) ? DEV_APP_ICON_PATH : undefined;
   const win = new BrowserWindow({
     width: 1480,
     height: 960,
     minWidth: 1180,
     minHeight: 760,
     title: 'Civ 3 | C3X Modern Configuration Manager',
+    icon: windowIcon,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -265,8 +280,23 @@ function buildAppMenu() {
     ]
   };
 
+  const appMenu = {
+    label: APP_NAME,
+    submenu: [
+      { role: 'about' },
+      { type: 'separator' },
+      { role: 'services' },
+      { type: 'separator' },
+      { role: 'hide' },
+      { role: 'hideOthers' },
+      { role: 'unhide' },
+      { type: 'separator' },
+      { role: 'quit' }
+    ]
+  };
+
   const template = [
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
+    ...(process.platform === 'darwin' ? [appMenu] : []),
     fileMenu,
     { role: 'editMenu' },
     { role: 'viewMenu' },
@@ -276,6 +306,10 @@ function buildAppMenu() {
 }
 
 app.whenReady().then(() => {
+  applyAppIdentity();
+  if (process.platform === 'darwin' && fs.existsSync(DEV_APP_ICON_PATH)) {
+    app.dock.setIcon(nativeImage.createFromPath(DEV_APP_ICON_PATH));
+  }
   buildAppMenu();
   createWindow();
 
