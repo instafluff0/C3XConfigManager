@@ -61,6 +61,8 @@ const state = {
   biqMapArtLoading: {},
   biqMapTerritoryEdgeCache: new Map(),
   biqMapNtpColorCache: {},
+  biqMapColoredUnitIconCache: new Map(),
+  biqMapColoredStartLocCache: new Map(),
   previewCache: new Map(),
   districtRepresentativePreviewPending: new Map(),
   unitAnimationUiByKey: {},
@@ -16809,17 +16811,14 @@ function colorFromCivSlot(slot, fallback = null) {
   const idx = ((Number(slot) % 32) + 32) % 32;
   const cached = state.biqMapNtpColorCache && state.biqMapNtpColorCache[idx];
   if (cached) return cached;
-  const canvas = state.biqMapArtCache && state.biqMapArtCache[`ntp-${idx}`];
-  if (canvas && typeof canvas.getContext === 'function') {
-    try {
-      const ctx = canvas.getContext('2d');
-      const px = ctx.getImageData(0, 0, 1, 1).data;
-      const css = `rgb(${px[0]}, ${px[1]}, ${px[2]})`;
-      state.biqMapNtpColorCache[idx] = css;
-      return css;
-    } catch (_err) {
-      // fall back below
-    }
+  const ntpPalette = state.biqMapArtCache && state.biqMapArtCache[`ntp-${idx}`];
+  if (ntpPalette && ntpPalette.length >= 3) {
+    // NTP palette is a 768-byte array (256 × RGB). Use palette index 7 as the
+    // representative civ color — it sits in the middle of the civ color ramp.
+    const base = 7 * 3;
+    const css = `rgb(${ntpPalette[base]}, ${ntpPalette[base + 1]}, ${ntpPalette[base + 2]})`;
+    state.biqMapNtpColorCache[idx] = css;
+    return css;
   }
   if (fallback) return fallback;
   return colorFromNumber(idx);
@@ -16845,6 +16844,30 @@ function rgbaToCanvas(preview) {
   return canvas;
 }
 
+function biqMapArtRerender() {
+  if (state.biqMapRerenderPending) return;
+  state.biqMapRerenderPending = true;
+  window.requestAnimationFrame(() => {
+    state.biqMapRerenderPending = false;
+    const mapOverlay = ensureMapModalNode();
+    if (mapModal.tab && mapModal.tileSection && !mapOverlay.classList.contains('hidden')) {
+      renderMapModalBody();
+      return;
+    }
+    if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs[state.activeTab] || state.bundle.tabs[state.activeTab].type !== 'map') {
+      return;
+    }
+    renderActiveTab({ preserveTabScroll: true });
+  });
+}
+
+function decodeBase64ToUint8(b64) {
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) arr[i] = bin.charCodeAt(i);
+  return arr;
+}
+
 function requestBiqMapArtAsset(assetKey, assetPath, previewOptions = null) {
   if (!state.settings || !state.settings.civ3Path) return;
   if (state.biqMapArtCache[assetKey] || state.biqMapArtLoading[assetKey]) return;
@@ -16862,6 +16885,8 @@ function requestBiqMapArtAsset(assetKey, assetPath, previewOptions = null) {
       const canvas = rgbaToCanvas(res);
       if (canvas) {
         state.biqMapArtCache[assetKey] = canvas;
+        if (res.indicesBase64) state.biqMapArtCache[`${assetKey}Indices`] = decodeBase64ToUint8(res.indicesBase64);
+        if (res.paletteBase64) state.biqMapArtCache[`${assetKey}Palette`] = decodeBase64ToUint8(res.paletteBase64);
         appendDebugLog('biq-map:asset-load-ok', { assetKey, width: canvas.width, height: canvas.height, sourcePath: res.sourcePath });
       } else {
         appendDebugLog('biq-map:asset-load-decode-failed', { assetKey });
@@ -16870,24 +16895,33 @@ function requestBiqMapArtAsset(assetKey, assetPath, previewOptions = null) {
       appendDebugLog('biq-map:asset-load-error', { assetKey, error: res && res.error });
     }
   }).catch(() => {
-    // best effort
     appendDebugLog('biq-map:asset-load-exception', { assetKey });
   }).finally(() => {
     delete state.biqMapArtLoading[assetKey];
-    if (state.biqMapRerenderPending) return;
-    state.biqMapRerenderPending = true;
-    window.requestAnimationFrame(() => {
-      state.biqMapRerenderPending = false;
-      const mapOverlay = ensureMapModalNode();
-      if (mapModal.tab && mapModal.tileSection && !mapOverlay.classList.contains('hidden')) {
-        renderMapModalBody();
-        return;
-      }
-      if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs[state.activeTab] || state.bundle.tabs[state.activeTab].type !== 'map') {
-        return;
-      }
-      renderActiveTab({ preserveTabScroll: true });
-    });
+    biqMapArtRerender();
+  });
+}
+
+function requestBiqMapNtpPalette(slot, assetPath) {
+  if (!state.settings || !state.settings.civ3Path) return;
+  const key = `ntp-${slot}`;
+  if (state.biqMapArtCache[key] || state.biqMapArtLoading[key]) return;
+  state.biqMapArtLoading[key] = true;
+  window.c3xManager.getPreview({
+    kind: 'pcxPalette',
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths(),
+    assetPath
+  }).then((res) => {
+    if (res && res.ok && res.paletteBase64) {
+      // Store the raw 768-byte palette (256 × RGB). Truthy, so territory border
+      // sentinel checks continue to work.
+      state.biqMapArtCache[key] = decodeBase64ToUint8(res.paletteBase64);
+    }
+  }).catch(() => {}).finally(() => {
+    delete state.biqMapArtLoading[key];
+    biqMapArtRerender();
   });
 }
 
@@ -17847,7 +17881,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     requestBiqMapArtAsset(`terrain-${idx}`, assetPath);
   });
   requestBiqMapArtAsset('resources', 'Art/resources.pcx');
-  requestBiqMapArtAsset('units32', 'Art/Units/units_32.pcx');
+  requestBiqMapArtAsset('units32', 'Art/Units/units_32.pcx', { returnIndexed: true });
   requestBiqMapArtAsset('terrainBuildings', 'Art/Terrain/TerrainBuildings.PCX');
   requestBiqMapArtAsset('roads', 'Art/Terrain/roads.pcx');
   requestBiqMapArtAsset('railroads', 'Art/Terrain/railroads.pcx');
@@ -17873,6 +17907,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   requestBiqMapArtAsset('jungleVolcanos', 'Art/Terrain/Volcanos jungles.pcx');
   requestBiqMapArtAsset('mtnRivers', 'Art/Terrain/mtnRivers.pcx');
   requestBiqMapArtAsset('deltaRivers', 'Art/Terrain/deltaRivers.pcx');
+  requestBiqMapArtAsset('marsh', 'Art/Terrain/marsh.pcx');
+  requestBiqMapArtAsset('victoryPoint', 'Art/Terrain/x_victory.pcx');
+  requestBiqMapArtAsset('startLoc', 'Art/Terrain/StartLoc.pcx', { returnIndexed: true });
   requestBiqMapArtAsset('cityAmerc', 'Art/Cities/rAMER.pcx');
   requestBiqMapArtAsset('cityEuro', 'Art/Cities/rEURO.pcx');
   requestBiqMapArtAsset('cityRoman', 'Art/Cities/rROMAN.pcx');
@@ -17884,9 +17921,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   requestBiqMapArtAsset('cityMidEastWall', 'Art/Cities/MIDEASTWALL.pcx');
   requestBiqMapArtAsset('cityAsianWall', 'Art/Cities/ASIANWALL.pcx');
   for (let i = 0; i < 32; i += 1) {
-    const key = `ntp-${i}`;
     const file = `Art/Units/Palettes/ntp${String(i).padStart(2, '0')}.pcx`;
-    requestBiqMapArtAsset(key, file);
+    requestBiqMapNtpPalette(i, file);
   }
 
   const goodSection = (tab.sections || []).find((s) => s.code === 'GOOD');
@@ -17900,6 +17936,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   (prtoSection?.records || []).forEach((record, idx) => {
     prtoIndexByName[String(record.name || '').trim().toLowerCase()] = idx;
     prtoIconById[idx] = parseIntLoose(getFieldByBaseKey(record, 'iconindex')?.value, -1);
+  });
+  const bldgSection = (tab.sections || []).find((s) => s.code === 'BLDG');
+  const capitalBuildingIds = new Set();
+  (bldgSection?.records || []).forEach((record, idx) => {
+    const raw = String(getFieldByBaseKey(record, 'centerofempire')?.value || '').trim().toLowerCase();
+    if (raw === '1' || raw === 'true' || raw === 'yes') capitalBuildingIds.add(idx);
   });
   const citySection = (tab.sections || []).find((s) => s.code === 'CITY');
   const cityRecordById = {};
@@ -17925,6 +17967,15 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const key = `${ux},${uy}`;
       if (!unitRecordsByCoord.has(key)) unitRecordsByCoord.set(key, []);
       unitRecordsByCoord.get(key).push(record);
+    }
+  });
+  const slocSection = (tab.sections || []).find((s) => s.code === 'SLOC');
+  const slocRecordsByCoord = new Map();
+  (slocSection?.records || []).forEach((record) => {
+    const lx = parseIntLoose(getFieldByBaseKey(record, 'x')?.value, NaN);
+    const ly = parseIntLoose(getFieldByBaseKey(record, 'y')?.value, NaN);
+    if (Number.isFinite(lx) && Number.isFinite(ly)) {
+      slocRecordsByCoord.set(`${lx},${ly}`, record);
     }
   });
   const raceSection = (tab.sections || []).find((s) => s.code === 'RACE');
@@ -18892,9 +18943,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const row = Math.floor(iconIdx / cols);
     if ((col * cellW + cellW) > atlas.width || (row * cellH + cellH) > atlas.height) return;
     const tileScale = tileW / 128;
-    const size = Math.max(8, Math.round(44 * tileScale));
+    const size = Math.max(8, Math.round(50 * tileScale));
     const dx = sx + Math.round(40 * tileScale);
-    const dy = sy + Math.round(10 * tileScale);
+    const dy = sy + Math.round(9 * tileScale);
     ctx.drawImage(atlas, col * cellW, row * cellH, cellW, cellH, dx, dy, size, size);
   };
 
@@ -18917,14 +18968,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!Number.isFinite(unitId)) return;
     const iconIdx = prtoIconById[unitId];
     if (!Number.isFinite(iconIdx) || iconIdx < 0) return;
-    const cols = 14;
     const cellW = 32;
     const cellH = 32;
     const step = 33;
+    // Quint: iconWidth = (units32.getWidth()-1)/32 (integer division)
+    const cols = Math.floor((atlas.width - 1) / 32);
     const col = iconIdx % cols;
     const row = Math.floor(iconIdx / cols);
-    const srcX = col * step;
-    const srcY = row * step;
+    // Quint: srcX = (iconX*32)+1+iconX = iconX*33+1, same for Y
+    const srcX = col * step + 1;
+    const srcY = row * step + 1;
     if (srcX + cellW > atlas.width || srcY + cellH > atlas.height) return;
     const tileScale = tileW / 128;
     const size = Math.max(12, Math.round(40 * tileScale));
@@ -18950,37 +19003,72 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       ? { r: Number(rgbMatch[1]), g: Number(rgbMatch[2]), b: Number(rgbMatch[3]) }
       : { r: 170, g: 170, b: 170 };
 
-    const unitCanvas = document.createElement('canvas');
-    unitCanvas.width = cellW;
-    unitCanvas.height = cellH;
-    const unitCtx = unitCanvas.getContext('2d');
-    unitCtx.drawImage(atlas, srcX, srcY, cellW, cellH, 0, 0, cellW, cellH);
-    unitCtx.globalCompositeOperation = 'source-atop';
-    unitCtx.fillStyle = `rgba(${rgba.r}, ${rgba.g}, ${rgba.b}, 0.48)`;
-    unitCtx.fillRect(0, 0, cellW, cellH);
-    unitCtx.globalCompositeOperation = 'source-over';
-    ctx.drawImage(unitCanvas, 0, 0, cellW, cellH, dx, dy, size, size);
+    const ntpSlot = ownerSlot;
+    const cacheKey = `${iconIdx}-${ntpSlot}`;
+    let coloredIcon = state.biqMapColoredUnitIconCache.get(cacheKey);
+    if (!coloredIcon) {
+      const units32Indices = state.biqMapArtCache.units32Indices;
+      const units32Palette = state.biqMapArtCache.units32Palette;
+      const ntpPalette = state.biqMapArtCache[`ntp-${ntpSlot}`];
+      const atlasW = atlas.width;
+      const unitCanvas = document.createElement('canvas');
+      unitCanvas.width = cellW;
+      unitCanvas.height = cellH;
+      const unitCtx = unitCanvas.getContext('2d');
+      if (units32Indices && units32Palette && ntpPalette) {
+        const imgData = unitCtx.createImageData(cellW, cellH);
+        const px = imgData.data;
+        for (let py = 0; py < cellH; py++) {
+          for (let px2 = 0; px2 < cellW; px2++) {
+            const palIdx = units32Indices[(srcY + py) * atlasW + (srcX + px2)];
+            let r, g, b, a;
+            if (palIdx === 255 || palIdx === 254) {
+              r = 0; g = 0; b = 0; a = 0;
+            } else {
+              const isCivColor = palIdx <= 14 || (palIdx >= 16 && palIdx <= 62 && (palIdx & 1) === 0);
+              const pal = isCivColor ? ntpPalette : units32Palette;
+              r = pal[palIdx * 3]; g = pal[palIdx * 3 + 1]; b = pal[palIdx * 3 + 2]; a = 255;
+            }
+            const di = (py * cellW + px2) * 4;
+            px[di] = r; px[di + 1] = g; px[di + 2] = b; px[di + 3] = a;
+          }
+        }
+        unitCtx.putImageData(imgData, 0, 0);
+        coloredIcon = unitCanvas;
+        state.biqMapColoredUnitIconCache.set(cacheKey, coloredIcon);
+      } else {
+        // NTP not loaded yet — draw from atlas without caching so we retry next frame
+        unitCtx.drawImage(atlas, srcX, srcY, cellW, cellH, 0, 0, cellW, cellH);
+        coloredIcon = unitCanvas;
+      }
+    }
+    ctx.drawImage(coloredIcon, 0, 0, cellW, cellH, dx, dy, size, size);
 
     if (size >= 10) {
       const dot = Math.max(3, Math.round(size * 0.15));
+      const cx = dx + dot + 1;
+      const cy = dy + dot + 1;
       ctx.fillStyle = `rgb(${rgba.r}, ${rgba.g}, ${rgba.b})`;
       ctx.beginPath();
-      ctx.arc(dx + dot + 1, dy + dot + 1, dot, 0, Math.PI * 2);
+      ctx.arc(cx, cy, dot, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = 'rgba(0,0,0,0.65)';
       ctx.lineWidth = 1;
       ctx.stroke();
-    }
-    if (stack.length > 1 && size >= 14) {
-      const label = String(stack.length);
-      ctx.font = `${Math.max(8, Math.round(size * 0.36))}px sans-serif`;
-      const tx = dx + size - Math.max(8, Math.round(size * 0.24));
-      const ty = dy + size - 2;
-      ctx.strokeStyle = 'rgba(0,0,0,0.8)';
-      ctx.lineWidth = 2;
-      ctx.strokeText(label, tx, ty);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText(label, tx, ty);
+      if (stack.length > 1) {
+        const label = String(stack.length);
+        const labelSize = Math.max(8, Math.round(dot * 2));
+        ctx.font = `bold ${labelSize}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+        ctx.lineWidth = 1;
+        ctx.strokeText(label, Math.round(cx), Math.round(cy));
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(label, Math.round(cx), Math.round(cy));
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+      }
     }
   };
 
@@ -19009,8 +19097,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     const culture = Number.isFinite(raceCultureById[civId]) ? raceCultureById[civId] : 2;
     let citySizeBucket = citySize > maxCity2Size ? 2 : (citySize > maxCity1Size ? 1 : 0);
-    const hasPalace = parseIntLoose(getFieldByBaseKey(cityRecord, 'haspalace')?.value, 0) !== 0;
-    if (citySizeBucket < 2 && hasPalace) citySizeBucket += 1;
+    const cityBuildingIds = String(getFieldByBaseKey(cityRecord, 'buildings')?.value || '')
+      .split(',').map((s) => parseIntLoose(s.trim(), -1)).filter((n) => n >= 0);
+    const isCapital = cityBuildingIds.some((id) => capitalBuildingIds.has(id));
+    if (citySizeBucket < 2 && isCapital) citySizeBucket += 1;
     const cityAge = Math.max(0, Math.min(3, era === 4 ? 3 : era));
     const cityCulture = culture < 0 ? 0 : Math.max(0, Math.min(4, culture));
     const noWallKeys = ['cityAmerc', 'cityEuro', 'cityRoman', 'cityMidEast', 'cityAsian'];
@@ -19051,15 +19141,52 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (!cityRecord) return;
     const cityName = String(getFieldByBaseKey(cityRecord, 'name')?.value || '').trim();
     if (!cityName) return;
+    const citySize = parseIntLoose(getFieldByBaseKey(cityRecord, 'size')?.value, 1);
+    const cityOwnerTypeRaw = String(getFieldRawValue(cityRecord, 'ownertype') || getFieldDisplayValue(cityRecord, 'ownertype') || '');
+    const cityOwnerRaw = String(getFieldRawValue(cityRecord, 'owner') || getFieldDisplayValue(cityRecord, 'owner') || '');
+    const cityCivId = resolveCivIdFromOwnership(cityOwnerTypeRaw, cityOwnerRaw);
+    const cityCivColorIdx = Number.isFinite(raceDefaultColorById[cityCivId]) ? raceDefaultColorById[cityCivId] : 0;
+    const cityOwnerColor = colorFromCivSlot(cityCivColorIdx);
+    const civRgb = parseRgbCss(cityOwnerColor) || { r: 128, g: 128, b: 128 };
+
     const tileScale = tileW / 128;
-    ctx.font = `${Math.max(8, Math.round(10 * tileScale))}px sans-serif`;
-    const tx = sx + Math.round(40 * tileScale);
-    const ty = sy + Math.round(64 * tileScale);
-    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-    ctx.lineWidth = 2;
-    ctx.strokeText(cityName, tx, ty);
-    ctx.fillStyle = '#f3f6ff';
-    ctx.fillText(cityName, tx, ty);
+    const fontSize = Math.max(10, Math.round(12 * tileScale));
+    const pad = Math.max(2, Math.round(3 * tileScale));
+    const rectH = fontSize + pad * 2;
+
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    const popStr = String(citySize);
+    const nameW = Math.ceil(ctx.measureText(cityName).width) + pad * 2;
+    const squareW = rectH;
+    const totalW = squareW + nameW;
+
+    const anchorX = Math.round(sx + tileW / 2);
+    const anchorY = Math.round(sy + 80 * tileScale);
+    const rectX = Math.round(anchorX - totalW / 2);
+    const rectY = anchorY;
+    const midY = Math.round(rectY + rectH / 2);
+
+    // Civ-colored population square
+    ctx.fillStyle = `rgb(${civRgb.r},${civRgb.g},${civRgb.b})`;
+    ctx.fillRect(rectX, rectY, squareW, rectH);
+
+    // Semi-transparent dark background for name
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(rectX + squareW, rectY, nameW, rectH);
+
+    // Population count centered in square — no stroke, background provides contrast
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#000000';
+    ctx.fillText(popStr, Math.round(rectX + squareW / 2), midY);
+
+    // City name in right portion — no stroke, dark background provides contrast
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(cityName, rectX + squareW + pad, midY);
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
   };
 
   const parseRgbCss = (css) => {
@@ -19105,7 +19232,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const g = px[i + 1];
       const b = px[i + 2];
       if (r === 177 && g === 177 && b === 177) {
-        px[i + 3] = 0;
+        px[i] = 0; px[i + 1] = 0; px[i + 2] = 0; px[i + 3] = 0;
         continue;
       }
       if (r === 255 && g === 0 && b === 0) {
@@ -19122,6 +19249,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       }
       if (r === 255 && g === 218 && b === 255) {
         px[i] = 0; px[i + 1] = 36; px[i + 2] = 0; px[i + 3] = 112;
+        continue;
+      }
+      // Zero out RGB of any remaining transparent pixel to prevent alpha-bleed fringe.
+      // Transparent pixels may still carry their original palette RGB (e.g. white for
+      // index 1/255) which bleeds into adjacent opaque pixels when the canvas is scaled.
+      if (px[i + 3] === 0) {
+        px[i] = 0; px[i + 1] = 0; px[i + 2] = 0;
       }
     }
     recolorCtx.putImageData(imageData, 0, 0);
@@ -19142,6 +19276,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 
   const drawTileFeatureOverlays = (record, geom, sx, sy, pass = 'all') => {
     if (!record || !geom) return;
+    // Quint draws all overlays relative to defaultYPosition = yPos*32, which is the vertical
+    // center of the tile diamond (sy + tileH/2). Base terrain uses yPos*32 - 32 (= sy).
+    const midY = sy + Math.floor(tileH / 2);
     const c3cOverlays = parseIntLoose(getFieldByBaseKey(record, 'c3coverlays')?.value, 0) >>> 0;
     const c3cBonuses = parseIntLoose(getFieldByBaseKey(record, 'c3cbonuses')?.value, 0) >>> 0;
     const hasRoad = (c3cOverlays & 0x00000001) === 0x00000001;
@@ -19201,7 +19338,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const isLandmark = (c3cBonuses & BIQ_TILE_BONUS.LANDMARK) === BIQ_TILE_BONUS.LANDMARK;
       if (realTerrain === BIQ_TERRAIN.HILLS) {
         const drawH = Math.max(1, Math.round(72 * scale));
-        const drawY = sy - Math.round(12 * scale);
+        const drawY = midY - Math.round(12 * scale);
         let hillSheet = state.biqMapArtCache.hills;
         if (isLandmark) hillSheet = state.biqMapArtCache.lmHills || hillSheet;
         else if (forestJungleVariant === BIQ_TERRAIN.FOREST) hillSheet = state.biqMapArtCache.forestHills || hillSheet;
@@ -19210,7 +19347,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         return;
       }
       const drawH = Math.max(1, Math.round(88 * scale));
-      const drawY = sy - Math.round(24 * scale);
+      const drawY = midY - Math.round(24 * scale);
       if (realTerrain === BIQ_TERRAIN.VOLCANO) {
         let volcanoSheet = state.biqMapArtCache.volcanos;
         if (forestJungleVariant === BIQ_TERRAIN.FOREST) volcanoSheet = state.biqMapArtCache.forestVolcanos || volcanoSheet;
@@ -19240,7 +19377,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         const srcX = col * cellW;
         const srcY = rowOffset * cellH;
         if (srcX + cellW > sheet.width || srcY + cellH > sheet.height) return false;
-        ctx.drawImage(sheet, srcX, srcY, cellW, cellH, sx, sy, tileW, drawH);
+        ctx.drawImage(sheet, srcX, srcY, cellW, cellH, sx, midY, tileW, drawH);
         return true;
       };
       if (realTerrain === BIQ_TERRAIN.JUNGLE) {
@@ -19308,7 +19445,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         const southTile = getTileAtCoord(geom.xPos - 1, geom.yPos + 1);
         const riverImageIndex = getRiverImageIndex(northTile, eastTile, null, southTile);
         if (riverImageIndex !== 0) {
-          drawSheetSprite(state.biqMapArtCache.mtnRivers, 4, 4, riverImageIndex, sx - stepX, sy);
+          drawSheetSprite(state.biqMapArtCache.mtnRivers, 4, 4, riverImageIndex, sx - stepX, midY);
         }
       }
       {
@@ -19325,7 +19462,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
             4,
             riverImageIndex,
             sx + stepX,
-            sy
+            midY
           );
         }
       }
@@ -19355,7 +19492,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       if (!nwBorder && !neBorder && !swBorder && !seBorder) return;
       const edges = getTerritoryEdgesForColor(borderColorId);
       if (!edges) return;
-      const drawY = sy - Math.round(12 * scale);
+      const drawY = midY - Math.round(12 * scale);
       const drawH = Math.max(1, Math.round(72 * scale));
       if (nwBorder && edges[0]) ctx.drawImage(edges[0], 0, 0, 128, 72, sx, drawY, tileW, drawH);
       if (neBorder && edges[2]) ctx.drawImage(edges[2], 0, 0, 128, 72, sx, drawY, tileW, drawH);
@@ -19366,16 +19503,22 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (pass === 'all' || pass === 'tall') {
       drawWoodlandOverlay();
       drawHillyTerrainOverlay();
+      // Marsh: drawn at defaultYPosition (midY), same as woodlands/hills in Quint.
+      // 8 variants chosen by (xPos + yPos) % 8; sheet layout is 4 cols × rows of 128×88 cells.
+      if (realTerrain === BIQ_TERRAIN.MARSH) {
+        const marshSheet = state.biqMapArtCache.marsh;
+        if (marshSheet) {
+          const variant = ((geom.xPos + geom.yPos) % 8 + 8) % 8;
+          const cellW = 128;
+          const cellH = 88;
+          const srcX = (variant % 4) * cellW;
+          const srcY = Math.floor(variant / 4) * cellH;
+          const drawH = Math.max(1, Math.round(cellH * scale));
+          ctx.drawImage(marshSheet, srcX, srcY, cellW, cellH, sx, midY, tileW, drawH);
+        }
+      }
     }
     if (pass === 'all' || pass === 'flat') {
-      if (hasRoad) {
-        const idx = calculateRoadImageIndex(geom, 0x00000001);
-        drawSheetSprite(state.biqMapArtCache.roads, 16, 16, idx, sx, sy);
-      }
-      if (hasRailroad) {
-        const idx = calculateRoadImageIndex(geom, 0x00000002);
-        drawSheetSprite(state.biqMapArtCache.railroads || state.biqMapArtCache.roads, 16, 16, idx, sx, sy);
-      }
       if (hasIrrigation) {
         const canDrawIrrigation = (
           realTerrain === BIQ_TERRAIN.DESERT
@@ -19389,20 +19532,37 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           if (realTerrain === BIQ_TERRAIN.DESERT) key = 'irrigationDesert';
           else if (realTerrain === BIQ_TERRAIN.PLAINS) key = 'irrigationPlains';
           else if (realTerrain === BIQ_TERRAIN.TUNDRA) key = 'irrigationTundra';
-          drawSheetSprite(state.biqMapArtCache[key], 4, 4, idx, sx, sy);
+          drawSheetSprite(state.biqMapArtCache[key], 4, 4, idx, sx, midY);
         }
+      }
+      if (hasRoad) {
+        const idx = calculateRoadImageIndex(geom, 0x00000001);
+        drawSheetSprite(state.biqMapArtCache.roads, 16, 16, idx, sx, midY);
+      }
+      if (hasRailroad) {
+        const idx = calculateRoadImageIndex(geom, 0x00000002);
+        drawSheetSprite(state.biqMapArtCache.railroads || state.biqMapArtCache.roads, 16, 16, idx, sx, midY);
       }
       if (hasMine || hasFort) {
         const sheet = state.biqMapArtCache.terrainBuildings;
         if (sheet) {
           const cols = sheet.width >= 512 ? 4 : 3;
           const rows = 4;
-          if (hasMine) drawSheetSprite(sheet, cols, rows, 6, sx, sy);
-          if (hasFort) drawSheetSprite(sheet, cols, rows, 0, sx, sy);
+          if (hasMine) drawSheetSprite(sheet, cols, rows, 6, sx, midY);
+          if (hasFort) drawSheetSprite(sheet, cols, rows, 0, sx, midY);
         }
       }
       drawRivers();
       drawTerritoryBorders();
+      // Victory point location: field value 0 = present, -1 = not present (Quint TILE.VICTORY_POINT_LOCATION_PRESENT = 0)
+      const vpl = parseIntLoose(getFieldByBaseKey(record, 'victorypointlocation')?.value, -1);
+      if (vpl === 0) {
+        const vpSheet = state.biqMapArtCache.victoryPoint;
+        if (vpSheet) {
+          const drawH = Math.max(1, Math.round(vpSheet.height * scale));
+          ctx.drawImage(vpSheet, 0, 0, vpSheet.width, vpSheet.height, sx, midY, tileW, drawH);
+        }
+      }
     }
   };
 
@@ -19434,6 +19594,57 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     ctx.lineTo(sx, sy + Math.floor(tileH / 2));
     ctx.closePath();
     ctx.fill();
+  };
+
+  const drawSlocOverlay = (geom, sx, sy) => {
+    if (!geom) return;
+    const slocRecord = slocRecordsByCoord.get(`${geom.xPos},${geom.yPos}`);
+    if (!slocRecord) return;
+    const slocOwnerTypeRaw = String(getFieldRawValue(slocRecord, 'ownertype') || getFieldDisplayValue(slocRecord, 'ownertype') || '');
+    const slocOwnerRaw = String(getFieldRawValue(slocRecord, 'owner') || getFieldDisplayValue(slocRecord, 'owner') || '');
+    const slocCivId = resolveCivIdFromOwnership(slocOwnerTypeRaw, slocOwnerRaw);
+    const slocColorIdx = ((Number.isFinite(raceDefaultColorById[slocCivId]) ? raceDefaultColorById[slocCivId] : 0) % 32 + 32) % 32;
+
+    let coloredStartLoc = state.biqMapColoredStartLocCache.get(slocColorIdx);
+    if (!coloredStartLoc) {
+      const sheet = state.biqMapArtCache.startLoc;
+      const startLocIndices = state.biqMapArtCache.startLocIndices;
+      const startLocPalette = state.biqMapArtCache.startLocPalette;
+      const ntpPalette = state.biqMapArtCache[`ntp-${slocColorIdx}`];
+      if (sheet && startLocIndices && startLocPalette && ntpPalette) {
+        const w = sheet.width;
+        const h = sheet.height;
+        const slCanvas = document.createElement('canvas');
+        slCanvas.width = w;
+        slCanvas.height = h;
+        const slCtx = slCanvas.getContext('2d');
+        const imgData = slCtx.createImageData(w, h);
+        const px = imgData.data;
+        for (let i = 0; i < w * h; i++) {
+          const palIdx = startLocIndices[i];
+          let r, g, b, a;
+          if (palIdx === 255 || palIdx === 254) {
+            r = 0; g = 0; b = 0; a = 0;
+          } else {
+            const isCivColor = palIdx <= 14 || (palIdx >= 16 && palIdx <= 62 && (palIdx & 1) === 0);
+            const pal = isCivColor ? ntpPalette : startLocPalette;
+            r = pal[palIdx * 3]; g = pal[palIdx * 3 + 1]; b = pal[palIdx * 3 + 2]; a = 255;
+          }
+          px[i * 4] = r; px[i * 4 + 1] = g; px[i * 4 + 2] = b; px[i * 4 + 3] = a;
+        }
+        slCtx.putImageData(imgData, 0, 0);
+        coloredStartLoc = slCanvas;
+        state.biqMapColoredStartLocCache.set(slocColorIdx, coloredStartLoc);
+      } else if (sheet) {
+        // NTP not ready yet — use raw sheet, don't cache
+        coloredStartLoc = sheet;
+      } else {
+        return;
+      }
+    }
+    const midY = sy + Math.floor(tileH / 2);
+    const drawH = Math.max(1, Math.round(coloredStartLoc.height * scale));
+    ctx.drawImage(coloredStartLoc, 0, 0, coloredStartLoc.width, coloredStartLoc.height, sx, midY, tileW, drawH);
   };
 
   const selGeom = tileGeom[state.biqMapSelectedTile] || { xPos: 0, yPos: 0 };
@@ -19513,10 +19724,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     for (let i = 0; i < overlayPassItems.length; i += 1) {
       const item = overlayPassItems[i];
       drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy, 'flat');
-      drawCityOverlay(item.record, item.geom, item.sx, item.sy);
-      drawResourceOverlay(item.record, item.sx, item.sy);
+      const itemMidY = item.sy + Math.floor(tileH / 2);
+      drawCityOverlay(item.record, item.geom, item.sx, itemMidY);
+      drawResourceOverlay(item.record, item.sx, itemMidY);
       drawDistrictOverlay(item.record, item.sx, item.sy);
-      drawUnitOverlay(item.record, item.geom, item.sx, item.sy);
+      drawUnitOverlay(item.record, item.geom, item.sx, itemMidY);
+      drawSlocOverlay(item.geom, item.sx, item.sy);
       drawFogOverlay(item.record, item.sx, item.sy);
     }
   }
@@ -22245,6 +22458,8 @@ async function loadBundleAndRender(options = {}) {
     state.biqMapArtLoading = {};
     state.biqMapTerritoryEdgeCache = new Map();
     state.biqMapNtpColorCache = {};
+    state.biqMapColoredUnitIconCache = new Map();
+  state.biqMapColoredStartLocCache = new Map();
     state.biqMapSelectedTile = -1;
     state.biqMapScrollLeft = null;
     state.biqMapScrollTop = null;

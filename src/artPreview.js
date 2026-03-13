@@ -101,6 +101,9 @@ function decodePcx(filePath, options = {}) {
     rgba[i * 4 + 3] = transparentSet.has(idx) ? 0 : 255;
   }
 
+  if (options.returnIndexed) {
+    return { width, height, rgba, indices, palette };
+  }
   return { width, height, rgba };
 }
 
@@ -660,7 +663,9 @@ function decodeByPath(filePath, crop, options = {}) {
   return {
     ...base,
     animated: false,
-    rgbaBase64: Buffer.from(image.rgba).toString('base64')
+    rgbaBase64: Buffer.from(image.rgba).toString('base64'),
+    ...(image.indices ? { indicesBase64: Buffer.from(image.indices).toString('base64') } : {}),
+    ...(image.palette ? { paletteBase64: Buffer.from(image.palette).toString('base64') } : {})
   };
 }
 
@@ -713,6 +718,15 @@ function getPreview(request) {
     const iconPath = resolveConquestsAssetPath(civ3Path, request.assetPath, scenarioPath, scenarioPaths);
     if (!iconPath) return { ok: false, error: 'Civilopedia icon not found' };
     return { ok: true, ...decodeByPath(iconPath, null, request.options || {}) };
+  }
+
+  if (kind === 'pcxPalette') {
+    const iconPath = resolveConquestsAssetPath(civ3Path, request.assetPath, scenarioPath, scenarioPaths);
+    if (!iconPath) return { ok: false, error: 'PCX not found' };
+    const b = fs.readFileSync(iconPath);
+    if (b.length < 769 || b[b.length - 769] !== 12) return { ok: false, error: 'Missing PCX palette' };
+    const palette = b.slice(b.length - 768);
+    return { ok: true, paletteBase64: Buffer.from(palette).toString('base64') };
   }
 
   if (kind === 'unitAnimation') {
@@ -792,5 +806,6 @@ function getPreview(request) {
 module.exports = {
   getPreview,
   parseUnitAnimationIni,
-  resolveUnitIniPath
+  resolveUnitIniPath,
+  decodePcx
 };
