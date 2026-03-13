@@ -1,0 +1,242 @@
+# PRTO Section
+
+## Source
+- Class path: ../Quint_Editor/Shared/Civ3_Shared_Components/src/main/java/com/civfanatics/civ3/biqFile/PRTO.java
+- Base type: BIQSection
+
+## Implementation Notes
+- 28:    private int dataLength = 241;  //Is this really the base with no stealth targets nor telepads?
+
+## Cross-Section Mentions
+- 17: * Other sections that know about PRTO: Bldg, Civ, Rule, MAP
+
+## Declared Fields (from source)
+- 30:    private int zoneOfControl;
+- 31:    private String name = "";
+- 32:    private String civilopediaEntry = "";
+- 33:    private int bombardStrength;
+- 34:    private int bombardRange;
+- 35:    private int capacity;
+- 36:    private int shieldCost;
+- 37:    private int defence;
+- 38:    private int iconIndex;
+- 39:    private int attack;
+- 40:    private int operationalRange;
+- 41:    private int populationCost;
+- 42:    private int rateOfFire;
+- 43:    private int movement = 1;
+- 44:    private int requiredTechInt = -1;
+- 45:    private TECH requiredTech;
+- 46:    private int upgradeToInt = -1;
+- 47:    private PRTO upgradeTo;
+- 48:    private int requiredResource1Int = -1;
+- 49:    private int requiredResource2Int = -1;
+- 50:    private int requiredResource3Int = -1;
+- 51:    private GOOD requiredResource1;
+- 52:    private GOOD requiredResource2;
+- 53:    private GOOD requiredResource3;
+- 64:    private int unitClass;
+- 65:        public static int CLASS_LAND = 0;
+- 66:        public static int CLASS_SEA = 1;
+- 67:        public static int CLASS_AIR = 2;
+- 68:    private int otherStrategy = -1;
+- 69:    private int hitPointBonus;
+- 77:    private short unknown;
+- 78:    private int bombardEffects;
+- 79:    private byte[]ignoreMovementCost;
+- 80:    private int requiresSupport;
+- 81:    private int useExactCost = 7;
+- 82:    private int telepadRange;
+- 83:    private int questionMark3 = 1;
+- 85:    private ArrayList<Integer>legalUnitTelepadsInt;
+- 86:    private ArrayList<PRTO>legalUnitTelepads;
+- 87:    private int enslaveResultsInInt = -1;
+- 88:    private PRTO enslaveResultsIn;
+- 89:    private int questionMark5 = 1;
+- 90:    private List<Integer>stealthTargetsInt;
+- 91:    private ArrayList<PRTO>stealthTargets;
+- 92:    private int questionMark6 = 1;
+- 94:    private ArrayList<Integer>legalBuildingTelepads;
+- 95:    private byte createsCraters;
+- 96:    private int workerStrength1;
+- 97:    private float workerStrengthFloat;
+- 98:    private int questionMark8 = 0;
+- 99:    private int airDefence;
+- 106:    private boolean wheeled;
+- 107:    private boolean footSoldier;
+- 108:    private boolean blitz;
+- 109:    private boolean cruiseMissile;
+- 110:    private boolean allTerrainAsRoads;
+- 111:    private boolean radar;
+- 112:    private boolean amphibiousUnit;
+- 113:    private boolean invisible;
+- 114:    private boolean transportsOnlyAirUnits;
+- 115:    private boolean draftable;
+- 116:    private boolean immobile;
+- 117:    private boolean sinksInSea;
+- 118:    private boolean sinksInOcean;
+- 119:    private boolean flagUnit;
+- 120:    private boolean transportsOnlyFootUnits;
+- 121:    private boolean startsGoldenAge;
+- 122:    private boolean nuclearWeapon;
+- 123:    private boolean hiddenNationality;
+- 124:    private boolean army;
+- 125:    private boolean leader;
+- 126:    private boolean infiniteBombardRange;
+- 127:    private boolean stealth;
+- 128:    private boolean detectInvisible;
+- 129:    private boolean tacticalMissile;
+- 130:    private boolean transportsOnlyTacticalMissiles;
+- 131:    private boolean rangedAttackAnimations;
+- 132:    private boolean rotateBeforeAttack;
+- 133:    private boolean lethalLandBombardment;
+- 134:    private boolean lethalSeaBombardment;
+- 135:    private boolean king;
+- 136:    private boolean requiresEscort;
+- 138:    private Boolean offence = Boolean.FALSE;
+- 139:    private Boolean defenceStrategy = false;
+- 140:    private Boolean artillery = false;
+- 141:    private Boolean exploreStrategy = false;
+- 142:    private Boolean armyUnit = false;
+- 143:    private Boolean cruiseMissileUnit = false;
+- 144:    private Boolean airBombard = false;
+- 145:    private Boolean airDefenceStrategy = false;
+- 146:    private Boolean navalPower = false;
+- 147:    private Boolean airTransport = false;
+- 148:    private Boolean navalTransport = false;
+- 149:    private Boolean navalCarrier = false;
+- 150:    private Boolean terraform = false;
+- 151:    private Boolean settle = false;
+- 152:    private Boolean leaderUnit = false;
+- 153:    private Boolean tacticalNuke = false;
+- 154:    private Boolean ICBM = false;
+- 155:    private Boolean navalMissileTransport = false;
+- 156:    private Boolean flagStrategy = false;
+- 157:    private Boolean kingStrategy = false;
+- 159:    public static String[] strategyNames = {"Offence", "Defence", "Artillery", "Exploration", "Army", "Cruise Missile", "Air Bombard", "Air Defence", "Naval Power", "Air Transport", "Naval Transport", "Naval Carrier", "Terraform", "Settle", "Leader", "Tactical Nuke", "ICBM", "Naval Missile Transport", "Flag Unit", "King Unit"};
+- 160:    private byte numStrategies;
+- 162:    private boolean[] availableToArray;
+- 164:    private boolean skipTurn;
+- 165:    private boolean wait;
+- 166:    private boolean fortify;
+- 167:    private boolean disband;
+- 168:    private boolean goTo;
+- 169:    private boolean load;
+- 170:    private boolean unload;
+- 171:    private boolean airlift;
+- 172:    private boolean pillage;
+- 173:    private boolean bombard;
+- 174:    private boolean airdrop;
+- 175:    private boolean buildArmy;
+- 176:    private boolean finishImprovement;
+- 177:    private boolean upgrade;
+- 178:    private boolean buildColony;
+- 179:    private boolean buildCity;
+- 180:    private boolean buildRoad;
+- 181:    private boolean buildRailroad;
+- 182:    private boolean buildFort;
+- 183:    private boolean buildMine;
+- 184:    private boolean irrigate;
+- 185:    private boolean clearForest;
+- 186:    private boolean clearJungle;
+- 187:    private boolean plantForest;
+- 188:    private boolean clearPollution;
+- 189:    private boolean automate;
+- 190:    private boolean joinCity;
+- 191:    private boolean buildAirfield;
+- 192:    private boolean buildRadarTower;
+- 193:    private boolean buildOutpost;
+- 194:    private boolean buildBarricade;
+- 196:    private boolean bomb;
+- 197:    private boolean recon;
+- 198:    private boolean intercept;
+- 199:    private boolean rebase;
+- 200:    private boolean precisionBomb;
+- 202:    private boolean PTWskipTurn;
+- 203:    private boolean PTWwait;
+- 204:    private boolean PTWfortify;
+- 205:    private boolean PTWdisband;
+- 206:    private boolean PTWgoTo;
+- 207:    private boolean PTWexploreOrder;
+- 208:    private boolean PTWsentry;
+- 210:    private boolean PTWload;
+- 211:    private boolean PTWunload;
+- 212:    private boolean PTWairlift;
+- 213:    private boolean PTWpillage;
+- 214:    private boolean PTWbombard;
+- 215:    private boolean PTWairdrop;
+- 216:    private boolean PTWbuildArmy;
+- 217:    private boolean PTWfinishImprovements;
+- 218:    private boolean PTWupgradeUnit;
+- 219:    private boolean PTWcapture;
+- 221:    private boolean telepad;
+- 222:    private boolean teleportable;
+- 223:    private boolean stealthAttack;
+- 224:    private boolean charm;
+- 225:    private boolean enslave;
+- 226:    private boolean collateralDamage;
+- 227:    private boolean sacrifice;
+- 228:    private boolean scienceAge;
+- 230:    private boolean PTWbuildColony;
+- 231:    private boolean PTWbuildCity;
+- 232:    private boolean PTWbuildRoad;
+- 233:    private boolean PTWbuildRailroad;
+- 234:    private boolean PTWbuildFort;
+- 235:    private boolean PTWbuildMine;
+- 236:    private boolean PTWirrigate;
+- 237:    private boolean PTWclearForest;
+- 238:    private boolean PTWclearJungle;
+- 239:    private boolean PTWplantForest;
+- 240:    private boolean PTWclearPollution;
+- 241:    private boolean PTWautomate;
+- 242:    private boolean PTWjoinCity;
+- 243:    private boolean PTWbuildAirfield;
+- 244:    private boolean PTWbuildRadarTower;
+- 245:    private boolean PTWbuildOutpost;
+- 246:    private boolean PTWbuildBarricade;
+- 248:    private boolean PTWbomb;
+- 249:    private boolean PTWrecon;
+- 250:    private boolean PTWintercept;
+- 251:    private boolean PTWrebase;
+- 252:    private boolean PTWprecisionBomb;
+- 269:    private boolean bombardMix;
+- 270:    private boolean colonyMix;
+- 271:    private boolean roadMix;
+- 272:    private boolean railroadMix;
+- 273:    private boolean road2Mix;
+- 274:    private boolean irrigateMix;
+- 275:    private boolean clearForestMix;
+- 276:    private boolean clearJungleMix;
+- 277:    private boolean clearPollutionMix;
+- 278:    private boolean automateMix;
+- 279:    private boolean automate2Mix;
+- 280:    private boolean bombingMix;
+- 281:    private boolean precisionBombingMix;
+- 282:    private boolean automate3;
+
+## Constants / Flags
+- 65:        public static int CLASS_LAND = 0;
+- 66:        public static int CLASS_SEA = 1;
+- 67:        public static int CLASS_AIR = 2;
+- 159:    public static String[] strategyNames = {"Offence", "Defence", "Artillery", "Exploration", "Army", "Cruise Missile", "Air Bombard", "Air Defence", "Naval Power", "Air Transport", "Naval Transport", "Naval Carrier", "Terraform", "Settle", "Leader", "Tactical Nuke", "ICBM", "Naval Missile Transport", "Flag Unit", "King Unit"};
+
+## Unknown / Reverse-Engineering Markers
+- 10: * TODO: If a unit has multiple strategies, Firaxis stores a whole 'nother copy
+- 77:    private short unknown;
+- 83:    private int questionMark3 = 1;
+- 89:    private int questionMark5 = 1;
+- 92:    private int questionMark6 = 1;
+- 98:    private int questionMark8 = 0;
+- 346:        other.unknown = this.unknown;
+- 353:        other.questionMark3 = this.questionMark3;
+- 360:        other.questionMark5 = this.questionMark5;
+- 365:        other.questionMark6 = this.questionMark6;
+- 371:        other.questionMark8 = this.questionMark8;
+- 717:    public void setUnknown(short unknown)
+- 719:        this.unknown = unknown;
+- 742:    public void setQuestionMark3(int questionMark3)
+- 744:        this.questionMark3 = questionMark3;
+
+## Notes for C3XConfigManager Docs
+- Use this class as authoritative for binary field names, flag packing, and unresolved unknowns.
+- When documenting a field in app UI, verify both declaration semantics in this class and read/write behavior in IO.java.
