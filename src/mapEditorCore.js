@@ -49,20 +49,24 @@
   }
 
   function tileCoordsByIndex(width, index) {
-    var pairY = Math.floor(index / width) * 2;
-    var rem = index % width;
     var half = Math.floor(width / 2);
-    if (rem < half) return { xPos: rem * 2, yPos: pairY };
-    return { xPos: ((rem - half) * 2) + 1, yPos: pairY + 1 };
+    if (!Number.isFinite(half) || half <= 0) return { xPos: 0, yPos: 0 };
+    var row = Math.floor(index / half);
+    var column = (index % half) * 2;
+    if ((row & 1) === 1) column += 1;
+    return { xPos: column, yPos: row };
   }
 
-  function computeBrushTileIndexes(width, tileCount, centerIndex, diameter) {
+  function computeBrushTileIndexes(width, tileCount, centerIndex, diameter, options) {
     var out = [];
     var radius = Math.max(0, (Math.max(1, Number(diameter) || 1) - 1) / 2);
     var center = tileCoordsByIndex(width, centerIndex);
+    var wrapX = !options || options.wrapX !== false;
+    var mapWidth = Number(width) || 0;
     for (var i = 0; i < tileCount; i += 1) {
       var p = tileCoordsByIndex(width, i);
       var dx = Math.abs(p.xPos - center.xPos);
+      if (wrapX && mapWidth > 0) dx = Math.min(dx, Math.abs(mapWidth - dx));
       var dy = Math.abs(p.yPos - center.yPos);
       if (Math.max(dx, dy) <= radius * 2) out.push(i);
     }
@@ -84,44 +88,47 @@
   function overlayFieldKey(overlayType) {
     var key = String(overlayType || '').trim().toLowerCase();
     var map = {
-      road: 'road',
-      railroad: 'railroad',
-      mine: 'mined',
-      irrigate: 'irrigated',
-      irrigation: 'irrigated',
-      fort: 'fort',
-      barricade: 'barricade',
-      barbariancamp: 'barbariancamp',
-      goodyhut: 'goodyhut',
-      pollution: 'pollution',
-      crater: 'crater',
-      airfield: 'airfield',
-      radartower: 'radartower',
-      outpost: 'outpost',
-      colony: 'colony',
-      ruins: 'ruin',
-      victorypoint: 'victorypointlocation',
-      startinglocation: 'startinglocation'
+      road: { kind: 'mask', field: 'c3coverlays', mask: 0x00000001, label: 'C3C Overlays' },
+      railroad: { kind: 'mask', field: 'c3coverlays', mask: 0x00000002, label: 'C3C Overlays' },
+      mine: { kind: 'mask', field: 'c3coverlays', mask: 0x00000004, label: 'C3C Overlays' },
+      irrigate: { kind: 'mask', field: 'c3coverlays', mask: 0x00000008, label: 'C3C Overlays' },
+      irrigation: { kind: 'mask', field: 'c3coverlays', mask: 0x00000008, label: 'C3C Overlays' },
+      fort: { kind: 'mask', field: 'c3coverlays', mask: 0x00000010, label: 'C3C Overlays' },
+      goodyhut: { kind: 'mask', field: 'c3coverlays', mask: 0x00000020, label: 'C3C Overlays' },
+      pollution: { kind: 'mask', field: 'c3coverlays', mask: 0x00000040, label: 'C3C Overlays' },
+      barbariancamp: { kind: 'mask', field: 'c3coverlays', mask: 0x00000080, label: 'C3C Overlays' },
+      crater: { kind: 'mask', field: 'c3coverlays', mask: 0x00000100, label: 'C3C Overlays' },
+      barricade: { kind: 'mask', field: 'c3coverlays', mask: 0x10000000, label: 'C3C Overlays' },
+      airfield: { kind: 'mask', field: 'c3coverlays', mask: 0x20000000, label: 'C3C Overlays' },
+      radartower: { kind: 'mask', field: 'c3coverlays', mask: 0x40000000, label: 'C3C Overlays' },
+      outpost: { kind: 'mask', field: 'c3coverlays', mask: 0x80000000, label: 'C3C Overlays' },
+      startinglocation: { kind: 'mask', field: 'c3cbonuses', mask: 0x00000008, label: 'C3C Bonuses' },
+      ruins: { kind: 'scalar', field: 'ruin', on: '1', off: '0', label: 'Ruin' },
+      victorypoint: { kind: 'scalar', field: 'victorypointlocation', on: '0', off: '-1', label: 'Victory Point Location' }
     };
-    return map[key] || '';
+    return map[key] || null;
   }
 
   function applyOverlay(records, indexes, overlayType, enabled) {
-    var fieldKey = overlayFieldKey(overlayType);
-    if (!fieldKey) return;
+    var spec = overlayFieldKey(overlayType);
+    if (!spec) return false;
+    var changed = false;
     indexes.forEach(function (idx) {
       var tile = records[idx];
       if (!tile) return;
-      if (fieldKey === 'ruin') {
-        setField(tile, fieldKey, enabled ? '1' : '0', 'Ruin');
+      if (spec.kind === 'scalar') {
+        setField(tile, spec.field, enabled ? spec.on : spec.off, spec.label);
+        changed = true;
         return;
       }
-      if (fieldKey === 'victorypointlocation') {
-        setField(tile, fieldKey, enabled ? '1' : '0', 'Victory Point Location');
-        return;
-      }
-      setField(tile, fieldKey, enabled ? 'true' : 'false', fieldKey);
+      var field = getField(tile, spec.field);
+      var current = parseIntLoose(field && field.value, 0) >>> 0;
+      var next = enabled ? ((current | spec.mask) >>> 0) : ((current & (~spec.mask)) >>> 0);
+      if (next === current) return;
+      setField(tile, spec.field, String(next >>> 0), spec.label);
+      changed = true;
     });
+    return changed;
   }
 
   function applyFog(records, indexes, addFog) {

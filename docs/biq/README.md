@@ -63,3 +63,6 @@ Quint Editor district tile placement is persisted via sidecar text (not BIQ byte
 - `docs/biq/districts/README.md`
 - `docs/biq/districts/ScenarioFormat.md`
 - `docs/biq/districts/ReadWriteFlow.md`
+
+Related C3X runtime format:
+- `docs/C3XScenarioDistrictsFile.md` (`scenario.districts.txt`, including `#NamedTile`)

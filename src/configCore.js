@@ -221,6 +221,14 @@ function cleanDisplayText(value) {
     .trim();
 }
 
+function parseIntLoose(value, fallback = NaN) {
+  const text = String(value == null ? '' : value).trim();
+  const match = text.match(/-?\d+/);
+  if (!match) return fallback;
+  const parsed = Number.parseInt(match[0], 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function scoreHumanReadableText(text) {
   const s = String(text || '');
   if (!s) return 0;
@@ -830,6 +838,26 @@ function enrichBridgeSections(sections) {
     });
   }
 
+  const ownerTypeForRecord = (record) => {
+    if (!record || !Array.isArray(record.fields)) return NaN;
+    const field = record.fields.find((candidate) => {
+      const key = String(candidate && (candidate.baseKey || candidate.key) || '').toLowerCase();
+      return key === 'ownertype';
+    });
+    if (!field) return NaN;
+    const raw = cleanDisplayText(field.originalValue);
+    const rawParsed = parseIntLoose(raw, NaN);
+    if (Number.isFinite(rawParsed)) return rawParsed;
+    return parseIntLoose(cleanDisplayText(field.value), NaN);
+  };
+
+  const formatOwnerField = (record, rawValue) => {
+    const ownerType = ownerTypeForRecord(record);
+    if (ownerType === 2) return maybeFormatIdReference(raceIndex, rawValue);
+    if (ownerType === 3) return maybeFormatIdReferenceOneBased(leadIndex, rawValue);
+    return rawValue;
+  };
+
   sections.forEach((section) => {
     const code = section.code;
     (section.records || []).forEach((record) => {
@@ -976,9 +1004,9 @@ function enrichBridgeSections(sections) {
         } else if (code === 'WMAP') {
           if (k === 'xwrapping' || k === 'ywrapping' || k === 'polar_ice_caps') field.value = normalizeBoolish(v);
         } else if (code === 'CITY') {
-          if (k === 'owner') field.value = maybeFormatIdReferenceOneBased(leadIndex, v);
+          if (k === 'owner') field.value = formatOwnerField(record, v);
           else if (k === 'ownertype') {
-            const ownerType = { '0': 'None (0)', '1': 'Barbarians (1)', '2': 'Civilization (2)' };
+            const ownerType = { '0': 'None (0)', '1': 'Barbarians (1)', '2': 'Civilization (2)', '3': 'Player (3)' };
             field.value = ownerType[v] || v;
           } else if (k === 'citylevel') {
             const cityLevel = { '0': 'Town (0)', '1': 'City (1)', '2': 'Metropolis (2)' };
@@ -987,15 +1015,15 @@ function enrichBridgeSections(sections) {
           else if (k.startsWith('building')) field.value = maybeFormatIdReference(bldgIndex, v);
         } else if (code === 'UNIT') {
           if (k === 'unit_index') field.value = maybeFormatIdReference(unitIndex, v);
-          else if (k === 'owner') field.value = maybeFormatIdReferenceOneBased(leadIndex, v);
+          else if (k === 'owner') field.value = formatOwnerField(record, v);
           else if (k === 'ownertype') {
-            const ownerType = { '0': 'None (0)', '1': 'Barbarians (1)', '2': 'Civilization (2)' };
+            const ownerType = { '0': 'None (0)', '1': 'Barbarians (1)', '2': 'Civilization (2)', '3': 'Player (3)' };
             field.value = ownerType[v] || v;
           } else if (k === 'usecivilizationking') field.value = toBoolStringFromInt(v);
         } else if (code === 'CLNY') {
-          if (k === 'owner') field.value = maybeFormatIdReferenceOneBased(leadIndex, v);
+          if (k === 'owner') field.value = formatOwnerField(record, v);
           else if (k === 'ownertype') {
-            const ownerType = { '0': 'None (0)', '1': 'Barbarians (1)', '2': 'Civilization (2)' };
+            const ownerType = { '0': 'None (0)', '1': 'Barbarians (1)', '2': 'Civilization (2)', '3': 'Player (3)' };
             field.value = ownerType[v] || v;
           }
         } else if (code === 'TILE') {
@@ -1003,7 +1031,7 @@ function enrichBridgeSections(sections) {
           else if (k === 'city') field.value = maybeFormatIdReference(cityIndex, v);
           else if (k === 'colony') field.value = maybeFormatIdReference(colonyIndex, v);
           else if (k === 'continent') field.value = maybeFormatIdReference(contIndex, v);
-          else if (k === 'owner') field.value = maybeFormatIdReferenceOneBased(leadIndex, v);
+          else if (k === 'owner') field.value = formatOwnerField(record, v);
           else if (k === 'fogofwar' || k === 'ruin') field.value = toBoolStringFromInt(v);
         } else if (code === 'CONT') {
           if (k === 'continentclass') {

@@ -17315,26 +17315,45 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const ownerSelect = document.createElement('select');
   const leadSectionForOwner = (tab.sections || []).find((s) => s.code === 'LEAD');
   const leadRecordsForOwner = leadSectionForOwner && Array.isArray(leadSectionForOwner.records) ? leadSectionForOwner.records : [];
-  leadRecordsForOwner.forEach((record, idx) => {
-    const o = document.createElement('option');
-    o.value = String(idx);
-    o.textContent = String(record && record.name || `Player ${idx + 1}`);
-    ownerSelect.appendChild(o);
-  });
-  if (leadRecordsForOwner.length === 0) {
-    const o = document.createElement('option');
-    o.value = '0';
-    o.textContent = 'Owner 0';
-    ownerSelect.appendChild(o);
-  }
-  ownerSelect.value = String(Number(tool.owner) || 0);
+  const raceSectionForOwner = (tab.sections || []).find((s) => s.code === 'RACE');
+  const raceRecordsForOwner = raceSectionForOwner && Array.isArray(raceSectionForOwner.records) ? raceSectionForOwner.records : [];
+  const ownerRecordsForCurrentType = () => {
+    const ownerType = parseIntLoose(state.mapEditorTool && state.mapEditorTool.ownerType, 1);
+    if (ownerType === 2) {
+      return { records: raceRecordsForOwner, fallbackPrefix: 'Civilization' };
+    }
+    return { records: leadRecordsForOwner, fallbackPrefix: 'Player' };
+  };
+  const rebuildOwnerOptions = () => {
+    const spec = ownerRecordsForCurrentType();
+    ownerSelect.innerHTML = '';
+    spec.records.forEach((record, idx) => {
+      const o = document.createElement('option');
+      o.value = String(idx);
+      o.textContent = String(record && record.name || `${spec.fallbackPrefix} ${idx + 1}`);
+      ownerSelect.appendChild(o);
+    });
+    if (spec.records.length === 0) {
+      const o = document.createElement('option');
+      o.value = '0';
+      o.textContent = `${spec.fallbackPrefix} 0`;
+      ownerSelect.appendChild(o);
+    }
+    const nextOwner = parseIntLoose(state.mapEditorTool && state.mapEditorTool.owner, 0);
+    const max = Math.max(0, ownerSelect.options.length - 1);
+    const safeOwner = Math.max(0, Math.min(max, nextOwner));
+    state.mapEditorTool.owner = safeOwner;
+    ownerSelect.value = String(safeOwner);
+  };
+  rebuildOwnerOptions();
   ownerSelect.addEventListener('change', () => {
     state.mapEditorTool.owner = parseIntLoose(ownerSelect.value, 0);
   });
   ownerWrap.appendChild(ownerSelect);
   attachMapSelectIcon(ownerWrap, ownerSelect, (value) => {
     const idx = parseIntLoose(value, 0);
-    const rec = leadRecordsForOwner[idx] || null;
+    const spec = ownerRecordsForCurrentType();
+    const rec = spec.records[idx] || null;
     const title = rec ? String(rec.name || `Owner ${idx}`) : `Owner ${idx}`;
     return makeMapColorIcon(idx + 1, title);
   });
@@ -17358,6 +17377,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   ownerTypeSelect.value = String(parseIntLoose(tool.ownerType, 1));
   ownerTypeSelect.addEventListener('change', () => {
     state.mapEditorTool.ownerType = parseIntLoose(ownerTypeSelect.value, 1);
+    rebuildOwnerOptions();
+    ownerSelect.dispatchEvent(new Event('change'));
   });
   ownerTypeWrap.appendChild(ownerTypeSelect);
   const ownerTypeIconByValue = {
@@ -17758,13 +17779,15 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   horizontalWrapCenter = wrapCenterOffset;
 
   const toTileCoords = (index) => {
-    const pairY = Math.floor(index / width) * 2;
-    const rem = index % width;
-    const half = Math.floor(width / 2);
-    if (rem < half) {
-      return { xPos: rem * 2, yPos: pairY };
+    if (mapCore && typeof mapCore.tileCoordsByIndex === 'function') {
+      return mapCore.tileCoordsByIndex(width, index);
     }
-    return { xPos: (rem - half) * 2 + 1, yPos: pairY + 1 };
+    const half = Math.floor(width / 2);
+    if (!Number.isFinite(half) || half <= 0) return { xPos: 0, yPos: 0 };
+    const row = Math.floor(index / half);
+    let col = (index % half) * 2;
+    if ((row & 1) === 1) col += 1;
+    return { xPos: col, yPos: row };
   };
   const tileGeom = new Array(tiles.length);
   for (let i = 0; i < tiles.length; i += 1) tileGeom[i] = toTileCoords(i);
@@ -17803,7 +17826,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     width,
     height,
     tileCount: tiles.length,
-    expectedTileCount: width * height,
+    expectedTileCount: Math.floor((width * height) / 2),
     stepX,
     stepY,
     tileW,
@@ -17963,6 +17986,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const maxCity2Size = parseIntLoose(getFieldByBaseKey(ruleRecord, 'maxcity2size')?.value, 12);
   const playerCivById = {};
   const playerEraById = {};
+  const playerCustomDataById = {};
+  const playerColorById = {};
   const playerIdByName = {};
   const civEraById = {};
   const parseOwnerType = (raw) => {
@@ -18094,8 +18119,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     if (!Number.isFinite(civId)) civId = -1;
     const era = parseEraIndex(getFieldRawValue(record, 'initialera') || getFieldDisplayValue(record, 'initialera'));
+    const customCivData = parseIntLoose(getFieldRawValue(record, 'customcivdata') || getFieldDisplayValue(record, 'customcivdata'), 0);
+    const playerColor = parseIntLoose(getFieldRawValue(record, 'color') || getFieldDisplayValue(record, 'color'), NaN);
     playerCivById[idx] = civId;
     playerEraById[idx] = era;
+    playerCustomDataById[idx] = customCivData;
+    playerColorById[idx] = playerColor;
     if (civId >= 0 && !Number.isFinite(civEraById[civId])) {
       civEraById[civId] = era;
     }
@@ -18118,7 +18147,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     return -1;
   };
-  const resolveTileOwnerInfo = (tileRecord) => {
+  const resolveTileOwnerInfoRaw = (tileRecord) => {
     const ownerRaw = String(getFieldRawValue(tileRecord, 'owner') || getFieldDisplayValue(tileRecord, 'owner') || '').trim();
     const ownerTypeRaw = String(getFieldRawValue(tileRecord, 'ownertype') || getFieldDisplayValue(tileRecord, 'ownertype') || '').trim();
     if (!ownerRaw || ownerRaw.toLowerCase() === 'none') return { hasOwner: false, ownerKey: '', civId: -1, ownerType: 0, ownerId: -1 };
@@ -18143,73 +18172,357 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       ownerId: Number.isFinite(ownerId) ? ownerId : -1
     };
   };
-  const cityCivIdByRef = {};
-  const cityRefByName = {};
-  Object.keys(cityRecordById).forEach((refKey) => {
-    const cityRecord = cityRecordById[refKey];
-    if (!cityRecord) return;
+  const hasCustomPlayerData = Object.keys(playerCustomDataById).some((id) => parseIntLoose(playerCustomDataById[id], 0) === 1);
+  const cityMetaList = (citySection?.records || []).map((cityRecord, cityPos) => {
     const ownerTypeRaw = String(getFieldRawValue(cityRecord, 'ownertype') || getFieldDisplayValue(cityRecord, 'ownertype') || '');
     const ownerRaw = String(getFieldRawValue(cityRecord, 'owner') || getFieldDisplayValue(cityRecord, 'owner') || '');
-    cityCivIdByRef[refKey] = resolveCivIdFromOwnership(ownerTypeRaw, ownerRaw);
-    const cityName = String(getFieldByBaseKey(cityRecord, 'name')?.value || cityRecord.name || '').trim().toLowerCase();
-    if (cityName) cityRefByName[cityName] = refKey;
-  });
-  const borderTagToCivVotes = {};
-  const bumpBorderVote = (borderTag, civId) => {
-    if (!Number.isFinite(borderTag) || borderTag <= 0 || !Number.isFinite(civId) || civId < 0) return;
-    const key = String(borderTag);
-    if (!borderTagToCivVotes[key]) borderTagToCivVotes[key] = {};
-    borderTagToCivVotes[key][civId] = (borderTagToCivVotes[key][civId] || 0) + 1;
-  };
-  tiles.forEach((tileRecord) => {
-    if (!tileRecord) return;
-    const borderTag = parseFieldInt(tileRecord, 'border', 0);
-    if (!Number.isFinite(borderTag) || borderTag <= 0) return;
-    const cityRefText = String(getFieldRawValue(tileRecord, 'city') || getFieldDisplayValue(tileRecord, 'city') || '').trim();
-    let cityRef = parseIndexedRef(cityRefText);
-    if (!Number.isFinite(cityRef) || cityRef < 0) {
-      const cityName = cityRefText.replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
-      const fromName = cityRefByName[cityName];
-      if (String(fromName || '').trim()) cityRef = parseIntLoose(fromName, NaN);
-    }
-    if (!Number.isFinite(cityRef) || cityRef < 0) return;
-    const civId = parseIntLoose(cityCivIdByRef[String(cityRef)], -1);
-    bumpBorderVote(borderTag, civId);
-  });
-  const borderTagToCivId = {};
-  Object.keys(borderTagToCivVotes).forEach((borderTag) => {
-    const votes = borderTagToCivVotes[borderTag] || {};
-    let bestCiv = -1;
-    let bestCount = -1;
-    Object.keys(votes).forEach((civKey) => {
-      const civId = parseIntLoose(civKey, -1);
-      const count = parseIntLoose(votes[civKey], 0);
-      if (count > bestCount) {
-        bestCount = count;
-        bestCiv = civId;
+    const ownerType = parseOwnerType(ownerTypeRaw);
+    let ownerId = -1;
+    if (ownerType === 2) ownerId = parseIntLoose(resolveCivIdFromRaw(ownerRaw), -1);
+    else if (ownerType === 3) ownerId = parseIntLoose(resolvePlayerIdFromOwnerRaw(ownerRaw), -1);
+    const civId = parseIntLoose(resolveCivIdFromOwnership(ownerTypeRaw, ownerRaw), -1);
+    let borderColorId = NaN;
+    if (ownerType === 2 && ownerId >= 0) {
+      if (hasCustomPlayerData) {
+        for (let p = 0; p < (leadSection?.records || []).length; p += 1) {
+          if (parseIntLoose(playerCivById[p], -1) !== ownerId) continue;
+          if (parseIntLoose(playerCustomDataById[p], 0) !== 1) continue;
+          const custom = parseIntLoose(playerColorById[p], NaN);
+          if (Number.isFinite(custom)) borderColorId = custom;
+        }
       }
-    });
-    if (bestCiv >= 0) borderTagToCivId[borderTag] = bestCiv;
-  });
-  const resolveTileTerritoryInfo = (tileRecord) => {
-    const ownerInfo = resolveTileOwnerInfo(tileRecord);
-    const borderTag = parseFieldInt(tileRecord, 'border', 0);
-    if (ownerInfo.hasOwner) return { ...ownerInfo, borderTag };
-    if (!Number.isFinite(borderTag) || borderTag <= 0) return { hasOwner: false, ownerKey: '', civId: -1, borderTag: 0 };
-    const civId = parseIntLoose(borderTagToCivId[String(borderTag)], -1);
+      if (!Number.isFinite(borderColorId)) borderColorId = parseIntLoose(raceDefaultColorById[ownerId], NaN);
+    } else if (ownerType === 3 && ownerId >= 0) {
+      if (hasCustomPlayerData) {
+        const civIndex = parseIntLoose(playerCivById[ownerId], -1);
+        if (parseIntLoose(playerCustomDataById[ownerId], 0) === 1) {
+          borderColorId = parseIntLoose(playerColorById[ownerId], NaN);
+        } else if (civIndex > -1) {
+          borderColorId = parseIntLoose(raceDefaultColorById[civIndex], NaN);
+        } else {
+          borderColorId = 31 - ownerId;
+        }
+      } else {
+        const civIndex = parseIntLoose(playerCivById[ownerId], -1);
+        if (civIndex > -1) borderColorId = parseIntLoose(raceDefaultColorById[civIndex], NaN);
+      }
+      if (!Number.isFinite(borderColorId)) borderColorId = 31 - ownerId;
+    }
     return {
-      hasOwner: true,
-      ownerKey: `border:${borderTag}`,
-      civId: Number.isFinite(civId) ? civId : -1,
-      borderTag
+      cityPos,
+      x: parseIntLoose(getFieldByBaseKey(cityRecord, 'x')?.value, NaN),
+      y: parseIntLoose(getFieldByBaseKey(cityRecord, 'y')?.value, NaN),
+      culture: parseIntLoose(getFieldByBaseKey(cityRecord, 'culture')?.value, 0),
+      ownerType,
+      ownerId,
+      civId,
+      borderColorId
     };
+  });
+  const isCoordInBoundsNoWrap = (xPos, yPos) => (
+    Number.isFinite(xPos)
+    && Number.isFinite(yPos)
+    && xPos >= 0
+    && xPos < width
+    && yPos >= 0
+    && yPos < height
+  );
+  const calculateTileIndexForParity = (xPos, yPos) => {
+    if (!Number.isFinite(xPos) || !Number.isFinite(yPos)) return -1;
+    if (yPos < 0 || yPos >= height) return -1;
+    let x = xPos;
+    if (x >= width) x -= width;
+    if (x < 0) x += width;
+    let index = Math.floor(yPos / 2) * width;
+    if ((yPos % 2) === 1) index += Math.floor(width / 2);
+    index += Math.floor(x / 2);
+    return (index >= 0 && index < tiles.length) ? index : -1;
+  };
+  const tileInfluenceByIndex = new Array(tiles.length).fill(null).map(() => new Set());
+  const calculateInfluenceOfCity = (cityPos) => {
+    const cityMeta = cityMetaList[cityPos];
+    if (!cityMeta || !Number.isFinite(cityMeta.x) || !Number.isFinite(cityMeta.y)) return;
+    const tileIndexes = new Set();
+    let cityCulture = parseIntLoose(cityMeta.culture, 0);
+    if (cityCulture === 0) cityCulture = 1;
+    const levelX = new Array(13).fill(0);
+    if (cityCulture > 0) { levelX[5] += 3; levelX[6] += 3; levelX[7] += 3; cityCulture = Math.floor(cityCulture / 10); }
+    if (cityCulture > 0) { levelX[4] += 3; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 3; cityCulture = Math.floor(cityCulture / 10); }
+    if (cityCulture > 0) { levelX[3] += 3; levelX[4] += 2; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 2; levelX[9] += 3; cityCulture = Math.floor(cityCulture / 10); }
+    if (cityCulture > 0) { levelX[2] += 3; levelX[3] += 4; levelX[4] += 2; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 2; levelX[9] += 4; levelX[10] += 3; cityCulture = Math.floor(cityCulture / 10); }
+    if (cityCulture > 0) { levelX[1] += 3; levelX[2] += 4; levelX[3] += 2; levelX[4] += 2; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 2; levelX[9] += 2; levelX[10] += 4; levelX[11] += 3; cityCulture = Math.floor(cityCulture / 10); }
+    if (cityCulture > 0) { levelX[0] += 5; levelX[1] += 6; levelX[2] += 4; levelX[3] += 2; levelX[4] += 4; levelX[5] += 2; levelX[6] += 2; levelX[7] += 2; levelX[8] += 4; levelX[9] += 2; levelX[10] += 4; levelX[11] += 6; levelX[12] += 5; }
+    for (let j = 0; j < 13; j += 1) {
+      const offset = 6 - j;
+      const centerX = cityMeta.x - offset;
+      const centerY = cityMeta.y - offset;
+      if (levelX[j] !== 0) {
+        if (isCoordInBoundsNoWrap(centerX, centerY)) {
+          const centerIdx = calculateTileIndexForParity(centerX, centerY);
+          if (centerIdx >= 0) tileIndexes.add(centerIdx);
+        }
+        levelX[j] -= 1;
+      }
+      let distOut = 1;
+      while (levelX[j] > 0) {
+        if (isCoordInBoundsNoWrap(centerX - distOut, centerY + distOut)) {
+          const a = calculateTileIndexForParity(centerX - distOut, centerY + distOut);
+          if (a >= 0) tileIndexes.add(a);
+        }
+        if (isCoordInBoundsNoWrap(centerX + distOut, centerY - distOut)) {
+          const b = calculateTileIndexForParity(centerX + distOut, centerY - distOut);
+          if (b >= 0) tileIndexes.add(b);
+        }
+        distOut += 1;
+        levelX[j] -= 2;
+      }
+    }
+    tileIndexes.forEach((tileIndex) => tileInfluenceByIndex[tileIndex].add(cityPos));
+  };
+  for (let i = 0; i < cityMetaList.length; i += 1) calculateInfluenceOfCity(i);
+  const findNearestInfluencingCities = (xPos, yPos, startInfluenceSet) => {
+    const startIdx = calculateTileIndexForParity(xPos, yPos);
+    if (startIdx < 0) return [];
+    if (!startInfluenceSet || startInfluenceSet.size === 0) return [];
+    for (const cityPos of startInfluenceSet) {
+      const cityMeta = cityMetaList[cityPos];
+      if (!cityMeta) continue;
+      if (cityMeta.x === xPos && cityMeta.y === yPos) return [cityPos];
+    }
+    const checked = [];
+    const checkedSet = new Set();
+    const pushTile = (cx, cy) => {
+      if (!isCoordInBoundsNoWrap(cx, cy)) return;
+      const idx = calculateTileIndexForParity(cx, cy);
+      if (idx < 0 || checkedSet.has(idx)) return;
+      checkedSet.add(idx);
+      checked.push(idx);
+    };
+    pushTile(xPos, yPos);
+    pushTile(xPos - 2, yPos);
+    pushTile(xPos + 2, yPos);
+    pushTile(xPos, yPos - 2);
+    pushTile(xPos, yPos + 2);
+    pushTile(xPos + 1, yPos + 1);
+    pushTile(xPos - 1, yPos + 1);
+    pushTile(xPos + 1, yPos - 1);
+    pushTile(xPos - 1, yPos - 1);
+    const found = [];
+    const foundSet = new Set();
+    for (let j = 1; j < checked.length; j += 1) {
+      const idx = checked[j];
+      const loc = tileGeom[idx];
+      if (!loc) continue;
+      tileInfluenceByIndex[idx].forEach((cityPos) => {
+        if (!startInfluenceSet.has(cityPos)) return;
+        const cityMeta = cityMetaList[cityPos];
+        if (!cityMeta) return;
+        if (cityMeta.x !== loc.xPos || cityMeta.y !== loc.yPos) return;
+        if (foundSet.has(cityPos)) return;
+        foundSet.add(cityPos);
+        found.push(cityPos);
+      });
+    }
+    if (found.length > 0) return found;
+    let radius = 2;
+    let startSearch = 1;
+    while (true) {
+      const max = checked.length;
+      for (let j = startSearch; j < max; j += 1) {
+        const loc = tileGeom[checked[j]];
+        if (!loc) continue;
+        pushTile(loc.xPos - 1, loc.yPos - 1);
+        pushTile(loc.xPos + 1, loc.yPos - 1);
+        pushTile(loc.xPos + 1, loc.yPos + 1);
+        pushTile(loc.xPos - 1, loc.yPos + 1);
+      }
+      for (let j = max; j < checked.length; j += 1) {
+        const idx = checked[j];
+        const loc = tileGeom[idx];
+        if (!loc) continue;
+        tileInfluenceByIndex[idx].forEach((cityPos) => {
+          if (!startInfluenceSet.has(cityPos)) return;
+          const cityMeta = cityMetaList[cityPos];
+          if (!cityMeta) return;
+          if (cityMeta.x !== loc.xPos || cityMeta.y !== loc.yPos) return;
+          if (foundSet.has(cityPos)) return;
+          foundSet.add(cityPos);
+          found.push(cityPos);
+        });
+      }
+      if (found.length > 0) return found;
+      radius += 1;
+      if (radius > 7) return found;
+      startSearch = max;
+    }
+  };
+  const tileTerritoryInfoByIndex = new Array(tiles.length).fill(null);
+  for (let i = 0; i < tiles.length; i += 1) {
+    const tileRecord = tiles[i];
+    const rawOwnerInfo = resolveTileOwnerInfoRaw(tileRecord);
+    const borderTag = parseFieldInt(tileRecord, 'border', 0);
+    const influenceSet = tileInfluenceByIndex[i];
+    if (!influenceSet || influenceSet.size === 0) {
+      tileTerritoryInfoByIndex[i] = { ...rawOwnerInfo, borderTag };
+      continue;
+    }
+    const loc = tileGeom[i];
+    if (!loc) {
+      tileTerritoryInfoByIndex[i] = { ...rawOwnerInfo, borderTag };
+      continue;
+    }
+    const nearbyCities = findNearestInfluencingCities(loc.xPos, loc.yPos, influenceSet);
+    if (!nearbyCities || nearbyCities.length === 0) {
+      tileTerritoryInfoByIndex[i] = { ...rawOwnerInfo, borderTag };
+      continue;
+    }
+    let bestCityPos = nearbyCities[0];
+    let bestCulture = parseIntLoose(cityMetaList[bestCityPos] && cityMetaList[bestCityPos].culture, 0);
+    for (let j = 1; j < nearbyCities.length; j += 1) {
+      const cityPos = nearbyCities[j];
+      const culture = parseIntLoose(cityMetaList[cityPos] && cityMetaList[cityPos].culture, 0);
+      if (culture > bestCulture) {
+        bestCulture = culture;
+        bestCityPos = cityPos;
+      }
+    }
+    const cityMeta = cityMetaList[bestCityPos];
+    if (!cityMeta || cityMeta.ownerId < 0) {
+      tileTerritoryInfoByIndex[i] = { hasOwner: false, ownerKey: '', civId: -1, borderTag, ownerType: 0, ownerId: -1 };
+      continue;
+    }
+    tileTerritoryInfoByIndex[i] = {
+      hasOwner: true,
+      ownerKey: `${cityMeta.ownerType}:${cityMeta.ownerId}`,
+      civId: Number.isFinite(cityMeta.civId) ? cityMeta.civId : -1,
+      borderTag,
+      ownerType: cityMeta.ownerType,
+      ownerId: cityMeta.ownerId,
+      borderColorId: cityMeta.borderColorId
+    };
+  }
+  const resolveTileTerritoryInfo = (_tileRecord, geom) => {
+    if (!geom) return { hasOwner: false, ownerKey: '', civId: -1, borderTag: 0 };
+    const idx = calculateTileIndexForParity(geom.xPos, geom.yPos);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= tileTerritoryInfoByIndex.length) return { hasOwner: false, ownerKey: '', civId: -1, borderTag: 0 };
+    return tileTerritoryInfoByIndex[idx] || { hasOwner: false, ownerKey: '', civId: -1, borderTag: 0 };
   };
   const tileRecordByCoord = new Map();
+  const tileIndexByCoord = new Map();
   for (let i = 0; i < tileGeom.length; i += 1) {
     const geom = tileGeom[i];
     if (!geom || !tiles[i]) continue;
     tileRecordByCoord.set(`${geom.xPos},${geom.yPos}`, tiles[i]);
+    tileIndexByCoord.set(`${geom.xPos},${geom.yPos}`, i);
   }
+
+  const getTileIndexAtCoord = (xPos, yPos) => {
+    let x = Number(xPos);
+    const y = Number(yPos);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return -1;
+    if (width > 0) x = ((x % width) + width) % width;
+    const idx = tileIndexByCoord.get(`${x},${y}`);
+    return Number.isFinite(idx) ? idx : -1;
+  };
+
+  const mapUtilsTerrainSpec = (southBase, westBase, northBase, eastBase) => {
+    const s = Number(southBase);
+    const w = Number(westBase);
+    const n = Number(northBase);
+    const e = Number(eastBase);
+    if (s === BIQ_TERRAIN.OCEAN && w === BIQ_TERRAIN.OCEAN && n === BIQ_TERRAIN.OCEAN && e === BIQ_TERRAIN.OCEAN) {
+      return { file: 8, image: 0, needImage: false, terr2: 0, terr3: 0 };
+    }
+    if (s === BIQ_TERRAIN.SEA && w === BIQ_TERRAIN.SEA && n === BIQ_TERRAIN.SEA && e === BIQ_TERRAIN.SEA) {
+      return { file: 7, image: 0, needImage: false, terr2: 0, terr3: 0 };
+    }
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.TUNDRA)) {
+      return { file: 0, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+    }
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.SEA)) {
+      return { file: 6, needImage: true, terr2: BIQ_TERRAIN.SEA, terr3: BIQ_TERRAIN.OCEAN };
+    }
+    if ([s, w, n, e].every((t) => t !== BIQ_TERRAIN.COAST)) {
+      return { file: 4, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.PLAINS };
+    }
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.DESERT)) {
+      if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.PLAINS)) {
+        return { file: 3, needImage: true, terr2: BIQ_TERRAIN.PLAINS, terr3: BIQ_TERRAIN.COAST };
+      }
+      if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.GRASSLAND)) {
+        return { file: 2, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+      }
+      if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.COAST)) {
+        return { file: 2, needImage: true, terr2: BIQ_TERRAIN.PLAINS, terr3: BIQ_TERRAIN.COAST };
+      }
+      return null;
+    }
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.PLAINS)) {
+      return { file: 1, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+    }
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.GRASSLAND)) {
+      return { file: 5, needImage: true, terr2: BIQ_TERRAIN.GRASSLAND, terr3: BIQ_TERRAIN.COAST };
+    }
+    if ([s, w, n, e].some((t) => t === BIQ_TERRAIN.COAST)) {
+      return { file: 6, needImage: true, terr2: BIQ_TERRAIN.SEA, terr3: BIQ_TERRAIN.OCEAN };
+    }
+    return null;
+  };
+
+  const recalculateTerrainFileAndImageAt = (xPos, yPos) => {
+    const southIdx = getTileIndexAtCoord(xPos, yPos);
+    if (southIdx < 0) return;
+    const southTile = tiles[southIdx];
+    if (!southTile) return;
+    const coastTerrain = BIQ_TERRAIN.COAST;
+    const coastPacked = String(((coastTerrain & 0x0f) << 4) | (coastTerrain & 0x0f));
+    const coastTile = { fields: [{ key: 'baserealterrain', baseKey: 'baserealterrain', value: coastPacked }] };
+    const westTile = getTileAtCoord(xPos - 1, yPos - 1) || coastTile;
+    const northTile = getTileAtCoord(xPos, yPos - 2) || coastTile;
+    const eastTile = getTileAtCoord(xPos + 1, yPos - 1) || coastTile;
+    const southBase = terrainInfo(southTile).baseTerrain;
+    const westBase = terrainInfo(westTile).baseTerrain;
+    const northBase = terrainInfo(northTile).baseTerrain;
+    const eastBase = terrainInfo(eastTile).baseTerrain;
+    const spec = mapUtilsTerrainSpec(southBase, westBase, northBase, eastBase);
+    if (!spec) return;
+    if (!spec.needImage) {
+      setMapFieldValue(southTile, 'file', String(spec.file), 'File');
+      setMapFieldValue(southTile, 'image', String(spec.image), 'Image');
+      return;
+    }
+    let sum = 0;
+    if (northBase === spec.terr2) sum += 1;
+    if (northBase === spec.terr3) sum += 2;
+    if (westBase === spec.terr2) sum += 3;
+    if (westBase === spec.terr3) sum += 6;
+    if (eastBase === spec.terr2) sum += 9;
+    if (eastBase === spec.terr3) sum += 18;
+    if (southBase === spec.terr2) sum += 27;
+    if (southBase === spec.terr3) sum += 54;
+    setMapFieldValue(southTile, 'file', String(spec.file), 'File');
+    setMapFieldValue(southTile, 'image', String(sum), 'Image');
+  };
+
+  const recalculateTerrainFileImageAround = (seedIndexes) => {
+    const targets = new Set();
+    const addAt = (xPos, yPos) => targets.add(`${xPos},${yPos}`);
+    seedIndexes.forEach((idx) => {
+      const geom = tileGeom[idx];
+      if (!geom) return;
+      addAt(geom.xPos, geom.yPos);
+      addAt(geom.xPos + 1, geom.yPos + 1);
+      addAt(geom.xPos - 1, geom.yPos + 1);
+      addAt(geom.xPos, geom.yPos + 2);
+    });
+    targets.forEach((coordKey) => {
+      const [xRaw, yRaw] = String(coordKey).split(',');
+      const x = Number(xRaw);
+      const y = Number(yRaw);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      recalculateTerrainFileAndImageAt(x, y);
+    });
+  };
 
   const uniqueRecordRef = (sectionCode) => makeUniqueBiqStructureRecordRef(tab, sectionCode);
   const pushStructureAddOp = (sectionCode, newRecordRef) => {
@@ -18342,7 +18655,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (mode === 'select') return false;
     const diameter = parseIntLoose(state.mapEditorTool && state.mapEditorTool.diameter, 1) || 1;
     const indices = (mapCore && typeof mapCore.computeBrushTileIndexes === 'function')
-      ? mapCore.computeBrushTileIndexes(width, tileCount, centerIndex, diameter)
+      ? mapCore.computeBrushTileIndexes(width, tileCount, centerIndex, diameter, { wrapX: true })
       : [centerIndex];
     if (indices.length === 0) return false;
     if (mode === 'terrain') {
@@ -18356,15 +18669,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           setMapFieldValue(tiles[idx], 'c3cbaserealterrain', String(packedTerrain), 'C3C Base Real Terrain');
         });
       }
+      recalculateTerrainFileImageAround(indices);
       return true;
     }
     if (mode === 'overlay') {
       const overlayType = String(state.mapEditorTool && state.mapEditorTool.overlayType || 'road');
       const enabled = !(state.mapEditorTool && state.mapEditorTool.remove);
       if (mapCore && typeof mapCore.applyOverlay === 'function') {
-        mapCore.applyOverlay(tiles, indices, overlayType, enabled);
+        return !!mapCore.applyOverlay(tiles, indices, overlayType, enabled);
       }
-      return true;
+      return false;
     }
     if (mode === 'fog') {
       const addFog = String(state.mapEditorTool && state.mapEditorTool.fogMode || 'add') !== 'remove';
@@ -18685,7 +18999,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const ownerTypeRaw = String(getFieldRawValue(cityRecord, 'ownertype') || getFieldDisplayValue(cityRecord, 'ownertype') || '');
     const ownerRaw = String(getFieldRawValue(cityRecord, 'owner') || getFieldDisplayValue(cityRecord, 'owner') || '');
     const ownerType = parseOwnerType(ownerTypeRaw);
-    const owner = parseIndexedRef(ownerRaw);
+    const owner = resolvePlayerIdFromOwnerRaw(ownerRaw);
     let civId = resolveCivIdFromOwnership(ownerTypeRaw, ownerRaw);
     let era = 0;
     if (ownerType === 2 && civId >= 0) {
@@ -18826,7 +19140,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return edges;
   };
 
-  const drawTileFeatureOverlays = (record, geom, sx, sy) => {
+  const drawTileFeatureOverlays = (record, geom, sx, sy, pass = 'all') => {
     if (!record || !geom) return;
     const c3cOverlays = parseIntLoose(getFieldByBaseKey(record, 'c3coverlays')?.value, 0) >>> 0;
     const c3cBonuses = parseIntLoose(getFieldByBaseKey(record, 'c3cbonuses')?.value, 0) >>> 0;
@@ -19017,27 +19331,27 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       }
     };
 
-  const drawTerritoryBorders = () => {
-      const ownerInfo = resolveTileTerritoryInfo(record);
+    const drawTerritoryBorders = () => {
+      const ownerInfo = resolveTileTerritoryInfo(record, geom);
       if (!ownerInfo.hasOwner) return;
       const borderRaw = getFieldRawValue(record, 'bordercolor') || getFieldDisplayValue(record, 'bordercolor');
       let borderColorId = parseIntLoose(borderRaw, NaN);
-      const derivedFromBorderTag = String(ownerInfo.ownerKey || '').startsWith('border:');
-      if (derivedFromBorderTag && borderColorId === 0) borderColorId = NaN;
+      if (Number.isFinite(parseIntLoose(ownerInfo.borderColorId, NaN))) borderColorId = parseIntLoose(ownerInfo.borderColorId, NaN);
       if (!Number.isFinite(borderColorId) && ownerInfo.civId >= 0) borderColorId = parseIntLoose(raceDefaultColorById[ownerInfo.civId], NaN);
       if (!Number.isFinite(borderColorId) && Number.isFinite(ownerInfo.borderTag) && ownerInfo.borderTag > 0) borderColorId = ownerInfo.borderTag % 32;
       if (!Number.isFinite(borderColorId)) borderColorId = 0;
       borderColorId = ((borderColorId % 32) + 32) % 32;
-      const hasDifferentOwner = (neighborRecord) => {
+      const hasDifferentOwner = (nx, ny) => {
+        const neighborRecord = getTileAtCoord(nx, ny);
         if (!neighborRecord) return false;
-        const neighborInfo = resolveTileTerritoryInfo(neighborRecord);
+        const neighborInfo = resolveTileTerritoryInfo(neighborRecord, { xPos: nx, yPos: ny });
         if (!neighborInfo.hasOwner) return true;
         return neighborInfo.ownerKey !== ownerInfo.ownerKey;
       };
-      const nwBorder = hasDifferentOwner(getTileAtCoord(geom.xPos - 1, geom.yPos - 1));
-      const neBorder = hasDifferentOwner(getTileAtCoord(geom.xPos + 1, geom.yPos - 1));
-      const swBorder = hasDifferentOwner(getTileAtCoord(geom.xPos - 1, geom.yPos + 1));
-      const seBorder = hasDifferentOwner(getTileAtCoord(geom.xPos + 1, geom.yPos + 1));
+      const nwBorder = hasDifferentOwner(geom.xPos - 1, geom.yPos - 1);
+      const neBorder = hasDifferentOwner(geom.xPos + 1, geom.yPos - 1);
+      const swBorder = hasDifferentOwner(geom.xPos - 1, geom.yPos + 1);
+      const seBorder = hasDifferentOwner(geom.xPos + 1, geom.yPos + 1);
       if (!nwBorder && !neBorder && !swBorder && !seBorder) return;
       const edges = getTerritoryEdgesForColor(borderColorId);
       if (!edges) return;
@@ -19049,35 +19363,47 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       if (seBorder && edges[6]) ctx.drawImage(edges[6], 0, 0, 128, 72, sx, drawY, tileW, drawH);
     };
 
-    drawWoodlandOverlay();
-    drawHillyTerrainOverlay();
-    if (hasRoad) {
-      const idx = calculateRoadImageIndex(geom, 0x00000001);
-      drawSheetSprite(state.biqMapArtCache.roads, 16, 16, idx, sx, sy);
+    if (pass === 'all' || pass === 'tall') {
+      drawWoodlandOverlay();
+      drawHillyTerrainOverlay();
     }
-    if (hasRailroad) {
-      const idx = calculateRoadImageIndex(geom, 0x00000002);
-      drawSheetSprite(state.biqMapArtCache.railroads || state.biqMapArtCache.roads, 16, 16, idx, sx, sy);
-    }
-    if (hasIrrigation) {
-      const idx = calculateIrrigationIndex(geom);
-      let key = 'irrigationGrass';
-      if (baseTerrain === BIQ_TERRAIN.DESERT) key = 'irrigationDesert';
-      else if (baseTerrain === BIQ_TERRAIN.PLAINS) key = 'irrigationPlains';
-      else if (baseTerrain === BIQ_TERRAIN.TUNDRA) key = 'irrigationTundra';
-      drawSheetSprite(state.biqMapArtCache[key], 4, 4, idx, sx, sy);
-    }
-    if (hasMine || hasFort) {
-      const sheet = state.biqMapArtCache.terrainBuildings;
-      if (sheet) {
-        const cols = sheet.width >= 512 ? 4 : 3;
-        const rows = 4;
-        if (hasMine) drawSheetSprite(sheet, cols, rows, 6, sx, sy);
-        if (hasFort) drawSheetSprite(sheet, cols, rows, 0, sx, sy);
+    if (pass === 'all' || pass === 'flat') {
+      if (hasRoad) {
+        const idx = calculateRoadImageIndex(geom, 0x00000001);
+        drawSheetSprite(state.biqMapArtCache.roads, 16, 16, idx, sx, sy);
       }
+      if (hasRailroad) {
+        const idx = calculateRoadImageIndex(geom, 0x00000002);
+        drawSheetSprite(state.biqMapArtCache.railroads || state.biqMapArtCache.roads, 16, 16, idx, sx, sy);
+      }
+      if (hasIrrigation) {
+        const canDrawIrrigation = (
+          realTerrain === BIQ_TERRAIN.DESERT
+          || realTerrain === BIQ_TERRAIN.PLAINS
+          || realTerrain === BIQ_TERRAIN.GRASSLAND
+          || realTerrain === BIQ_TERRAIN.TUNDRA
+        );
+        if (canDrawIrrigation) {
+          const idx = calculateIrrigationIndex(geom);
+          let key = 'irrigationGrass';
+          if (realTerrain === BIQ_TERRAIN.DESERT) key = 'irrigationDesert';
+          else if (realTerrain === BIQ_TERRAIN.PLAINS) key = 'irrigationPlains';
+          else if (realTerrain === BIQ_TERRAIN.TUNDRA) key = 'irrigationTundra';
+          drawSheetSprite(state.biqMapArtCache[key], 4, 4, idx, sx, sy);
+        }
+      }
+      if (hasMine || hasFort) {
+        const sheet = state.biqMapArtCache.terrainBuildings;
+        if (sheet) {
+          const cols = sheet.width >= 512 ? 4 : 3;
+          const rows = 4;
+          if (hasMine) drawSheetSprite(sheet, cols, rows, 6, sx, sy);
+          if (hasFort) drawSheetSprite(sheet, cols, rows, 0, sx, sy);
+        }
+      }
+      drawRivers();
+      drawTerritoryBorders();
     }
-    drawRivers();
-    drawTerritoryBorders();
   };
 
   const drawDistrictOverlay = (record, sx, sy) => {
@@ -19179,17 +19505,25 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
   }
 
-  for (let i = 0; i < overlayPassItems.length; i += 1) {
-    const item = overlayPassItems[i];
-    if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
-      drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy);
+  if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
+    for (let i = 0; i < overlayPassItems.length; i += 1) {
+      const item = overlayPassItems[i];
+      drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy, 'tall');
+    }
+    for (let i = 0; i < overlayPassItems.length; i += 1) {
+      const item = overlayPassItems[i];
+      drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy, 'flat');
       drawCityOverlay(item.record, item.geom, item.sx, item.sy);
       drawResourceOverlay(item.record, item.sx, item.sy);
       drawDistrictOverlay(item.record, item.sx, item.sy);
       drawUnitOverlay(item.record, item.geom, item.sx, item.sy);
       drawFogOverlay(item.record, item.sx, item.sy);
     }
-    if (state.biqMapShowGrid && tilePx >= 5) {
+  }
+
+  if (state.biqMapShowGrid && tilePx >= 5) {
+    for (let i = 0; i < overlayPassItems.length; i += 1) {
+      const item = overlayPassItems[i];
       ctx.strokeStyle = 'rgba(0,0,0,0.2)';
       ctx.beginPath();
       ctx.moveTo(item.sx + Math.floor(tileW / 2), item.sy);
@@ -19202,9 +19536,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   }
 
   if (state.biqMapLayer === 'terrain' && tilePx >= 4 && state.biqMapShowOverlays) {
-    for (let i = 0; i < overlayPassItems.length; i += 1) {
-      const item = overlayPassItems[i];
-      drawCityNameOverlay(item.record, item.geom, item.sx, item.sy);
+    for (let i = 0; i <= maxIdx; i += 1) {
+      const record = tiles[i];
+      const geom = tileGeom[i];
+      const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
+      const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
+      for (const wrapDx of drawWrapOffsets) {
+        drawCityNameOverlay(record, geom, basePos.sx + wrapDx, basePos.sy);
+      }
     }
   }
 

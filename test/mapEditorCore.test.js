@@ -3,11 +3,10 @@ const assert = require('node:assert/strict');
 const mapCore = require('../src/mapEditorCore');
 
 function makeTile(index, width) {
-  const pairY = Math.floor(index / width) * 2;
-  const rem = index % width;
   const half = Math.floor(width / 2);
-  const x = rem < half ? rem * 2 : ((rem - half) * 2) + 1;
-  const y = rem < half ? pairY : pairY + 1;
+  const row = Math.floor(index / half);
+  const x = ((index % half) * 2) + ((row & 1) === 1 ? 1 : 0);
+  const y = row;
   return {
     index,
     fields: [
@@ -48,18 +47,17 @@ test('applyTerrain writes baserealterrain and c3cbaserealterrain', () => {
 test('applyOverlay toggles bool-like overlay fields', () => {
   const tiles = [makeTile(0, 4), makeTile(1, 4)];
   mapCore.applyOverlay(tiles, [0, 1], 'road', true);
-  assert.equal(mapCore.getField(tiles[0], 'road').value, 'true');
-  assert.equal(mapCore.getField(tiles[1], 'road').value, 'true');
+  assert.equal(mapCore.getField(tiles[0], 'c3coverlays').value, String(0x00000001));
+  assert.equal(mapCore.getField(tiles[1], 'c3coverlays').value, String(0x00000001));
   mapCore.applyOverlay(tiles, [0], 'airfield', true);
   mapCore.applyOverlay(tiles, [0], 'radartower', true);
   mapCore.applyOverlay(tiles, [0], 'outpost', true);
   mapCore.applyOverlay(tiles, [0], 'colony', true);
-  assert.equal(mapCore.getField(tiles[0], 'airfield').value, 'true');
-  assert.equal(mapCore.getField(tiles[0], 'radartower').value, 'true');
-  assert.equal(mapCore.getField(tiles[0], 'outpost').value, 'true');
-  assert.equal(mapCore.getField(tiles[0], 'colony').value, 'true');
+  const expectedMask = (0x00000001 | 0x20000000 | 0x40000000 | 0x80000000) >>> 0;
+  assert.equal(Number.parseInt(mapCore.getField(tiles[0], 'c3coverlays').value, 10) >>> 0, expectedMask);
+  assert.equal(mapCore.getField(tiles[0], 'colony'), null);
   mapCore.applyOverlay(tiles, [1], 'road', false);
-  assert.equal(mapCore.getField(tiles[1], 'road').value, 'false');
+  assert.equal(Number.parseInt(mapCore.getField(tiles[1], 'c3coverlays').value, 10) >>> 0, 0);
 });
 
 test('applyOverlay supports special ruin/victory values', () => {
@@ -67,7 +65,7 @@ test('applyOverlay supports special ruin/victory values', () => {
   mapCore.applyOverlay(tiles, [0], 'ruins', true);
   mapCore.applyOverlay(tiles, [0], 'victorypoint', true);
   assert.equal(mapCore.getField(tiles[0], 'ruin').value, '1');
-  assert.equal(mapCore.getField(tiles[0], 'victorypointlocation').value, '1');
+  assert.equal(mapCore.getField(tiles[0], 'victorypointlocation').value, '0');
 });
 
 test('applyFog writes fogofwar as 0 for add, 1 for remove', () => {
@@ -165,8 +163,9 @@ test('addCity/addUnit assign monotonically increasing record indexes', () => {
 
 test('multi-step map editing flow updates tile data consistently', () => {
   const width = 8;
-  const tiles = new Array(64).fill(null).map((_, idx) => makeTile(idx, width));
-  const center = 20;
+  const height = 8;
+  const tiles = new Array(Math.floor((width * height) / 2)).fill(null).map((_, idx) => makeTile(idx, width));
+  const center = 10;
   const brush = mapCore.computeBrushTileIndexes(width, tiles.length, center, 3);
   assert.ok(brush.length > 1, 'expected multi-tile brush');
   mapCore.applyTerrain(tiles, brush, 5);
@@ -177,7 +176,7 @@ test('multi-step map editing flow updates tile data consistently', () => {
   brush.forEach((idx) => {
     const tile = tiles[idx];
     assert.equal(mapCore.getField(tile, 'baserealterrain').value, packTerrain(5));
-    assert.equal(mapCore.getField(tile, 'road').value, 'true');
+    assert.equal((Number.parseInt(mapCore.getField(tile, 'c3coverlays').value, 10) & 0x00000001), 0x00000001);
     assert.equal(mapCore.getField(tile, 'fogofwar').value, '0');
     assert.equal(mapCore.getField(tile, 'district').value, '2,1');
   });
