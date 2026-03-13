@@ -593,6 +593,40 @@ function resolveConquestsAssetPath(civ3Path, rawAssetPath, scenarioPath, scenari
   return candidates.find((p) => fileExists(p)) || null;
 }
 
+function readAnimNameFromPedia(civ3Path, scenarioPath, scenarioPaths, animKey) {
+  const civ3Root = resolveCiv3Root(civ3Path);
+  const conquestsRoot = resolveConquestsRoot(civ3Path);
+  const ptwRoot = resolvePtwRoot(civ3Path);
+  const scenarioRoots = normalizeScenarioRoots(scenarioPath, scenarioPaths);
+  const candidates = [];
+  scenarioRoots.forEach((root) => candidates.push(path.join(root, 'Text', 'PediaIcons.txt')));
+  candidates.push(
+    path.join(conquestsRoot, 'Text', 'PediaIcons.txt'),
+    path.join(ptwRoot, 'Text', 'PediaIcons.txt'),
+    path.join(civ3Root, 'Text', 'PediaIcons.txt')
+  );
+  const upperKey = `#${animKey.toUpperCase()}`;
+  for (const pediaPath of candidates) {
+    if (!fileExists(pediaPath)) continue;
+    try {
+      const lines = fs.readFileSync(pediaPath, 'latin1').split(/\r?\n/);
+      let inBlock = false;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.toUpperCase() === upperKey) { inBlock = true; continue; }
+        if (inBlock) {
+          if (trimmed.startsWith('#')) break;
+          if (trimmed && !trimmed.startsWith(';')) {
+            const val = trimmed.replace(/\s*;.*$/, '').replace(/^["']|["']$/g, '').trim();
+            if (val) return val;
+          }
+        }
+      }
+    } catch (_) { /* try next */ }
+  }
+  return null;
+}
+
 function resolveUnitIniPath(civ3Path, animationName, scenarioPath, scenarioPaths) {
   if (!civ3Path || !animationName) return null;
   const civ3Root = resolveCiv3Root(civ3Path);
@@ -735,6 +769,30 @@ function getPreview(request) {
     const flc = parseIniForFlc(unitIni);
     if (!flc || !fileExists(flc)) return { ok: false, error: 'No FLC found in unit INI' };
     return { ok: true, ...decodeByPath(flc) };
+  }
+
+  if (kind === 'unitFlcFirstFrame') {
+    // Resolve ANIMNAME_PRTO_<NAME> from PediaIcons layers, then decode frame 0 (SW direction).
+    const prtoName = String(request.prtoName || '').trim();
+    if (!prtoName) return { ok: false, error: 'No prtoName provided' };
+    const upperName = prtoName.toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '');
+    const animKey = `ANIMNAME_PRTO_${upperName}`;
+    const animationName = readAnimNameFromPedia(civ3Path, scenarioPath, scenarioPaths, animKey);
+    if (!animationName) return { ok: false, error: `${animKey} not found in PediaIcons` };
+    const unitIni = resolveUnitIniPath(civ3Path, animationName, scenarioPath, scenarioPaths);
+    if (!unitIni) return { ok: false, error: `Unit INI not found for "${animationName}"` };
+    const manifest = parseUnitAnimationIni(unitIni);
+    if (!manifest || !Array.isArray(manifest.actions) || manifest.actions.length === 0) {
+      return { ok: false, error: 'No actions in unit INI' };
+    }
+    const action = manifest.actions.find((a) => a.key === 'DEFAULT' && a.exists)
+      || manifest.actions.find((a) => a.exists);
+    if (!action || !fileExists(action.flcPath)) return { ok: false, error: 'No valid FLC for DEFAULT action' };
+    // SW-facing is always frame 0 (direction index 0, firstFrame = anim_length * 0).
+    const decoded = decodeFlcFrames(action.flcPath, 1, { civ3UnitPalette: true });
+    const frameBase64 = decoded.framesBase64 && decoded.framesBase64[0];
+    if (!frameBase64) return { ok: false, error: 'Could not decode first frame' };
+    return { ok: true, animated: false, rgbaBase64: frameBase64, width: decoded.width, height: decoded.height };
   }
 
   if (kind === 'unitAnimationManifest') {

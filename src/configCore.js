@@ -3372,18 +3372,29 @@ function parseIniLines(text) {
   }
 
   const lines = text.split(/\r?\n/);
+  let pendingComments = [];
   for (const line of lines) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith(';') || trimmed.startsWith('[')) {
+    if (trimmed.startsWith(';')) {
+      pendingComments.push(line);
+      continue;
+    }
+    if (!trimmed) {
+      pendingComments = [];
+      continue;
+    }
+    if (trimmed.startsWith('[')) {
       continue;
     }
     const match = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
     if (!match) {
+      pendingComments = [];
       continue;
     }
     const key = match[1];
     const value = match[2];
-    rows.push({ key, value });
+    rows.push({ key, value, leadingComments: pendingComments });
+    pendingComments = [];
     map[key] = value;
   }
 
@@ -3526,8 +3537,8 @@ function buildBaseModel(defaultText, scenarioText, customText, mode, targetText)
 
   const effective = { ...defaultParsed.map };
   if (mode === 'scenario') {
-    Object.assign(effective, customParsed.map);
     Object.assign(effective, scenarioParsed.map);
+    Object.assign(effective, customParsed.map);
   } else {
     Object.assign(effective, customParsed.map);
   }
@@ -3554,10 +3565,10 @@ function buildBaseModel(defaultText, scenarioText, customText, mode, targetText)
     const effectiveValue = effective[key] ?? '';
     const editableValue = editableMap[key] ?? effectiveValue;
     let source = 'default';
-    if (mode === 'scenario' && Object.prototype.hasOwnProperty.call(scenarioParsed.map, key)) {
-      source = 'scenario';
-    } else if (Object.prototype.hasOwnProperty.call(customParsed.map, key)) {
+    if (Object.prototype.hasOwnProperty.call(customParsed.map, key)) {
       source = 'custom';
+    } else if (mode === 'scenario' && Object.prototype.hasOwnProperty.call(scenarioParsed.map, key)) {
+      source = 'scenario';
     }
     return {
       key,
@@ -3569,11 +3580,19 @@ function buildBaseModel(defaultText, scenarioText, customText, mode, targetText)
     };
   });
 
+  const commentsByKey = {};
+  for (const row of targetParsed.rows) {
+    if (row.leadingComments && row.leadingComments.length > 0) {
+      commentsByKey[row.key] = row.leadingComments;
+    }
+  }
+
   return {
     rows,
     defaultMap: defaultParsed.map,
     effectiveMap: effective,
-    sourceOrder: mode === 'scenario' ? ['default', 'custom', 'scenario'] : ['default', 'custom']
+    sourceOrder: mode === 'scenario' ? ['default', 'custom', 'scenario'] : ['default', 'custom'],
+    commentsByKey
   };
 }
 
@@ -3756,7 +3775,7 @@ function serializeSectionedConfig(model, marker, options = null) {
   return ensureTrailingNewline(lines.join('\n'));
 }
 
-function serializeBaseConfig(baseRows, defaultMap, mode) {
+function serializeBaseConfig(baseRows, defaultMap, mode, commentsByKey = {}) {
   const lines = [];
   lines.push('; Managed by Civ 3 | C3X Modern Configuration Manager');
   lines.push(`; Mode: ${mode}`);
@@ -3767,6 +3786,10 @@ function serializeBaseConfig(baseRows, defaultMap, mode) {
     const val = String(row.value ?? '').trim();
     const defaultVal = String(defaultMap[key] ?? '').trim();
     if (val !== defaultVal && val !== '') {
+      const comments = commentsByKey[key];
+      if (comments && comments.length > 0) {
+        for (const c of comments) lines.push(c);
+      }
       lines.push(`${key} = ${val}`);
     }
   }
@@ -3839,7 +3862,7 @@ function loadBundle(payload) {
     const scenarioDir = scenarioContext.biqRoot;
     const scenarioSearchPaths = scenarioContext.searchRoots;
 
-    const filePaths = resolvePaths({ c3xPath, scenarioPath: scenarioContext.biqRoot, mode });
+    const filePaths = resolvePaths({ c3xPath, scenarioPath: mode === 'scenario' ? scenarioContext.contentWriteRoot : scenarioContext.biqRoot, mode });
     const bundle = {
       mode,
       c3xPath,
@@ -4312,7 +4335,7 @@ function buildSavePlan(payload) {
     };
   const scenarioDir = scenarioContext.biqRoot;
 
-  const filePaths = resolvePaths({ c3xPath, scenarioPath: scenarioContext.biqRoot, mode });
+  const filePaths = resolvePaths({ c3xPath, scenarioPath: mode === 'scenario' ? scenarioContext.contentWriteRoot : scenarioContext.biqRoot, mode });
   const failIfProtected = (candidatePath, label) => {
     if (!candidatePath) return null;
     if (mode === 'scenario') {
@@ -4354,7 +4377,7 @@ function buildSavePlan(payload) {
   if (shouldSaveBase && baseTab && filePaths.base.targetPath) {
     const protectErr = failIfProtected(filePaths.base.targetPath, 'base config target');
     if (protectErr) return { ok: false, error: protectErr };
-    const serialized = serializeBaseConfig(baseTab.rows, baseTab.defaultMap || {}, mode);
+    const serialized = serializeBaseConfig(baseTab.rows, baseTab.defaultMap || {}, mode, baseTab.commentsByKey || {});
     plannedWrites.push({
       kind: 'base',
       path: filePaths.base.targetPath,
@@ -4369,6 +4392,10 @@ function buildSavePlan(payload) {
     const spec = FILE_SPECS[kind];
     const targetPath = filePaths[kind].targetPath;
     if (!tab || !targetPath) {
+      continue;
+    }
+    const shouldSaveKind = dirtyTabs.size === 0 || dirtyTabs.has(kind);
+    if (!shouldSaveKind) {
       continue;
     }
     const protectErr = failIfProtected(targetPath, `${kind} target`);

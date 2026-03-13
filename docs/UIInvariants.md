@@ -40,6 +40,40 @@ Playback rules:
 - Preserve aspect ratio.
 - Honor configured frame timing.
 
+## C3X Version Gating
+
+Some UI features require a minimum C3X release. The mechanism is driven by the `c3xVersion` setting (`settings.json`), which stores the user's installed C3X release as a string like `'R28'`. An empty string means no filtering — all features are shown.
+
+The default value is defined in the `defaults` object inside the `manager:get-settings` handler in `main.js`. Change it there to shift the baseline for users who have no saved setting yet.
+
+### Gating a whole tab
+
+Add an entry to `TAB_MIN_RELEASE` in `src/renderer.js`:
+
+```js
+const TAB_MIN_RELEASE = Object.freeze({
+  animations: 'R28',
+  myNewTab: 'R29'   // ← add here
+});
+```
+
+`renderTabs()` checks `isTabVersionAllowed(key)` and omits any tab whose minimum release exceeds `c3xVersion`.
+
+### Gating a field within Districts, Wonder Districts, Natural Wonders, or Tile Animations
+
+Add `minRelease` to the field object in `SECTION_SCHEMAS`:
+
+```js
+{ key: 'some_new_key', label: 'Some New Field', desc: '...', type: 'text', minRelease: 'R28' }
+```
+
+`isSectionFieldVersionAllowed(field)` is applied to every field in the `orderedSchemaFields` pipeline before rendering.
+
+### Rules
+- `c3xVersion` empty → all gated features are shown (safe default).
+- Both helpers reuse `parseReleaseNumber()`, which strips the leading `'R'` and compares integers.
+- Gate the smallest unit possible: prefer field-level gating over tab-level gating unless the entire tab is new.
+
 ## Verification Gate
 Before finalizing significant UI work:
 

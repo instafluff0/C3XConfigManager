@@ -334,11 +334,13 @@ ipcMain.handle('manager:get-settings', async () => {
     mode: 'global',
     performanceMode: 'high',
     uiFontScale: 1,
-    uiStateByContext: {}
+    uiStateByContext: {},
+    c3xVersion: 'R26'
   };
   const saved = readJsonIfExists(getSettingsPath(), defaults);
   const merged = { ...defaults, ...(saved || {}) };
   merged.performanceMode = normalizePerformanceMode(merged.performanceMode);
+  if (!merged.c3xVersion) merged.c3xVersion = defaults.c3xVersion;
   const inferred = inferDefaultPaths(merged);
   inferred.performanceMode = normalizePerformanceMode(inferred.performanceMode);
   currentPerformanceMode = inferred.performanceMode;

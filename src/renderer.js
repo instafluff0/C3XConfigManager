@@ -355,6 +355,11 @@ const TAB_GROUPS = [
   { label: 'CIV 3', keys: ['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts', 'map', 'scenarioSettings', 'players', 'terrain', 'world', 'rules', 'terrainPedia', 'workerActions'] },
   { label: 'C3X', keys: ['base', 'districts', 'wonders', 'naturalWonders', 'animations'] }
 ];
+// Minimum C3X release required for each tab key. Tabs not listed here are always shown.
+// Use 'R<N>' strings to match the C3X_RELEASE_BY_KEY convention.
+const TAB_MIN_RELEASE = Object.freeze({
+  animations: 'R28'
+});
 const REFERENCE_MUTABLE_ENTITY_TABS = new Set(['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts']);
 const REFERENCE_TOP_NAME_EDIT_TABS = new Set(['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts']);
 const REFERENCE_PREFIX_BY_TAB = {
@@ -657,43 +662,43 @@ const SECTION_SCHEMAS = {
       { key: 'display_name', label: 'Display Name', desc: 'Name shown in UI.', type: 'text' },
       { key: 'tooltip', label: 'Tooltip Text', desc: 'Shown on worker command hover.', type: 'text' },
       { key: 'img_paths', label: 'Image Paths', desc: 'List of district PCX files.', type: 'list' },
-      { key: 'custom_width', label: 'Custom Width', desc: 'Optional custom district sprite width.', type: 'number' },
-      { key: 'custom_height', label: 'Custom Height', desc: 'Optional custom district sprite height.', type: 'number' },
-      { key: 'x_offset', label: 'X Offset', desc: 'Horizontal pixel offset for district art.', type: 'number' },
-      { key: 'y_offset', label: 'Y Offset', desc: 'Vertical pixel offset for district art.', type: 'number' },
+      { key: 'custom_width', label: 'Custom Width', desc: 'Optional custom district sprite width.', type: 'number', minRelease: 'R27' },
+      { key: 'custom_height', label: 'Custom Height', desc: 'Optional custom district sprite height.', type: 'number', minRelease: 'R27' },
+      { key: 'x_offset', label: 'X Offset', desc: 'Horizontal pixel offset for district art.', type: 'number', minRelease: 'R27' },
+      { key: 'y_offset', label: 'Y Offset', desc: 'Vertical pixel offset for district art.', type: 'number', minRelease: 'R27' },
       { key: 'btn_tile_sheet_row', label: 'Button Tile Row', desc: 'Row index in district button sheet.', type: 'number' },
       { key: 'btn_tile_sheet_column', label: 'Button Tile Column', desc: 'Column index in district button sheet.', type: 'number' },
       { key: 'advance_prereqs', label: 'Tech Prerequisites', desc: 'List of required advances.', type: 'list' },
-      { key: 'obsoleted_by', label: 'Obsoleted By', desc: 'Technology that disables this district.', type: 'list' },
+      { key: 'obsoleted_by', label: 'Obsoleted By', desc: 'Technology that disables this district.', type: 'list', minRelease: 'R27' },
       { key: 'dependent_improvs', label: 'Dependent Improvements', desc: 'List of city improvements this district unlocks.', type: 'list' },
-      { key: 'buildable_on', label: 'Buildable Terrain', desc: 'Allowed terrain list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake'] },
-      { key: 'buildable_adjacent_to', label: 'Adjacency Requirement', desc: 'Required adjacent terrain/city list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake', 'city'] },
-      { key: 'align_to_coast', label: 'Align To Coast', desc: 'Use coastline-oriented district art variants.', type: 'bool' },
-      { key: 'auto_add_road', label: 'Auto Add Road', desc: 'Automatically add roads when district is placed.', type: 'bool' },
-      { key: 'auto_add_railroad', label: 'Auto Add Railroad', desc: 'Automatically add railroads when district is placed.', type: 'bool' },
-      { key: 'buildable_on_overlays', label: 'Buildable Overlays', desc: 'Allowed overlays list.', type: 'list', options: ['irrigation', 'mine', 'fortress', 'barricade', 'outpost', 'radar-tower', 'airfield', 'jungle', 'forest', 'swamp'] },
-      { key: 'buildable_without_removal', label: 'Buildable Without Removal', desc: 'Overlays that do not require clearing.', type: 'list', options: ['jungle', 'forest', 'swamp'] },
-      { key: 'buildable_adjacent_to_overlays', label: 'Adjacent Overlays', desc: 'Required adjacent overlays.', type: 'list', options: ['irrigation', 'mine', 'fortress', 'barricade', 'outpost', 'radar-tower', 'airfield', 'jungle', 'forest', 'swamp', 'river'] },
-      { key: 'buildable_on_districts', label: 'Buildable On Districts', desc: 'District names that can be replaced.', type: 'list' },
-      { key: 'buildable_adjacent_to_districts', label: 'Adjacent Districts', desc: 'District names required adjacent.', type: 'list' },
-      { key: 'buildable_by_civs', label: 'Allowed Civs', desc: 'Civ names that may build this district.', type: 'list' },
-      { key: 'buildable_by_civ_traits', label: 'Allowed Traits', desc: 'Trait names that may build this district.', type: 'list' },
-      { key: 'buildable_by_civ_govs', label: 'Allowed Governments', desc: 'Government names that may build this district.', type: 'list' },
-      { key: 'buildable_by_civ_cultures', label: 'Allowed Cultures', desc: 'Culture names that may build this district.', type: 'list' },
-      { key: 'resource_prereqs', label: 'Resource Prerequisites', desc: 'Resource names required nearby.', type: 'list' },
-      { key: 'wonder_prereqs', label: 'Wonder Prerequisites', desc: 'Wonder names required by civ.', type: 'list' },
-      { key: 'natural_wonder_prereqs', label: 'Natural Wonder Prerequisites', desc: 'Natural wonder names required in territory.', type: 'list' },
+      { key: 'buildable_on', label: 'Buildable Terrain', desc: 'Allowed terrain list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake'], minRelease: 'R27' },
+      { key: 'buildable_adjacent_to', label: 'Adjacency Requirement', desc: 'Required adjacent terrain/city list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake', 'city'], minRelease: 'R27' },
+      { key: 'align_to_coast', label: 'Align To Coast', desc: 'Use coastline-oriented district art variants.', type: 'bool', minRelease: 'R27' },
+      { key: 'auto_add_road', label: 'Auto Add Road', desc: 'Automatically add roads when district is placed.', type: 'bool', minRelease: 'R27' },
+      { key: 'auto_add_railroad', label: 'Auto Add Railroad', desc: 'Automatically add railroads when district is placed.', type: 'bool', minRelease: 'R27' },
+      { key: 'buildable_on_overlays', label: 'Buildable Overlays', desc: 'Allowed overlays list.', type: 'list', options: ['irrigation', 'mine', 'fortress', 'barricade', 'outpost', 'radar-tower', 'airfield', 'jungle', 'forest', 'swamp'], minRelease: 'R27' },
+      { key: 'buildable_without_removal', label: 'Buildable Without Removal', desc: 'Overlays that do not require clearing.', type: 'list', options: ['jungle', 'forest', 'swamp'], minRelease: 'R27' },
+      { key: 'buildable_adjacent_to_overlays', label: 'Adjacent Overlays', desc: 'Required adjacent overlays.', type: 'list', options: ['irrigation', 'mine', 'fortress', 'barricade', 'outpost', 'radar-tower', 'airfield', 'jungle', 'forest', 'swamp', 'river'], minRelease: 'R27' },
+      { key: 'buildable_on_districts', label: 'Buildable On Districts', desc: 'District names that can be replaced.', type: 'list', minRelease: 'R27' },
+      { key: 'buildable_adjacent_to_districts', label: 'Adjacent Districts', desc: 'District names required adjacent.', type: 'list', minRelease: 'R27' },
+      { key: 'buildable_by_civs', label: 'Allowed Civs', desc: 'Civ names that may build this district.', type: 'list', minRelease: 'R27' },
+      { key: 'buildable_by_civ_traits', label: 'Allowed Traits', desc: 'Trait names that may build this district.', type: 'list', minRelease: 'R27' },
+      { key: 'buildable_by_civ_govs', label: 'Allowed Governments', desc: 'Government names that may build this district.', type: 'list', minRelease: 'R27' },
+      { key: 'buildable_by_civ_cultures', label: 'Allowed Cultures', desc: 'Culture names that may build this district.', type: 'list', minRelease: 'R27' },
+      { key: 'resource_prereqs', label: 'Resource Prerequisites', desc: 'Resource names required nearby.', type: 'list', minRelease: 'R27' },
+      { key: 'wonder_prereqs', label: 'Wonder Prerequisites', desc: 'Wonder names required by civ.', type: 'list', minRelease: 'R27' },
+      { key: 'natural_wonder_prereqs', label: 'Natural Wonder Prerequisites', desc: 'Natural wonder names required in territory.', type: 'list', minRelease: 'R27' },
       { key: 'allow_multiple', label: 'Allow Multiple', desc: 'Allow multiple copies per city.', type: 'bool' },
       { key: 'vary_img_by_era', label: 'Vary Art By Era', desc: 'Use era-specific rows in art.', type: 'bool' },
       { key: 'vary_img_by_culture', label: 'Vary Art By Culture', desc: 'Use culture-variant image set.', type: 'bool' },
-      { key: 'draw_over_resources', label: 'Draw Over Resources', desc: 'Draw district art above map resources.', type: 'bool' },
+      { key: 'draw_over_resources', label: 'Draw Over Resources', desc: 'Draw district art above map resources.', type: 'bool', minRelease: 'R27' },
       { key: 'defense_bonus_percent', label: 'Defense Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' },
       { key: 'culture_bonus', label: 'Culture Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' },
       { key: 'science_bonus', label: 'Science Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' },
       { key: 'food_bonus', label: 'Food Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' },
       { key: 'gold_bonus', label: 'Gold Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' },
       { key: 'shield_bonus', label: 'Shield Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' },
-      { key: 'happiness_bonus', label: 'Happiness Bonus', desc: 'Base + conditional bonus syntax.', type: 'text' }
+      { key: 'happiness_bonus', label: 'Happiness Bonus', desc: 'Base + conditional bonus syntax.', type: 'text', minRelease: 'R27' }
     ],
     template: {
       name: 'New District',
@@ -708,26 +713,26 @@ const SECTION_SCHEMAS = {
     titleKey: 'name',
     fields: [
       { key: 'name', label: 'Wonder Name', desc: 'Must match the in-game wonder improvement name.', type: 'select', required: true },
-      { key: 'buildable_on', label: 'Buildable Terrain', desc: 'Allowed terrain list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake'] },
-      { key: 'buildable_adjacent_to', label: 'Adjacency Requirement', desc: 'Adjacent terrain/city list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake', 'city'] },
-      { key: 'buildable_adjacent_to_overlays', label: 'Adjacent Overlays', desc: 'Required adjacent overlays.', type: 'list', options: ['irrigation', 'mine', 'fortress', 'barricade', 'outpost', 'radar-tower', 'airfield', 'jungle', 'forest', 'swamp', 'river'] },
-      { key: 'buildable_by_civs', label: 'Allowed Civs', desc: 'Civ names that may build this wonder district.', type: 'list' },
-      { key: 'buildable_by_civ_traits', label: 'Allowed Traits', desc: 'Trait names that may build this wonder district.', type: 'list' },
-      { key: 'buildable_by_civ_govs', label: 'Allowed Governments', desc: 'Government names that may build this wonder district.', type: 'list' },
-      { key: 'buildable_by_civ_cultures', label: 'Allowed Cultures', desc: 'Culture names that may build this wonder district.', type: 'list' },
-      { key: 'buildable_only_on_rivers', label: 'River Required', desc: 'Require wonder tile to be on a river.', type: 'bool' },
+      { key: 'buildable_on', label: 'Buildable Terrain', desc: 'Allowed terrain list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake'], minRelease: 'R27' },
+      { key: 'buildable_adjacent_to', label: 'Adjacency Requirement', desc: 'Adjacent terrain/city list.', type: 'list', options: [...TERRAIN_OPTIONS, 'lake', 'city'], minRelease: 'R27' },
+      { key: 'buildable_adjacent_to_overlays', label: 'Adjacent Overlays', desc: 'Required adjacent overlays.', type: 'list', options: ['irrigation', 'mine', 'fortress', 'barricade', 'outpost', 'radar-tower', 'airfield', 'jungle', 'forest', 'swamp', 'river'], minRelease: 'R27' },
+      { key: 'buildable_by_civs', label: 'Allowed Civs', desc: 'Civ names that may build this wonder district.', type: 'list', minRelease: 'R27' },
+      { key: 'buildable_by_civ_traits', label: 'Allowed Traits', desc: 'Trait names that may build this wonder district.', type: 'list', minRelease: 'R27' },
+      { key: 'buildable_by_civ_govs', label: 'Allowed Governments', desc: 'Government names that may build this wonder district.', type: 'list', minRelease: 'R27' },
+      { key: 'buildable_by_civ_cultures', label: 'Allowed Cultures', desc: 'Culture names that may build this wonder district.', type: 'list', minRelease: 'R27' },
+      { key: 'buildable_only_on_rivers', label: 'River Required', desc: 'Require wonder tile to be on a river.', type: 'bool', minRelease: 'R27' },
       { key: 'img_path', label: 'Image Path', desc: 'District wonder art PCX file.', type: 'text' },
       { key: 'img_construct_row', label: 'Construct Row', desc: 'Construction art row index.', type: 'number', required: true },
       { key: 'img_construct_column', label: 'Construct Column', desc: 'Construction art column index.', type: 'number', required: true },
       { key: 'img_row', label: 'Completed Row', desc: 'Completed wonder art row index.', type: 'number', required: true },
       { key: 'img_column', label: 'Completed Column', desc: 'Completed wonder art column index.', type: 'number', required: true },
-      { key: 'enable_img_alt_dir', label: 'Enable Alt Direction Art', desc: 'Use alternate directional art set.', type: 'bool' },
-      { key: 'img_alt_dir_construct_row', label: 'Alt Construct Row', desc: 'Alternate-direction construction art row index.', type: 'number' },
-      { key: 'img_alt_dir_construct_column', label: 'Alt Construct Column', desc: 'Alternate-direction construction art column index.', type: 'number' },
-      { key: 'img_alt_dir_row', label: 'Alt Completed Row', desc: 'Alternate-direction completed art row index.', type: 'number' },
-      { key: 'img_alt_dir_column', label: 'Alt Completed Column', desc: 'Alternate-direction completed art column index.', type: 'number' },
-      { key: 'custom_width', label: 'Custom Width', desc: 'Override wonder sprite width in pixels.', type: 'number' },
-      { key: 'custom_height', label: 'Custom Height', desc: 'Override wonder sprite height in pixels.', type: 'number' }
+      { key: 'enable_img_alt_dir', label: 'Enable Alt Direction Art', desc: 'Use alternate directional art set.', type: 'bool', minRelease: 'R27' },
+      { key: 'img_alt_dir_construct_row', label: 'Alt Construct Row', desc: 'Alternate-direction construction art row index.', type: 'number', minRelease: 'R27' },
+      { key: 'img_alt_dir_construct_column', label: 'Alt Construct Column', desc: 'Alternate-direction construction art column index.', type: 'number', minRelease: 'R27' },
+      { key: 'img_alt_dir_row', label: 'Alt Completed Row', desc: 'Alternate-direction completed art row index.', type: 'number', minRelease: 'R27' },
+      { key: 'img_alt_dir_column', label: 'Alt Completed Column', desc: 'Alternate-direction completed art column index.', type: 'number', minRelease: 'R27' },
+      { key: 'custom_width', label: 'Custom Width', desc: 'Override wonder sprite width in pixels.', type: 'number', minRelease: 'R27' },
+      { key: 'custom_height', label: 'Custom Height', desc: 'Override wonder sprite height in pixels.', type: 'number', minRelease: 'R27' }
     ],
     template: {
       name: 'New Wonder',
@@ -755,10 +760,10 @@ const SECTION_SCHEMAS = {
       { key: 'food_bonus', label: 'Food Bonus', desc: 'Worked-tile food bonus.', type: 'number' },
       { key: 'gold_bonus', label: 'Gold Bonus', desc: 'Worked-tile gold bonus.', type: 'number' },
       { key: 'shield_bonus', label: 'Shield Bonus', desc: 'Worked-tile shield bonus.', type: 'number' },
-      { key: 'happiness_bonus', label: 'Happiness Bonus', desc: 'Worked-tile happiness bonus.', type: 'number' },
-      { key: 'impassible', label: 'Impassible', desc: 'Disallow movement through tile.', type: 'bool' },
-      { key: 'impassible_to_wheeled', label: 'Impassible To Wheeled', desc: 'Disallow wheeled movement unless connected.', type: 'bool' },
-      { key: 'animation', label: 'Animation Item', desc: 'Natural wonder animation spec string.', type: 'text', multi: true }
+      { key: 'happiness_bonus', label: 'Happiness Bonus', desc: 'Worked-tile happiness bonus.', type: 'number', minRelease: 'R27' },
+      { key: 'impassible', label: 'Impassible', desc: 'Disallow movement through tile.', type: 'bool', minRelease: 'R27' },
+      { key: 'impassible_to_wheeled', label: 'Impassible To Wheeled', desc: 'Disallow wheeled movement unless connected.', type: 'bool', minRelease: 'R27' },
+      { key: 'animation', label: 'Animation Item', desc: 'Natural wonder animation spec string.', type: 'text', multi: true, minRelease: 'R28' }
     ],
     template: {
       name: 'New Natural Wonder',
@@ -1387,6 +1392,29 @@ function collectFilesModalEntries() {
     }
   }
 
+  for (const tabKey of ['districts', 'wonders', 'naturalWonders', 'animations']) {
+    const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+    const tabTargetPath = String((tab && tab.targetPath) || '').trim();
+    if (!tabTargetPath) continue;
+    const tabDirty = getTabDirtyCount(tabKey) > 0;
+    const tabExisting = byPath.get(tabTargetPath);
+    const tabTitle = String((tab && tab.title) || tabKey);
+    const tabEntry = tabExisting || {
+      path: tabTargetPath,
+      kind: 'write',
+      note: `Primary ${tabTitle} save target`,
+      potentialWrite: true
+    };
+    tabEntry.kind = 'write';
+    tabEntry.note = tabEntry.note || `Primary ${tabTitle} save target`;
+    tabEntry.potentialWrite = !!tabDirty;
+    tabEntry.changeCategory = tabEntry.changeCategory || '';
+    if (!tabExisting) {
+      out.push(tabEntry);
+      byPath.set(tabTargetPath, tabEntry);
+    }
+  }
+
   return out.sort((a, b) => {
     const aAccess = state.filesReadAccessByPath[String(a && a.path || '').trim()] || null;
     const bAccess = state.filesReadAccessByPath[String(b && b.path || '').trim()] || null;
@@ -1532,7 +1560,7 @@ function getFilesEntryFileType(entry, classification) {
   if (/\.biq$/i.test(pathValue)) return 'biq';
   if (isAnimationIniEntry(entry)) return 'animationIni';
   if (/\.txt$/i.test(pathValue)) return 'text';
-  if (/\.ini$/i.test(pathValue) && classification && classification.scope === 'c3x') return 'configIni';
+  if (/\.ini$/i.test(pathValue)) return 'configIni';
   return 'other';
 }
 
@@ -1785,19 +1813,16 @@ function renderFilesReadModal() {
       accessBadge.className = `files-read-badge ${access.writable ? 'ok' : 'warn'}`;
       accessBadge.textContent = access.writable ? 'Writable' : 'Read-only on disk';
     } else if (access && !access.exists) {
-      if (entry.potentialWrite && changeCategory === 'new' && access.parentPath) {
-        if (access.parentWritable) {
-          showAccessBadge = false;
-        } else {
+      if (entry.potentialWrite) {
+        if (access.parentPath && !access.parentWritable) {
           accessBadge.className = 'files-read-badge warn';
           accessBadge.textContent = 'Cannot create';
+        } else {
+          showAccessBadge = false;
         }
-      } else if (entry.isPrimaryBaseTarget) {
-        accessBadge.className = 'files-read-badge neutral';
-        accessBadge.textContent = 'Not created yet';
       } else {
         accessBadge.className = 'files-read-badge neutral';
-        accessBadge.textContent = 'Missing';
+        accessBadge.textContent = 'Not created yet';
       }
     } else {
       accessBadge.className = 'files-read-badge neutral';
@@ -1886,6 +1911,7 @@ function refreshDirtyUi() {
     el.saveBtn.title = state.sectionValidationError || '';
   }
   if (el.dirtyIndicator) el.dirtyIndicator.classList.toggle('hidden', !state.isDirty);
+  if (el.filesReadToggle) el.filesReadToggle.classList.toggle('dirty', state.isDirty);
   if (el.undoBtn) el.undoBtn.disabled = !state.undoSnapshot || state.isLoading;
 }
 
@@ -2079,11 +2105,17 @@ function computeTabDirtyCount(tabKey) {
   if (currentTab.model && Array.isArray(currentTab.model.sections)) {
     const curSections = currentTab.model.sections;
     const prevSections = cleanTab && cleanTab.model && Array.isArray(cleanTab.model.sections) ? cleanTab.model.sections : [];
-    const max = Math.max(curSections.length, prevSections.length);
+    // Match by name so deletions/insertions don't cause cascading false positives from index shifts.
+    const sectionName = (s) => (s && Array.isArray(s.fields)) ? String(getFieldValue(s, 'name') || '').trim().toLowerCase() : '';
+    const prevByName = new Map(prevSections.map((s) => [sectionName(s), s]));
+    const curByName = new Map(curSections.map((s) => [sectionName(s), s]));
     let changed = 0;
-    for (let i = 0; i < max; i += 1) {
-      if (hasChangedFromClean(curSections[i] || null, prevSections[i] || null)) changed += 1;
-    }
+    curByName.forEach((curSection, name) => {
+      if (hasChangedFromClean(curSection, prevByName.get(name) || null)) changed += 1;
+    });
+    prevByName.forEach((_, name) => {
+      if (!curByName.has(name)) changed += 1;
+    });
     return changed;
   }
 
@@ -2181,14 +2213,7 @@ function updateActiveDirtyCaches() {
   }
 
   if (tab.model && Array.isArray(tab.model.sections)) {
-    const selectedIndex = Number(state.sectionSelection[tabKey] || 0);
-    const section = tab.model.sections[selectedIndex];
-    if (!section) return;
-    const set = ensureSectionDirtySet(tabKey);
-    const cleanSection = getCleanSectionByIndex(tabKey, selectedIndex);
-    if (hasChangedFromClean(section, cleanSection)) set.add(selectedIndex);
-    else set.delete(selectedIndex);
-    setTabDirtyCount(tabKey, set.size);
+    recomputeDirtyCountForTab(tabKey);
     return;
   }
 
@@ -2239,8 +2264,14 @@ function isReferenceEntryDirty(tabKey, entry) {
 
 function isSectionItemDirty(tabKey, sectionIndex, sectionObj) {
   if (!state.isDirty) return false;
-  const set = state.dirtySectionIndexesByTab && state.dirtySectionIndexesByTab[tabKey];
-  return !!(set && set.has(Number(sectionIndex)));
+  const cleanTabs = getCleanTabsObject();
+  const cleanTab = cleanTabs[tabKey];
+  const cleanSections = cleanTab && cleanTab.model && Array.isArray(cleanTab.model.sections) ? cleanTab.model.sections : [];
+  const name = (sectionObj && Array.isArray(sectionObj.fields)) ? String(getFieldValue(sectionObj, 'name') || '').trim().toLowerCase() : '';
+  const cleanSection = name
+    ? (cleanSections.find((s) => Array.isArray(s && s.fields) && String(getFieldValue(s, 'name') || '').trim().toLowerCase() === name) || null)
+    : getCleanSectionByIndex(tabKey, Number(sectionIndex));
+  return hasChangedFromClean(sectionObj || null, cleanSection);
 }
 
 function isBiqRecordDirty(tabKey, sectionCode, recordObj) {
@@ -3673,6 +3704,30 @@ function getBaseFieldSource(row) {
 
 function toFriendlyKey(key) {
   return key.split('_').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+}
+
+function parseReleaseNumber(label) {
+  const n = parseInt(String(label || '').replace(/^R/i, ''), 10);
+  return isNaN(n) ? 0 : n;
+}
+
+function isTabVersionAllowed(tabKey) {
+  const minRelease = TAB_MIN_RELEASE[tabKey];
+  if (!minRelease) return true;
+  const configured = String((state.settings && state.settings.c3xVersion) || '').trim();
+  if (!configured) return true; // no version set → show everything
+  return parseReleaseNumber(configured) >= parseReleaseNumber(minRelease);
+}
+
+// Returns false when a section field carries a minRelease that exceeds the
+// configured c3xVersion. Add minRelease: 'R<N>' to any field object in
+// SECTION_SCHEMAS to gate it. No minRelease (or no version configured) → always shown.
+function isSectionFieldVersionAllowed(field) {
+  const minRelease = field && field.minRelease;
+  if (!minRelease) return true;
+  const configured = String((state.settings && state.settings.c3xVersion) || '').trim();
+  if (!configured) return true;
+  return parseReleaseNumber(configured) >= parseReleaseNumber(minRelease);
 }
 
 function getC3xReleaseInfo(rawKey) {
@@ -10820,6 +10875,9 @@ function getEnumOptionsForBiqStructureTab(tabKey, field) {
   if (tabKey === 'players' && canon === 'difficulty') {
     return [{ value: 'Any', label: 'Any' }].concat(getRuleSectionIndexOptions('DIFF'));
   }
+  if (tabKey === 'world' && canon === 'worldsize') {
+    return makeBiqSectionIndexOptions('WSIZ', false);
+  }
   const enums = BIQ_FIELD_ENUMS[tabKey] || {};
   return enums[base] || [];
 }
@@ -13602,6 +13660,19 @@ function makeDefaultReferenceFieldValue(field, name) {
   return '';
 }
 
+function makeBlankReferenceFieldValue(field) {
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  // Clear all tech/prereq reference fields for new blank entries
+  if (/^(freetech|prerequisite|reqadvance|requiredtech)/.test(base)) return '';
+  // Keep name/description as they'll be set by the template
+  if (base === 'name' || base === 'description' || base === 'civilizationname') return '';
+  const raw = String(field && field.value || '').trim().toLowerCase();
+  if (raw === 'true' || raw === 'false') return 'false';
+  const n = parseIntFromDisplayValue(field && field.value);
+  if (n != null) return '0';
+  return '';
+}
+
 function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKey, mode, displayName = '' }) {
   const src = sourceEntry ? JSON.parse(JSON.stringify(sourceEntry)) : {};
   const inferred = inferReferenceNameFromKey(civilopediaKey, tabKey);
@@ -13628,7 +13699,7 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
     entry.animationName = '';
     entry.biqFields = entry.biqFields.map((field) => ({
       ...field,
-      value: makeDefaultReferenceFieldValue(field, name),
+      value: makeBlankReferenceFieldValue(field),
       originalValue: ''
     }));
   } else if (mode === 'import') {
@@ -16925,6 +16996,27 @@ function requestBiqMapNtpPalette(slot, assetPath) {
   });
 }
 
+function requestBiqMapUnitFlcFrame(prtoIdx, prtoName) {
+  if (!state.settings || !state.settings.civ3Path) return;
+  const cacheKey = `unitFlc-${prtoIdx}`;
+  if (state.biqMapArtCache[cacheKey] !== undefined || state.biqMapArtLoading[cacheKey]) return;
+  state.biqMapArtLoading[cacheKey] = true;
+  window.c3xManager.getPreview({
+    kind: 'unitFlcFirstFrame',
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths(),
+    prtoName
+  }).then((res) => {
+    state.biqMapArtCache[cacheKey] = (res && res.ok) ? (rgbaToCanvas(res) || null) : null;
+  }).catch(() => {
+    state.biqMapArtCache[cacheKey] = null;
+  }).finally(() => {
+    delete state.biqMapArtLoading[cacheKey];
+    biqMapArtRerender();
+  });
+}
+
 function renderBiqMapSection(tab, tileSection, options = {}) {
   const container = document.createElement('div');
   container.className = 'biq-map-layout';
@@ -17933,9 +18025,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const prtoSection = (tab.sections || []).find((s) => s.code === 'PRTO');
   const prtoIndexByName = {};
   const prtoIconById = {};
+  const prtoNameById = {};
   (prtoSection?.records || []).forEach((record, idx) => {
-    prtoIndexByName[String(record.name || '').trim().toLowerCase()] = idx;
+    const name = String(record.name || '').trim();
+    prtoIndexByName[name.toLowerCase()] = idx;
     prtoIconById[idx] = parseIntLoose(getFieldByBaseKey(record, 'iconindex')?.value, -1);
+    prtoNameById[idx] = name;
   });
   const bldgSection = (tab.sections || []).find((s) => s.code === 'BLDG');
   const capitalBuildingIds = new Set();
@@ -18966,24 +19061,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       if (!Number.isFinite(unitId)) unitId = parseIntLoose(rawUnit, NaN);
     }
     if (!Number.isFinite(unitId)) return;
-    const iconIdx = prtoIconById[unitId];
-    if (!Number.isFinite(iconIdx) || iconIdx < 0) return;
-    const cellW = 32;
-    const cellH = 32;
-    const step = 33;
-    // Quint: iconWidth = (units32.getWidth()-1)/32 (integer division)
-    const cols = Math.floor((atlas.width - 1) / 32);
-    const col = iconIdx % cols;
-    const row = Math.floor(iconIdx / cols);
-    // Quint: srcX = (iconX*32)+1+iconX = iconX*33+1, same for Y
-    const srcX = col * step + 1;
-    const srcY = row * step + 1;
-    if (srcX + cellW > atlas.width || srcY + cellH > atlas.height) return;
     const tileScale = tileW / 128;
-    const size = Math.max(12, Math.round(40 * tileScale));
-    const dx = screenX + Math.round(48 * tileScale);
-    const dy = screenY + Math.round(7 * tileScale);
 
+    // Resolve owner color for the civ dot
     let ownerTypeRaw = '';
     let ownerRaw = '';
     if (stack.length > 0) {
@@ -19003,62 +19083,100 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       ? { r: Number(rgbMatch[1]), g: Number(rgbMatch[2]), b: Number(rgbMatch[3]) }
       : { r: 170, g: 170, b: 170 };
 
-    const ntpSlot = ownerSlot;
-    const cacheKey = `${iconIdx}-${ntpSlot}`;
-    let coloredIcon = state.biqMapColoredUnitIconCache.get(cacheKey);
-    if (!coloredIcon) {
-      const units32Indices = state.biqMapArtCache.units32Indices;
-      const units32Palette = state.biqMapArtCache.units32Palette;
-      const ntpPalette = state.biqMapArtCache[`ntp-${ntpSlot}`];
-      const atlasW = atlas.width;
-      const unitCanvas = document.createElement('canvas');
-      unitCanvas.width = cellW;
-      unitCanvas.height = cellH;
-      const unitCtx = unitCanvas.getContext('2d');
-      if (units32Indices && units32Palette && ntpPalette) {
-        const imgData = unitCtx.createImageData(cellW, cellH);
-        const px = imgData.data;
-        for (let py = 0; py < cellH; py++) {
-          for (let px2 = 0; px2 < cellW; px2++) {
-            const palIdx = units32Indices[(srcY + py) * atlasW + (srcX + px2)];
-            let r, g, b, a;
-            if (palIdx === 255 || palIdx === 254) {
-              r = 0; g = 0; b = 0; a = 0;
-            } else {
-              const isCivColor = palIdx <= 14 || (palIdx >= 16 && palIdx <= 62 && (palIdx & 1) === 0);
-              const pal = isCivColor ? ntpPalette : units32Palette;
-              r = pal[palIdx * 3]; g = pal[palIdx * 3 + 1]; b = pal[palIdx * 3 + 2]; a = 255;
-            }
-            const di = (py * cellW + px2) * 4;
-            px[di] = r; px[di + 1] = g; px[di + 2] = b; px[di + 3] = a;
-          }
-        }
-        unitCtx.putImageData(imgData, 0, 0);
-        coloredIcon = unitCanvas;
-        state.biqMapColoredUnitIconCache.set(cacheKey, coloredIcon);
-      } else {
-        // NTP not loaded yet — draw from atlas without caching so we retry next frame
-        unitCtx.drawImage(atlas, srcX, srcY, cellW, cellH, 0, 0, cellW, cellH);
-        coloredIcon = unitCanvas;
-      }
+    // Try FLC first frame (SW-facing DEFAULT); trigger async load if not yet cached
+    const flcCacheKey = `unitFlc-${unitId}`;
+    const flcCanvas = state.biqMapArtCache[flcCacheKey];
+    if (flcCanvas === undefined) {
+      const prtoName = prtoNameById[unitId];
+      if (prtoName) requestBiqMapUnitFlcFrame(unitId, prtoName);
     }
-    ctx.drawImage(coloredIcon, 0, 0, cellW, cellH, dx, dy, size, size);
+
+    // Bottom of unit aligns to tile bottom edge (screenY is midY, so tile bottom = screenY + tileH/2)
+    const tileBottom = screenY + Math.floor(tileH / 2);
+
+    let dx, dy, size;
+    if (flcCanvas) {
+      const flcW = Math.max(1, Math.round(flcCanvas.width * tileScale));
+      const flcH = Math.max(1, Math.round(flcCanvas.height * tileScale));
+      dx = screenX + Math.round((tileW - flcW) / 2);
+      dy = tileBottom - flcH;
+      size = flcW;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(flcCanvas, 0, 0, flcCanvas.width, flcCanvas.height, dx, dy, flcW, flcH);
+      ctx.imageSmoothingEnabled = true;
+    } else {
+      // Fallback: units32 icon atlas
+      const iconIdx = prtoIconById[unitId];
+      if (!Number.isFinite(iconIdx) || iconIdx < 0) return;
+      const cellW = 32;
+      const cellH = 32;
+      const step = 33;
+      const cols = Math.floor((atlas.width - 1) / 32);
+      const col = iconIdx % cols;
+      const row = Math.floor(iconIdx / cols);
+      // Quint: srcX = (iconX*32)+1+iconX = iconX*33+1, same for Y
+      const srcX = col * step + 1;
+      const srcY = row * step + 1;
+      if (srcX + cellW > atlas.width || srcY + cellH > atlas.height) return;
+      size = Math.max(12, Math.round(48 * tileScale));
+      dx = screenX + Math.round(48 * tileScale);
+      dy = screenY + Math.round(7 * tileScale);
+      const ntpSlot = ownerSlot;
+      const iconCacheKey = `${iconIdx}-${ntpSlot}`;
+      let coloredIcon = state.biqMapColoredUnitIconCache.get(iconCacheKey);
+      if (!coloredIcon) {
+        const units32Indices = state.biqMapArtCache.units32Indices;
+        const units32Palette = state.biqMapArtCache.units32Palette;
+        const ntpPalette = state.biqMapArtCache[`ntp-${ntpSlot}`];
+        const unitCanvas = document.createElement('canvas');
+        unitCanvas.width = cellW;
+        unitCanvas.height = cellH;
+        const unitCtx = unitCanvas.getContext('2d');
+        if (units32Indices && units32Palette && ntpPalette) {
+          const imgData = unitCtx.createImageData(cellW, cellH);
+          const px = imgData.data;
+          for (let py = 0; py < cellH; py++) {
+            for (let px2 = 0; px2 < cellW; px2++) {
+              const palIdx = units32Indices[(srcY + py) * atlas.width + (srcX + px2)];
+              let r, g, b, a;
+              if (palIdx === 255 || palIdx === 254) {
+                r = 0; g = 0; b = 0; a = 0;
+              } else {
+                const isCivColor = palIdx <= 14 || (palIdx >= 16 && palIdx <= 62 && (palIdx & 1) === 0);
+                const pal = isCivColor ? ntpPalette : units32Palette;
+                r = pal[palIdx * 3]; g = pal[palIdx * 3 + 1]; b = pal[palIdx * 3 + 2]; a = 255;
+              }
+              const di = (py * cellW + px2) * 4;
+              px[di] = r; px[di + 1] = g; px[di + 2] = b; px[di + 3] = a;
+            }
+          }
+          unitCtx.putImageData(imgData, 0, 0);
+          coloredIcon = unitCanvas;
+          state.biqMapColoredUnitIconCache.set(iconCacheKey, coloredIcon);
+        } else {
+          // NTP not loaded yet — draw from atlas without caching so we retry next frame
+          unitCtx.drawImage(atlas, srcX, srcY, cellW, cellH, 0, 0, cellW, cellH);
+          coloredIcon = unitCanvas;
+        }
+      }
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(coloredIcon, 0, 0, cellW, cellH, dx, dy, size, size);
+      ctx.imageSmoothingEnabled = true;
+    }
 
     if (size >= 10) {
-      const dot = Math.max(3, Math.round(size * 0.15));
-      const cx = dx + dot + 1;
-      const cy = dy + dot + 1;
+      // Consistent size regardless of FLC vs fallback; same font as city HUD; fits 2-digit numbers
+      const fontSize = Math.max(10, Math.round(12 * tileScale));
+      const dot = Math.max(8, Math.round(fontSize * 0.85));
+      const cx = dx - Math.round(dot * 0.5);
+      const cy = dy - Math.round(dot * 0.5);
       ctx.fillStyle = `rgb(${rgba.r}, ${rgba.g}, ${rgba.b})`;
       ctx.beginPath();
       ctx.arc(cx, cy, dot, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.65)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      if (stack.length > 1) {
+      if (stack.length >= 1) {
         const label = String(stack.length);
-        const labelSize = Math.max(8, Math.round(dot * 2));
-        ctx.font = `bold ${labelSize}px sans-serif`;
+        ctx.font = `bold ${fontSize}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.strokeStyle = 'rgba(0,0,0,0.7)';
@@ -19154,10 +19272,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const pad = Math.max(2, Math.round(3 * tileScale));
     const rectH = fontSize + pad * 2;
 
-    ctx.font = `bold ${fontSize}px sans-serif`;
+    ctx.font = `${fontSize}px sans-serif`;
     const popStr = String(citySize);
     const nameW = Math.ceil(ctx.measureText(cityName).width) + pad * 2;
-    const squareW = rectH;
+    const squareW = Math.max(rectH, Math.ceil(ctx.measureText(popStr).width) + pad * 2);
     const totalW = squareW + nameW;
 
     const anchorX = Math.round(sx + tileW / 2);
@@ -19166,8 +19284,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const rectY = anchorY;
     const midY = Math.round(rectY + rectH / 2);
 
-    // Civ-colored population square
-    ctx.fillStyle = `rgb(${civRgb.r},${civRgb.g},${civRgb.b})`;
+    // Civ-colored population square (semi-transparent)
+    ctx.fillStyle = `rgba(${civRgb.r},${civRgb.g},${civRgb.b},0.6)`;
     ctx.fillRect(rectX, rectY, squareW, rectH);
 
     // Semi-transparent dark background for name
@@ -19177,7 +19295,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     // Population count centered in square — no stroke, background provides contrast
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#000000';
+    ctx.fillStyle = '#ffffff';
     ctx.fillText(popStr, Math.round(rectX + squareW / 2), midY);
 
     // City name in right portion — no stroke, dark background provides contrast
@@ -19554,15 +19672,6 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       }
       drawRivers();
       drawTerritoryBorders();
-      // Victory point location: field value 0 = present, -1 = not present (Quint TILE.VICTORY_POINT_LOCATION_PRESENT = 0)
-      const vpl = parseIntLoose(getFieldByBaseKey(record, 'victorypointlocation')?.value, -1);
-      if (vpl === 0) {
-        const vpSheet = state.biqMapArtCache.victoryPoint;
-        if (vpSheet) {
-          const drawH = Math.max(1, Math.round(vpSheet.height * scale));
-          ctx.drawImage(vpSheet, 0, 0, vpSheet.width, vpSheet.height, sx, midY, tileW, drawH);
-        }
-      }
     }
   };
 
@@ -19594,6 +19703,17 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     ctx.lineTo(sx, sy + Math.floor(tileH / 2));
     ctx.closePath();
     ctx.fill();
+  };
+
+  // Victory point location: field value 0 = present, -1 = not present (Quint TILE.VICTORY_POINT_LOCATION_PRESENT = 0)
+  const drawVpOverlay = (record, sx, sy) => {
+    const vpl = parseIntLoose(getFieldByBaseKey(record, 'victorypointlocation')?.value, -1);
+    if (vpl !== 0) return;
+    const vpSheet = state.biqMapArtCache.victoryPoint;
+    if (!vpSheet) return;
+    const midY = sy + Math.floor(tileH / 2);
+    const drawH = Math.max(1, Math.round(vpSheet.height * scale));
+    ctx.drawImage(vpSheet, 0, 0, vpSheet.width, vpSheet.height, sx, midY, tileW, drawH);
   };
 
   const drawSlocOverlay = (geom, sx, sy) => {
@@ -19725,11 +19845,12 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const item = overlayPassItems[i];
       drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy, 'flat');
       const itemMidY = item.sy + Math.floor(tileH / 2);
-      drawCityOverlay(item.record, item.geom, item.sx, itemMidY);
       drawResourceOverlay(item.record, item.sx, itemMidY);
       drawDistrictOverlay(item.record, item.sx, item.sy);
-      drawUnitOverlay(item.record, item.geom, item.sx, itemMidY);
+      drawCityOverlay(item.record, item.geom, item.sx, itemMidY);
       drawSlocOverlay(item.geom, item.sx, item.sy);
+      drawVpOverlay(item.record, item.sx, item.sy);
+      drawUnitOverlay(item.record, item.geom, item.sx, itemMidY);
       drawFogOverlay(item.record, item.sx, item.sy);
     }
   }
@@ -21788,10 +21909,9 @@ function syncSectionStickyOffsets(container, header) {
   if (!container || !header) return;
   window.requestAnimationFrame(() => {
     if (!container.isConnected || !header.isConnected) return;
-    const headerHeight = Math.ceil(header.getBoundingClientRect().height || 0);
-    const stickyInsetPx = 3;
+    const headerHeight = header.getBoundingClientRect().height || 0;
     if (headerHeight > 0) {
-      container.style.setProperty('--sticky-search-top', `${headerHeight + stickyInsetPx}px`);
+      container.style.setProperty('--sticky-search-top', `${headerHeight}px`);
     } else {
       container.style.removeProperty('--sticky-search-top');
     }
@@ -21853,18 +21973,51 @@ function renderSectionTab(tab, tabKey) {
 
   if (tabKey === 'districts') {
     if (tab.filteredFromDefault && tab.filteredFromDefault.applied) {
-      const filtered = document.createElement('p');
-      filtered.className = 'warning';
-      filtered.textContent = `Scenario fallback filtered incompatible default districts: kept ${tab.filteredFromDefault.keptCount} of ${tab.filteredFromDefault.originalCount}.`;
-      wrap.appendChild(filtered);
+      const box = document.createElement('div');
+      box.className = 'district-warning-box';
+      box.style.cssText = 'display: flex; align-items: center; gap: 12px; flex-wrap: wrap;';
+      const msg = document.createElement('span');
+      msg.style.cssText = 'flex: 1 1 auto; font-size: 0.88rem; color: #6d3907;';
+      const actionBtn = document.createElement('button');
+      actionBtn.type = 'button';
+      actionBtn.className = 'secondary';
+      actionBtn.style.cssText = 'flex-shrink: 0; font-size: 0.82rem; padding: 5px 12px;';
+      if (tab.filteredFromDefault.keptCount === 0) {
+        msg.textContent = 'No default districts are compatible with this scenario.';
+        actionBtn.innerHTML = '<span class="btn-icon">📄</span>Create Blank District File for Scenario';
+      } else {
+        msg.textContent = `${tab.filteredFromDefault.keptCount} of ${tab.filteredFromDefault.originalCount} default districts are compatible with this scenario.`;
+        actionBtn.innerHTML = '<span class="btn-icon">💾</span>Include these Districts in Scenario';
+      }
+      actionBtn.addEventListener('click', () => performSeedScenarioTab('districts'));
+      box.appendChild(msg);
+      box.appendChild(actionBtn);
+      wrap.appendChild(box);
     }
   } else if (tabKey === 'wonders') {
     if (tab.filteredFromScenarioFallback && tab.filteredFromScenarioFallback.applied) {
-      const filtered = document.createElement('p');
-      filtered.className = 'warning';
-      const sourceLabel = String(tab.filteredFromScenarioFallback.source || '').trim() || 'effective';
-      filtered.textContent = `Scenario fallback filtered incompatible ${sourceLabel} wonder districts: kept ${tab.filteredFromScenarioFallback.keptCount} of ${tab.filteredFromScenarioFallback.originalCount}.`;
-      wrap.appendChild(filtered);
+      const rawSource = String(tab.filteredFromScenarioFallback.source || '').trim() || 'effective';
+      const sourceLabel = rawSource === 'user' ? 'user-defined' : rawSource;
+      const box = document.createElement('div');
+      box.className = 'district-warning-box';
+      box.style.cssText = 'display: flex; align-items: center; gap: 12px; flex-wrap: wrap;';
+      const msg = document.createElement('span');
+      msg.style.cssText = 'flex: 1 1 auto; font-size: 0.88rem; color: #6d3907;';
+      const actionBtn = document.createElement('button');
+      actionBtn.type = 'button';
+      actionBtn.className = 'secondary';
+      actionBtn.style.cssText = 'flex-shrink: 0; font-size: 0.82rem; padding: 5px 12px;';
+      if (tab.filteredFromScenarioFallback.keptCount === 0) {
+        msg.textContent = `No ${sourceLabel} wonder districts are compatible with this scenario.`;
+        actionBtn.innerHTML = '<span class="btn-icon">📄</span>Create Blank Wonder District File for Scenario';
+      } else {
+        msg.textContent = `${tab.filteredFromScenarioFallback.keptCount} of ${tab.filteredFromScenarioFallback.originalCount} ${sourceLabel} wonder districts are compatible with this scenario.`;
+        actionBtn.innerHTML = '<span class="btn-icon">💾</span>Include these Wonder Districts in Scenario';
+      }
+      actionBtn.addEventListener('click', () => performSeedScenarioTab('wonders'));
+      box.appendChild(msg);
+      box.appendChild(actionBtn);
+      wrap.appendChild(box);
     }
   }
 
@@ -22025,6 +22178,12 @@ function renderSectionTab(tab, tabKey) {
     state.sectionFilter[tabKey] = listSearch.value;
     state.sectionListScrollTop[tabKey] = 0;
     renderActiveTab({ preserveTabScroll: true });
+    const newSearch = el.tabContent.querySelector('.app-search-input');
+    if (newSearch) {
+      newSearch.focus();
+      const len = newSearch.value.length;
+      newSearch.setSelectionRange(len, len);
+    }
   });
   layout.appendChild(listPane);
   requestAnimationFrame(() => hydrateVisibleSectionThumbs(28));
@@ -22195,6 +22354,7 @@ function renderSectionTab(tab, tabKey) {
       const animationType = normalizeConfigToken(getFieldValue(section, 'type')).toLowerCase();
       orderedSchemaFields = orderedSchemaFields.filter((field) => shouldShowAnimationFieldForType(field && field.key, animationType));
     }
+    orderedSchemaFields = orderedSchemaFields.filter(isSectionFieldVersionAllowed);
     orderedSchemaFields
       .forEach((schemaField) => {
       form.appendChild(renderKnownField(section, schemaField, tab.fieldDocs, (key, value) => {
@@ -22287,6 +22447,7 @@ function renderTabs() {
     const present = group.keys.filter((key) => {
       if (!state.bundle.tabs[key]) return false;
       if (key === 'players') return false;
+      if (!isTabVersionAllowed(key)) return false;
       return true;
     });
     if (present.length === 0) return;
@@ -22415,8 +22576,12 @@ async function loadBundleAndRender(options = {}) {
       scenarioPath: state.settings.scenarioPath
     });
     if (bundle && bundle.tabs && bundle.tabs.districts && bundle.tabs.districts.model && Array.isArray(bundle.tabs.districts.model.sections)) {
-      // Always backfill known district defaults first so fallback scenarios retain expected art/flags.
-      applySpecialDistrictDefaultsToSections(bundle.tabs.districts.model.sections);
+      const districtEffectiveSource = String(bundle.tabs.districts.effectiveSource || '').toLowerCase();
+      if (districtEffectiveSource === 'default') {
+        // Only backfill known district defaults when using the default file.
+        // User and scenario files are used exclusively — no default backfill.
+        applySpecialDistrictDefaultsToSections(bundle.tabs.districts.model.sections);
+      }
     }
     if (bundle && state.settings.mode === 'scenario') {
       filterDistrictSectionsForScenarioFallback(bundle);
@@ -22661,9 +22826,18 @@ function clearSaveToastTimer() {
 function hideSaveToast() {
   if (!el.saveToast) return;
   clearSaveToastTimer();
-  el.saveToast.classList.add('hidden');
-  el.saveToast.classList.remove('saving', 'success', 'failure');
-  if (state.saveUi) state.saveUi.toastPhase = 'idle';
+  if (!el.saveToast.classList.contains('hidden')) {
+    el.saveToast.classList.add('exiting');
+    window.setTimeout(() => {
+      if (el.saveToast) {
+        el.saveToast.classList.add('hidden');
+        el.saveToast.classList.remove('exiting', 'saving', 'success', 'failure');
+      }
+      if (state.saveUi) state.saveUi.toastPhase = 'idle';
+    }, 280);
+  } else {
+    if (state.saveUi) state.saveUi.toastPhase = 'idle';
+  }
 }
 
 function showSaveToast({ phase = 'saving', title = '', body = '', autoHideMs = 0 } = {}) {
@@ -22894,6 +23068,16 @@ function renderSaveProgressModal() {
       pathEl.className = 'save-progress-item-path';
       pathEl.textContent = compactPathFromCiv3Root(item.path) || item.path;
       pathEl.title = item.path;
+      if (isOpenableFilesReadPath(item.path) && window.c3xManager && typeof window.c3xManager.openFilePath === 'function') {
+        pathEl.classList.add('clickable');
+        pathEl.title = 'Open file';
+        pathEl.addEventListener('click', async () => {
+          const opened = await window.c3xManager.openFilePath(item.path);
+          if (!opened || !opened.ok) {
+            setStatus(`Could not open file: ${(opened && opened.error) || 'unknown error'}`, true);
+          }
+        });
+      }
       main.appendChild(pathEl);
       const note = document.createElement('div');
       note.className = 'save-progress-item-note';
@@ -22997,6 +23181,7 @@ async function saveCurrentBundle() {
     const biqReport = res.saveReport.find((r) => r.kind === 'biq');
     markReferenceTabsAsSaved();
     captureCleanSnapshot();
+    renderActiveTab({ preserveTabScroll: true });
     if (biqReport && (Number(biqReport.skipped || 0) > 0 || String(biqReport.warning || '').trim())) {
       const warningText = friendlyBiqWarningText(String(biqReport.warning || ''));
       const suffix = warningText ? ` ${warningText}` : '';
@@ -23021,6 +23206,91 @@ async function saveCurrentBundle() {
     });
     setStatus(`Failed to save: ${err.message}`, true);
     return false;
+  }
+}
+
+async function performSeedScenarioTab(tabKey) {
+  if (!state.bundle || !state.bundle.tabs || !state.bundle.tabs[tabKey]) return;
+  const tabsToSave = { [tabKey]: state.bundle.tabs[tabKey] };
+  const payload = buildSavePayload({ tabsToSave, dirtyTabs: [tabKey] });
+  const preparedItems = await previewSaveItems(payload);
+  setSaveDetailState({
+    items: preparedItems,
+    summary: `Saving ${preparedItems.length} file${preparedItems.length === 1 ? '' : 's'}...`,
+    rollbackSummary: '',
+    rollbackHasWarning: false
+  });
+  showSaveToast({
+    phase: 'saving',
+    title: 'Saving files...',
+    body: `Writing ${preparedItems.length} file${preparedItems.length === 1 ? '' : 's'}`
+  });
+
+  try {
+    const res = await window.c3xManager.saveBundle(payload);
+    const outcome = buildSaveOutcome(preparedItems, res);
+    setSaveDetailState({
+      items: outcome.items,
+      summary: outcome.summary,
+      rollbackSummary: outcome.rollbackSummary,
+      rollbackHasWarning: outcome.rollbackHasWarning
+    });
+    showSaveToast({
+      phase: outcome.phase,
+      title: outcome.title,
+      body: outcome.body,
+      autoHideMs: outcome.phase === 'success' ? 14000 : 20000
+    });
+    if (!res.ok) {
+      setStatus(`Seed save failed: ${res.error || 'unknown error'}`, true);
+      return;
+    }
+    const paths = res.saveReport.map((r) => r.path).join(' | ');
+    setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
+    // Targeted tab refresh: reload only the seeded tab so dirty state for other tabs is preserved.
+    const freshBundle = await window.c3xManager.loadBundle({
+      mode: state.settings.mode,
+      c3xPath: state.settings.c3xPath,
+      civ3Path: state.settings.civ3Path,
+      scenarioPath: state.settings.scenarioPath
+    });
+    if (freshBundle && freshBundle.tabs && freshBundle.tabs[tabKey]) {
+      const freshTab = freshBundle.tabs[tabKey];
+      if (tabKey === 'districts' && freshTab.model && Array.isArray(freshTab.model.sections)) {
+        if (String(freshTab.effectiveSource || '').toLowerCase() === 'default') {
+          applySpecialDistrictDefaultsToSections(freshTab.model.sections);
+        }
+      }
+      state.bundle.tabs[tabKey] = freshTab;
+      if (state.settings.mode === 'scenario') {
+        if (tabKey === 'districts') filterDistrictSectionsForScenarioFallback(state.bundle);
+        if (tabKey === 'wonders') filterWonderSectionsForScenarioFallback(state.bundle);
+      }
+      // Update the clean baseline for only this tab; leave other tabs' dirty state intact.
+      const cleanObj = getCleanTabsObject();
+      cleanObj[tabKey] = JSON.parse(JSON.stringify(state.bundle.tabs[tabKey]));
+      state.cleanSnapshot = JSON.stringify(cleanObj);
+      state.cleanTabsCache = cleanObj;
+      renderTabs();
+      renderActiveTab({ preserveTabScroll: true });
+    } else {
+      await loadBundleAndRender({ usePersistedView: true });
+    }
+  } catch (err) {
+    const outcome = buildSaveOutcome(preparedItems, { ok: false, error: err.message }, err.message);
+    setSaveDetailState({
+      items: outcome.items,
+      summary: outcome.summary,
+      rollbackSummary: outcome.rollbackSummary,
+      rollbackHasWarning: outcome.rollbackHasWarning
+    });
+    showSaveToast({
+      phase: outcome.phase,
+      title: outcome.title,
+      body: outcome.body,
+      autoHideMs: 20000
+    });
+    setStatus(`Failed to save: ${err.message}`, true);
   }
 }
 
