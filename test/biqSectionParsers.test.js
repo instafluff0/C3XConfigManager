@@ -1,0 +1,983 @@
+'use strict';
+
+// Field-by-field tests for biqSections.js parsers.
+// Verifies that every registered section produces human-readable field names
+// and record names — i.e. no "TERR 1" labels or "u32_N" field keys.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const { BiqWriter } = require('../src/biq/biqBuffer');
+const {
+  BiqIO,
+  SECTION_REGISTRY,
+  sectionToEnglish,
+  sectionRecordName,
+  sectionWritableKeys,
+  TILE_FIELDS,
+} = require('../src/biq/biqSections');
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeIo(overrides) {
+  return new BiqIO({ versionTag: 'BICX', majorVersion: 12, minorVersion: 8, numEras: 3, mapWidth: 80, ...overrides });
+}
+
+function ws(str, len) {
+  const src = Buffer.from(String(str || ''), 'latin1');
+  const buf = Buffer.alloc(len, 0);
+  src.copy(buf, 0, 0, Math.min(src.length, len));
+  return buf;
+}
+
+/** Parse the english output into a key→value Map. */
+function parseEnglish(english) {
+  const map = new Map();
+  for (const line of String(english || '').split('\n')) {
+    const ci = line.indexOf(':');
+    if (ci < 0) continue;
+    map.set(line.slice(0, ci).trim(), line.slice(ci + 1).trim());
+  }
+  return map;
+}
+
+/** Assert no generic "u32_N" field names appear in the english output. */
+function assertNoGenericFields(english, label) {
+  for (const line of String(english || '').split('\n')) {
+    assert.ok(
+      !/^u32_\d+:/i.test(line),
+      `${label}: found generic pass-through field — "${line}"`
+    );
+  }
+}
+
+/** Assert the record name is not the fallback "CODE N" form. */
+function assertNameNotFallback(rec, code) {
+  const name = sectionRecordName(rec, code);
+  assert.ok(
+    !new RegExp(`^${code}\\s+\\d+$`).test(name),
+    `${code}: expected human-readable record name, got: "${name}"`
+  );
+  return name;
+}
+
+// ---------------------------------------------------------------------------
+// TECH
+// ---------------------------------------------------------------------------
+
+test('TECH parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.TECH;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeBytes(ws('Pottery', 32));
+  w.writeBytes(ws('TECH_POTTERY', 32));
+  w.writeInt(80);    // cost
+  w.writeInt(0);     // era
+  w.writeInt(5);     // advanceIcon
+  w.writeInt(3);     // x
+  w.writeInt(7);     // y
+  for (let i = 0; i < 4; i++) w.writeInt(-1); // prerequisites
+  w.writeInt(0);     // flags
+  w.writeInt(2);     // flavors (Conquests)
+  w.writeInt(0);     // questionMark
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Pottery');
+  assert.equal(rec.civilopediaEntry, 'TECH_POTTERY');
+  assert.equal(rec.cost, 80);
+  assert.equal(rec.x, 3);
+  assert.equal(rec.y, 7);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'TECH', io);
+  assertNoGenericFields(english, 'TECH');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Pottery');
+  assert.equal(map.get('cost'), '80');
+  assert.equal(map.get('x'), '3');
+  assert.equal(map.get('y'), '7');
+
+  assertNameNotFallback({ index: 0, ...rec }, 'TECH');
+});
+
+// ---------------------------------------------------------------------------
+// BLDG
+// ---------------------------------------------------------------------------
+
+test('BLDG parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.BLDG;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeBytes(ws('Barracks description', 64));
+  w.writeBytes(ws('Barracks', 32));
+  w.writeBytes(ws('BLDG_BARRACKS', 32));
+  // BLDG_SCALAR_NAMES — 35 int32s
+  const scalarCount = 35;
+  for (let i = 0; i < scalarCount; i++) w.writeInt(i === 4 ? 40 : 0); // cost=40 at index 4
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Barracks');
+  assert.equal(rec.civilopediaEntry, 'BLDG_BARRACKS');
+  assert.equal(rec.cost, 40);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'BLDG', io);
+  assertNoGenericFields(english, 'BLDG');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Barracks');
+  assert.ok(map.has('cost'), 'BLDG: expected cost field');
+});
+
+// ---------------------------------------------------------------------------
+// GOOD (Resources)
+// ---------------------------------------------------------------------------
+
+test('GOOD parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.GOOD;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeBytes(ws('Aluminum', 24));
+  w.writeBytes(ws('GOOD_ALUMINUM', 32));
+  w.writeInt(1);  // type
+  w.writeInt(10); // appearanceRatio
+  w.writeInt(5);  // disapperanceProbability
+  w.writeInt(3);  // icon
+  w.writeInt(-1); // prerequisite
+  w.writeInt(0);  // foodBonus
+  w.writeInt(1);  // shieldsBonus
+  w.writeInt(2);  // commerceBonus
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Aluminum');
+  assert.equal(rec.civilopediaEntry, 'GOOD_ALUMINUM');
+  assert.equal(rec.shieldsBonus, 1);
+  assert.equal(rec.commerceBonus, 2);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'GOOD', io);
+  assertNoGenericFields(english, 'GOOD');
+  const map = parseEnglish(english);
+  assert.equal(map.get('shieldsBonus'), '1');
+  assert.equal(map.get('commerceBonus'), '2');
+});
+
+// ---------------------------------------------------------------------------
+// GOVT
+// ---------------------------------------------------------------------------
+
+test('GOVT parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.GOVT;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeInt(0); // defaultType
+  w.writeInt(1); // transitionType
+  w.writeInt(1); // requiresMaintenance
+  w.writeInt(0); // questionMark1
+  w.writeInt(2); // tilePenalty
+  w.writeInt(3); // commerceBonus
+  w.writeBytes(ws('Despotism', 64));
+  w.writeBytes(ws('GOVT_DESPOTISM', 32));
+  for (let i = 0; i < 8; i++) w.writeBytes(ws(`Ruler${i}`, 32)); // rulerTitles
+  w.writeInt(5);  // corruption
+  w.writeInt(0);  // immuneTo
+  w.writeInt(0);  // diplomatLevel
+  w.writeInt(0);  // spyLevel
+  w.writeInt(0);  // numGovts (no relations)
+  // s2names: 17 × int32
+  for (let i = 0; i < 17; i++) w.writeInt(i === 0 ? 99 : 0); // hurrying=99
+  // Conquests: xenophobic=1, forceResettlement=0
+  w.writeInt(1);
+  w.writeInt(0);
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Despotism');
+  assert.equal(rec.civilopediaEntry, 'GOVT_DESPOTISM');
+  assert.equal(rec.corruption, 5);
+  assert.equal(rec.hurrying, 99);
+  assert.equal(rec.xenophobic, 1);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'GOVT', io);
+  assertNoGenericFields(english, 'GOVT');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Despotism');
+  assert.equal(map.get('corruption'), '5');
+  assert.equal(map.get('xenophobic'), '1');
+});
+
+// ---------------------------------------------------------------------------
+// RACE
+// ---------------------------------------------------------------------------
+
+test('RACE parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.RACE;
+  const io = makeIo({ numEras: 3 });
+  const w = new BiqWriter();
+  // cityNames: numCities=2, 2×24
+  w.writeInt(2);
+  w.writeBytes(ws('Rome', 24));
+  w.writeBytes(ws('Antium', 24));
+  // milLeaderNames: numMilLeaders=1, 1×32
+  w.writeInt(1);
+  w.writeBytes(ws('Caesar', 32));
+  w.writeBytes(ws('Caesar', 32));   // leaderName
+  w.writeBytes(ws('Emperor', 24));  // leaderTitle
+  w.writeBytes(ws('RACE_ROME', 32));// civilopediaEntry
+  w.writeBytes(ws('Roman', 40));    // adjective
+  w.writeBytes(ws('Roman Empire', 40)); // civilizationName
+  w.writeBytes(ws('Romans', 40));   // noun
+  // forward + reverse filenames: numEras=3, 6×260
+  for (let i = 0; i < 6; i++) w.writeBytes(ws('', 260));
+  w.writeInt(0); // cultureGroup
+  w.writeInt(0); // leaderGender
+  w.writeInt(0); // civilizationGender
+  w.writeInt(2); // aggressionLevel
+  w.writeInt(0); // uniqueCivCounter
+  w.writeInt(-1); // shunnedGovernment
+  w.writeInt(0);  // favoriteGovernment
+  w.writeInt(5);  // defaultColor
+  w.writeInt(5);  // uniqueColor
+  for (let i = 0; i < 4; i++) w.writeInt(-1); // freeTechs
+  w.writeInt(0); // bonuses
+  w.writeInt(0); // governorSettings
+  w.writeInt(0); // buildNever
+  w.writeInt(0); // buildOften
+  w.writeInt(0); // plurality
+  // PTW+: kingUnit
+  w.writeInt(-1);
+  // Conquests: flavors, questionMark, diplomacyTextIndex, numScientificLeaders=0
+  w.writeInt(0);
+  w.writeInt(0);
+  w.writeInt(0);
+  w.writeInt(0);
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Caesar');
+  assert.equal(rec.civilopediaEntry, 'RACE_ROME');
+  assert.equal(rec.aggressionLevel, 2);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'RACE', io);
+  assertNoGenericFields(english, 'RACE');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Caesar');
+  assert.equal(map.get('aggressionLevel'), '2');
+  assertNameNotFallback({ index: 0, ...rec }, 'RACE');
+});
+
+// ---------------------------------------------------------------------------
+// PRTO
+// ---------------------------------------------------------------------------
+
+test('PRTO parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.PRTO;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeInt(1);  // zoc
+  w.writeBytes(ws('Warrior', 32));
+  w.writeBytes(ws('PRTO_WARRIOR', 32));
+  // 14 scalars: attack, defence, movement, bombardRange, bombard, navalBombard,
+  //             range, transportCapacity, cost, nationalityMod, healthMod, visibilityRange, AIBombardRange, upgradesTo
+  w.writeInt(1); // attack
+  w.writeInt(1); // defence
+  w.writeInt(1); // movement
+  w.writeInt(0); // bombardRange
+  w.writeInt(0); // bombard
+  w.writeInt(0); // navalBombard
+  w.writeInt(0); // range
+  w.writeInt(0); // transportCapacity
+  w.writeInt(10); // cost
+  w.writeInt(0); // nationalityMod
+  w.writeInt(0); // healthMod
+  w.writeInt(1); // visibilityRange
+  w.writeInt(0); // AIBombardRange
+  w.writeInt(-1); // upgradesTo
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Warrior');
+  assert.equal(rec.civilopediaEntry, 'PRTO_WARRIOR');
+  assert.equal(rec.attack, 1);
+  assert.equal(rec.cost, 10);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'PRTO', io);
+  assertNoGenericFields(english, 'PRTO');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Warrior');
+  assert.equal(map.get('attack'), '1');
+});
+
+// ---------------------------------------------------------------------------
+// CTZN
+// ---------------------------------------------------------------------------
+
+test('CTZN parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.CTZN;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeInt(1);   // defaultCitizen
+  w.writeBytes(ws('Scientist', 32));
+  w.writeBytes(ws('CTZN_SCIENTIST', 32));
+  w.writeBytes(ws('Scientists', 32)); // pluralName
+  w.writeInt(-1);  // prerequisite
+  w.writeInt(3);   // luxuries
+  w.writeInt(8);   // research
+  w.writeInt(0);   // taxes
+  w.writeInt(0);   // corruption (Conquests)
+  w.writeInt(0);   // construction (Conquests)
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Scientist');
+  assert.equal(rec.research, 8);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'CTZN', io);
+  assertNoGenericFields(english, 'CTZN');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Scientist');
+  assert.equal(map.get('research'), '8');
+  assertNameNotFallback({ index: 0, ...rec }, 'CTZN');
+});
+
+// ---------------------------------------------------------------------------
+// CULT
+// ---------------------------------------------------------------------------
+
+test('CULT parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.CULT;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeBytes(ws('Western', 64));
+  w.writeInt(75);  // propagandaSuccess
+  w.writeInt(50);  // cultRatioPercent
+  w.writeInt(100); // ratioDenominator
+  w.writeInt(50);  // ratioNumerator
+  w.writeInt(25);  // initResistanceChance
+  w.writeInt(10);  // continuedResistanceChance
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Western');
+  assert.equal(rec.propagandaSuccess, 75);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'CULT', io);
+  assertNoGenericFields(english, 'CULT');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Western');
+  assert.equal(map.get('propagandaSuccess'), '75');
+  assertNameNotFallback({ index: 0, ...rec }, 'CULT');
+});
+
+// ---------------------------------------------------------------------------
+// DIFF
+// ---------------------------------------------------------------------------
+
+test('DIFF parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.DIFF;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeBytes(ws('Chieftain', 64));
+  // 14 DIFF_SCALAR_NAMES
+  w.writeInt(3);  // contentCitizens
+  w.writeInt(0);  // maxGovtTransition
+  w.writeInt(0);  // AIDefenceStart
+  w.writeInt(0);  // AIOffenceStart
+  w.writeInt(0);  // extraStart1
+  w.writeInt(0);  // extraStart2
+  w.writeInt(0);  // additionalFreeSupport
+  w.writeInt(0);  // bonusPerCity
+  w.writeInt(0);  // attackBarbariansBonus
+  w.writeInt(100);// costFactor
+  w.writeInt(90); // percentOptimal
+  w.writeInt(0);  // AIAITrade
+  w.writeInt(20); // corruptionPercent
+  w.writeInt(0);  // militaryLaw
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Chieftain');
+  assert.equal(rec.contentCitizens, 3);
+  assert.equal(rec.corruptionPercent, 20);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'DIFF', io);
+  assertNoGenericFields(english, 'DIFF');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Chieftain');
+  assert.equal(map.get('contentCitizens'), '3');
+  assert.equal(map.get('corruptionPercent'), '20');
+  assertNameNotFallback({ index: 0, ...rec }, 'DIFF');
+});
+
+// ---------------------------------------------------------------------------
+// ERAS
+// ---------------------------------------------------------------------------
+
+test('ERAS parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.ERAS;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeBytes(ws('Ancient', 64));          // eraName
+  w.writeBytes(ws('ERA_ANCIENT', 32));      // civilopediaEntry
+  for (let i = 0; i < 5; i++) w.writeBytes(ws(i === 0 ? 'Darwin' : '', 32)); // researchers
+  w.writeInt(1);  // usedResearcherNames
+  w.writeInt(0);  // questionMark (Conquests)
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.eraName, 'Ancient');
+  assert.equal(rec.civilopediaEntry, 'ERA_ANCIENT');
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'ERAS', io);
+  assertNoGenericFields(english, 'ERAS');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Ancient');
+  assert.ok(map.has('usedResearcherNames'), 'ERAS: expected usedResearcherNames field');
+  assertNameNotFallback({ index: 0, ...rec }, 'ERAS');
+});
+
+// ---------------------------------------------------------------------------
+// ESPN
+// ---------------------------------------------------------------------------
+
+test('ESPN parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.ESPN;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeBytes(ws('Steal a technology', 128)); // description
+  w.writeBytes(ws('Steal Tech', 64));           // name
+  w.writeBytes(ws('ESPN_STEAL_TECH', 32));      // civilopediaEntry
+  w.writeInt(2);   // missionPerformedBy
+  w.writeInt(500); // baseCost
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Steal Tech');
+  assert.equal(rec.baseCost, 500);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'ESPN', io);
+  assertNoGenericFields(english, 'ESPN');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Steal Tech');
+  assert.equal(map.get('baseCost'), '500');
+  assertNameNotFallback({ index: 0, ...rec }, 'ESPN');
+});
+
+// ---------------------------------------------------------------------------
+// EXPR
+// ---------------------------------------------------------------------------
+
+test('EXPR parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.EXPR;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeBytes(ws('Veteran', 32));
+  w.writeInt(10);  // baseHitPoints
+  w.writeInt(5);   // retreatBonus
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Veteran');
+  assert.equal(rec.baseHitPoints, 10);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'EXPR', io);
+  assertNoGenericFields(english, 'EXPR');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Veteran');
+  assert.equal(map.get('baseHitPoints'), '10');
+  assertNameNotFallback({ index: 0, ...rec }, 'EXPR');
+});
+
+// ---------------------------------------------------------------------------
+// TFRM
+// ---------------------------------------------------------------------------
+
+test('TFRM parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.TFRM;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeBytes(ws('Plant Forest', 32));
+  w.writeBytes(ws('TFRM_PLANT_FOREST', 32));
+  w.writeInt(10); // turnsToComplete
+  w.writeInt(-1); // requiredAdvance
+  w.writeInt(-1); // requiredResource1
+  w.writeInt(-1); // requiredResource2
+  w.writeBytes(ws('Plant Forest', 32)); // order
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Plant Forest');
+  assert.equal(rec.turnsToComplete, 10);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'TFRM', io);
+  assertNoGenericFields(english, 'TFRM');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Plant Forest');
+  assert.equal(map.get('turnsToComplete'), '10');
+  assertNameNotFallback({ index: 0, ...rec }, 'TFRM');
+});
+
+// ---------------------------------------------------------------------------
+// WSIZ
+// ---------------------------------------------------------------------------
+
+test('WSIZ parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.WSIZ;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeInt(16);  // optimalNumberOfCities
+  w.writeInt(100); // techRate
+  w.writeBytes(Buffer.alloc(24)); // padding
+  w.writeBytes(ws('Small', 32));  // name
+  w.writeInt(100); // height
+  w.writeInt(8);   // distanceBetweenCivs
+  w.writeInt(8);   // numberOfCivs
+  w.writeInt(160); // width
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Small');
+  assert.equal(rec.width, 160);
+  assert.equal(rec.height, 100);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'WSIZ', io);
+  assertNoGenericFields(english, 'WSIZ');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Small');
+  assert.equal(map.get('width'), '160');
+  assertNameNotFallback({ index: 0, ...rec }, 'WSIZ');
+});
+
+// ---------------------------------------------------------------------------
+// WCHR
+// ---------------------------------------------------------------------------
+
+test('WCHR parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.WCHR;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeInt(2);  // selectedClimate
+  w.writeInt(2);  // actualClimate
+  w.writeInt(1);  // selectedBarbarian
+  w.writeInt(1);  // actualBarbarian
+  w.writeInt(0);  // selectedLandform
+  w.writeInt(0);  // actualLandform
+  w.writeInt(3);  // selectedOcean
+  w.writeInt(3);  // actualOcean
+  w.writeInt(1);  // selectedTemp
+  w.writeInt(1);  // actualTemp
+  w.writeInt(2);  // selectedAge
+  w.writeInt(2);  // actualAge
+  w.writeInt(4);  // worldSize
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.selectedClimate, 2);
+  assert.equal(rec.worldSize, 4);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'WCHR', io);
+  assertNoGenericFields(english, 'WCHR');
+  const map = parseEnglish(english);
+  assert.equal(map.get('selectedClimate'), '2');
+  assert.equal(map.get('worldSize'), '4');
+  // Record name is a static label (not name/civKey)
+  const name = sectionRecordName({ index: 0, ...rec }, 'WCHR');
+  assert.ok(name.length > 0 && !/^WCHR\s+\d+$/.test(name), `WCHR: expected non-fallback name, got "${name}"`);
+});
+
+// ---------------------------------------------------------------------------
+// WMAP
+// ---------------------------------------------------------------------------
+
+test('WMAP parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.WMAP;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeInt(3);   // numResources
+  w.writeInt(10);  // resourceOccurrences[0]
+  w.writeInt(20);  // resourceOccurrences[1]
+  w.writeInt(30);  // resourceOccurrences[2]
+  w.writeInt(5);   // numContinents
+  w.writeInt(100); // height
+  w.writeInt(8);   // distanceBetweenCivs
+  w.writeInt(8);   // numCivs
+  w.writeInt(0);   // qm1
+  w.writeInt(0);   // qm2
+  w.writeInt(160); // width
+  w.writeInt(0);   // qm3
+  w.writeBytes(Buffer.alloc(124)); // unknownBytes
+  w.writeInt(12345); // mapSeed
+  w.writeInt(0);     // flags
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.width, 160);
+  assert.equal(rec.height, 100);
+  assert.equal(rec.mapSeed, 12345);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'WMAP', io);
+  assertNoGenericFields(english, 'WMAP');
+  const map = parseEnglish(english);
+  assert.equal(map.get('width'), '160');
+  assert.equal(map.get('height'), '100');
+  assert.equal(map.get('mapSeed'), '12345');
+});
+
+// ---------------------------------------------------------------------------
+// TERR — the primary regression section
+// ---------------------------------------------------------------------------
+
+test('TERR parser produces human-readable fields (not "TERR 1" or "u32_N")', () => {
+  const reg = SECTION_REGISTRY.TERR;
+  const io = makeIo();
+  const w = new BiqWriter();
+  // numTotalResources = 8 → maskLen = 1
+  w.writeInt(8);
+  w.writeByte(0xff); // possibleResources mask (all 8 resources enabled)
+  w.writeBytes(ws('Grassland', 32));
+  w.writeBytes(ws('TERR_GRASSLAND', 32));
+  // 10 scalars
+  w.writeInt(1);  // foodBonus
+  w.writeInt(0);  // shieldsBonus
+  w.writeInt(0);  // commerceBonus
+  w.writeInt(10); // defenceBonus
+  w.writeInt(1);  // movementCost
+  w.writeInt(2);  // food
+  w.writeInt(0);  // shields
+  w.writeInt(1);  // commerce
+  w.writeInt(3);  // workerJob
+  w.writeInt(0);  // pollutionEffect
+  // 8 boolean bytes
+  w.writeByte(1);  // allowCities
+  w.writeByte(1);  // allowColonies
+  w.writeByte(0);  // impassable
+  w.writeByte(0);  // impassableByWheeled
+  w.writeByte(1);  // allowAirfields
+  w.writeByte(1);  // allowForts
+  w.writeByte(1);  // allowOutposts
+  w.writeByte(1);  // allowRadarTowers
+  // Conquests extras
+  w.writeInt(0);   // questionMark
+  w.writeByte(0);  // landmarkEnabled
+  // landmarkScalars: 8 × int32
+  for (let i = 0; i < 8; i++) w.writeInt(0);
+  w.writeInt(0);   // landmarkQm
+  w.writeBytes(ws('', 32));  // landmarkName
+  w.writeBytes(ws('', 32));  // landmarkCivilopediaEntry
+  w.writeInt(0);   // questionMark2
+  w.writeInt(0);   // terrainFlags
+  w.writeInt(0);   // diseaseStrength
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Grassland');
+  assert.equal(rec.civilopediaEntry, 'TERR_GRASSLAND');
+  assert.equal(rec.food, 2);
+  assert.equal(rec.commerce, 1);
+  assert.equal(rec.defenceBonus, 10);
+  assert.equal(rec.allowCities, 1);
+  assert.equal(rec.workerJob, 3);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'TERR', io);
+  assertNoGenericFields(english, 'TERR');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Grassland');
+  assert.equal(map.get('food'), '2');
+  assert.equal(map.get('defenceBonus'), '10');
+  assert.equal(map.get('allowCities'), '1');
+
+  // This is the key regression check: record name must be "Grassland" not "TERR 1"
+  const name = assertNameNotFallback({ index: 0, ...rec }, 'TERR');
+  assert.equal(name, 'Grassland');
+});
+
+// ---------------------------------------------------------------------------
+// RULE
+// ---------------------------------------------------------------------------
+
+test('RULE parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.RULE;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeBytes(ws('Town', 32));
+  w.writeBytes(ws('City', 32));
+  w.writeBytes(ws('Metropolis', 32));
+  w.writeInt(5);  // numSSParts
+  for (let i = 0; i < 5; i++) w.writeInt(i + 1); // numberOfPartsRequired
+  // 37 RULE_SCALAR_NAMES
+  const scalarNames = [
+    'advancedBarbarian', 'basicBarbarian', 'barbarianSeaUnit', 'citiesForArmy', 'chanceOfRioting',
+    'draftTurnPenalty', 'shieldCostInGold', 'fortressDefenceBonus', 'citizensAffectedByHappyFace',
+    'questionMark1', 'questionMark2', 'forestValueInShields', 'shieldValueInGold', 'citizenValueInShields',
+    'defaultDifficultyLevel', 'battleCreatedUnit', 'buildArmyUnit', 'buildingDefensiveBonus',
+    'citizenDefensiveBonus', 'defaultMoneyResource', 'chanceToInterceptAirMissions',
+    'chanceToInterceptStealthMissions', 'startingTreasury', 'questionMark3', 'foodConsumptionPerCitizen',
+    'riverDefensiveBonus', 'turnPenaltyForWhip', 'scout', 'roadMovementRate', 'startUnit1', 'startUnit2',
+    'WLTKDMinimumPop', 'townDefenceBonus', 'cityDefenceBonus', 'metropolisDefenceBonus',
+    'maxCity1Size', 'maxCity2Size'
+  ];
+  for (let i = 0; i < scalarNames.length; i++) w.writeInt(i === 0 ? 7 : i); // advancedBarbarian=7
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.townName, 'Town');
+  assert.equal(rec.cityName, 'City');
+  assert.equal(rec.metropolisName, 'Metropolis');
+  assert.equal(rec.advancedBarbarian, 7);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'RULE', io);
+  assertNoGenericFields(english, 'RULE');
+  const map = parseEnglish(english);
+  assert.equal(map.get('townName'), 'Town');
+  assert.equal(map.get('cityName'), 'City');
+  assert.equal(map.get('advancedBarbarian'), '7');
+
+  // RULE has a static name, verify it is not a code+index fallback
+  const name = sectionRecordName({ index: 0, ...rec }, 'RULE');
+  assert.ok(!/^RULE\s+\d+$/.test(name), `RULE: expected non-fallback name, got "${name}"`);
+});
+
+// ---------------------------------------------------------------------------
+// LEAD
+// ---------------------------------------------------------------------------
+
+test('LEAD parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.LEAD;
+  const io = makeIo(); // isPTWPlus
+  const w = new BiqWriter();
+  w.writeInt(0);   // customCivData
+  w.writeInt(1);   // humanPlayer
+  w.writeBytes(ws('Caesar', 32)); // leaderName
+  w.writeInt(0);   // questionMark1
+  w.writeInt(0);   // questionMark2
+  w.writeInt(1);   // numStartUnits
+  w.writeInt(2);   // startUnitCount
+  w.writeInt(3);   // startUnitIndex
+  w.writeInt(0);   // genderOfLeaderName
+  w.writeInt(2);   // numStartTechs
+  w.writeInt(0);   // techIndices[0]
+  w.writeInt(1);   // techIndices[1]
+  w.writeInt(3);   // difficulty
+  w.writeInt(0);   // initialEra
+  w.writeInt(500); // startCash
+  w.writeInt(0);   // government
+  w.writeInt(5);   // civ
+  w.writeInt(2);   // color
+  // PTW+: skipFirstTurn, questionMark3, startEmbassies
+  w.writeInt(0);
+  w.writeInt(0);
+  w.writeByte(1);  // startEmbassies
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.leaderName, 'Caesar');
+  assert.equal(rec.humanPlayer, 1);
+  assert.equal(rec.startCash, 500);
+  assert.equal(rec.civ, 5);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'LEAD', io);
+  assertNoGenericFields(english, 'LEAD');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Caesar');
+  assert.equal(map.get('startCash'), '500');
+  assertNameNotFallback({ index: 0, ...rec }, 'LEAD');
+});
+
+// ---------------------------------------------------------------------------
+// GAME
+// ---------------------------------------------------------------------------
+
+test('GAME parser produces human-readable fields with individual playable_civ_N entries', () => {
+  const reg = SECTION_REGISTRY.GAME;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeInt(1);   // useDefaultRules
+  w.writeInt(0);   // defaultVictoryConditions
+  w.writeInt(3);   // numPlayableCivs
+  w.writeInt(1);   // playableCivIds[0]
+  w.writeInt(3);   // playableCivIds[1]
+  w.writeInt(5);   // playableCivIds[2]
+  w.writeInt(7);   // victoryConditionsAndRules
+  // Minimal tail (11 scalars + 7 + 7 + 5200)
+  for (let i = 0; i < 11 + 7 + 7; i++) w.writeInt(0);
+  w.writeBytes(Buffer.alloc(5200));
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.useDefaultRules, 1);
+  assert.equal(rec.numPlayableCivs, 3);
+  assert.deepEqual(rec.playableCivIds, [1, 3, 5]);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'GAME', io);
+  assertNoGenericFields(english, 'GAME');
+  const map = parseEnglish(english);
+  assert.equal(map.get('useDefaultRules'), '1');
+  // playable_civ_0, playable_civ_1, playable_civ_2 must exist individually
+  assert.equal(map.get('playable_civ_0'), '1');
+  assert.equal(map.get('playable_civ_1'), '3');
+  assert.equal(map.get('playable_civ_2'), '5');
+  // Must not have a combined "playableCivIds" key
+  assert.ok(!map.has('playableCivIds'), 'GAME: playableCivIds should be expanded into individual playable_civ_N fields');
+});
+
+// ---------------------------------------------------------------------------
+// TILE
+// ---------------------------------------------------------------------------
+
+test('TILE toEnglish produces human-readable fields (xpos, ypos, baseRealTerrain)', () => {
+  const reg = SECTION_REGISTRY.TILE;
+  const io = makeIo({ mapWidth: 80 });
+
+  // Build a synthetic raw TILE record: 4-byte dataLen + 45-byte body
+  const body = Buffer.alloc(45, 0);
+  // Set baseRealTerrain at off=11 = terrain type 2 (Plains)
+  body[11] = 2;
+  // Set fogOfWar at off=37 (int16LE) = 1
+  body.writeInt16LE(1, 37);
+  // Set resource at off=2 (int32LE) = 5
+  body.writeInt32LE(5, 2);
+
+  const rawRecord = Buffer.allocUnsafe(49);
+  rawRecord.writeUInt32LE(45, 0);
+  body.copy(rawRecord, 4);
+
+  // Simulate parseTILE result (fields from raw record + xpos/ypos)
+  const tileIndex = 5;
+  const half = Math.floor(80 / 2);  // 40
+  const yPos = Math.floor(tileIndex / half); // 0
+  const xPos = (tileIndex % half) * 2 + (yPos & 1); // 10
+
+  const fakeTileRec = { index: tileIndex, xpos: xPos, ypos: yPos, baseRealTerrain: 2, fogOfWar: 1, resource: 5, _rawRecord: rawRecord };
+
+  const english = reg.toEnglish(fakeTileRec, io);
+  assertNoGenericFields(english, 'TILE');
+  const map = parseEnglish(english);
+  assert.equal(map.get('xpos'), String(xPos));
+  assert.equal(map.get('ypos'), String(yPos));
+  assert.equal(map.get('baseRealTerrain'), '2');
+  assert.equal(map.get('fogOfWar'), '1');
+  assert.equal(map.get('resource'), '5');
+});
+
+// ---------------------------------------------------------------------------
+// CONT / SLOC / CLNY — fixed-size sections
+// ---------------------------------------------------------------------------
+
+test('CONT parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.CONT;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeInt(1);    // continentClass
+  w.writeInt(500);  // numTiles
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.continentClass, 1);
+  assert.equal(rec.numTiles, 500);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'CONT', io);
+  assertNoGenericFields(english, 'CONT');
+  const map = parseEnglish(english);
+  assert.equal(map.get('continentClass'), '1');
+  assert.equal(map.get('numTiles'), '500');
+});
+
+test('SLOC parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.SLOC;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeInt(1);  // ownerType
+  w.writeInt(2);  // owner
+  w.writeInt(10); // x
+  w.writeInt(20); // y
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.ownerType, 1);
+  assert.equal(rec.x, 10);
+  assert.equal(rec.y, 20);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'SLOC', io);
+  assertNoGenericFields(english, 'SLOC');
+  const map = parseEnglish(english);
+  assert.equal(map.get('x'), '10');
+  assert.equal(map.get('y'), '20');
+});
+
+test('CLNY parser produces human-readable fields', () => {
+  const reg = SECTION_REGISTRY.CLNY;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeInt(1);  // ownerType
+  w.writeInt(3);  // owner
+  w.writeInt(4);  // x
+  w.writeInt(8);  // y
+  w.writeInt(2);  // improvementType
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.improvementType, 2);
+  assert.equal(rec.x, 4);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'CLNY', io);
+  assertNoGenericFields(english, 'CLNY');
+  const map = parseEnglish(english);
+  assert.equal(map.get('improvementType'), '2');
+});
+
+// ---------------------------------------------------------------------------
+// FLAV toEnglish
+// ---------------------------------------------------------------------------
+
+test('FLAV toEnglish produces human-readable fields', () => {
+  const io = makeIo();
+  const flavRec = {
+    index: 0,
+    name: 'Militaristic',
+    questionMark: 0,
+    numRelations: 3,
+    relations: [10, -5, 2],
+  };
+
+  const english = sectionToEnglish(flavRec, 'FLAV', io);
+  assertNoGenericFields(english, 'FLAV');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Militaristic');
+  assert.equal(map.get('relation_with_flavor_0'), '10');
+  assert.equal(map.get('relation_with_flavor_1'), '-5');
+  assertNameNotFallback(flavRec, 'FLAV');
+});
+
+// ---------------------------------------------------------------------------
+// writableKeys: all registered sections must return non-empty writable keys
+// (ensures the UI can expose editable fields)
+// ---------------------------------------------------------------------------
+
+test('all registered sections return writable keys', () => {
+  const expectedNonEmpty = [
+    'TECH', 'BLDG', 'GOOD', 'GOVT', 'RACE', 'PRTO', 'CTZN', 'CULT', 'DIFF', 'ERAS',
+    'ESPN', 'EXPR', 'TFRM', 'WSIZ', 'WCHR', 'WMAP', 'TERR', 'RULE', 'LEAD',
+    'CITY', 'UNIT', 'GAME', 'TILE', 'CONT', 'SLOC', 'CLNY', 'FLAV'
+  ];
+  for (const code of expectedNonEmpty) {
+    const keys = sectionWritableKeys(code);
+    assert.ok(Array.isArray(keys) && keys.length > 0, `${code}: expected non-empty writableKeys`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// sectionRecordName: fallback "CODE N" only when name and civKey are absent
+// ---------------------------------------------------------------------------
+
+test('sectionRecordName falls back to "CODE N+1" only when name and civKey absent', () => {
+  // With name
+  assert.equal(sectionRecordName({ index: 0, name: 'Foo' }, 'TERR'), 'Foo');
+  // With civKey only
+  assert.equal(sectionRecordName({ index: 0, civilopediaEntry: 'TERR_PLAINS' }, 'TERR'), 'TERR_PLAINS');
+  // With both (name wins)
+  assert.equal(sectionRecordName({ index: 0, name: 'Plains', civilopediaEntry: 'TERR_PLAINS' }, 'TERR'), 'Plains');
+  // Fallback: no name or civKey
+  assert.equal(sectionRecordName({ index: 0 }, 'TERR'), 'TERR 1');
+  assert.equal(sectionRecordName({ index: 4 }, 'DIFF'), 'DIFF 5');
+});

@@ -2,8 +2,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
-const { spawnSync } = require('node:child_process');
 const { resolveUnitIniPath } = require('./artPreview');
+const { decompress: biqDecompress } = require('./biq/decompress');
+const { parseBiqBuffer: jsParseBiqBuffer, applyBiqEdits: jsApplyBiqEdits } = require('./biq/biqBridgeJs');
 
 const FILE_SPECS = {
   base: {
@@ -119,38 +120,7 @@ function readBiqTag(buf, offset) {
   return buf.subarray(offset, offset + 4).toString('latin1');
 }
 
-function findBiqDecompressorJar(civ3Path) {
-  const candidates = [
-    process.env.C3X_BIQ_DECOMPRESSOR_JAR || '',
-    process.resourcesPath ? path.join(process.resourcesPath, 'vendor', 'BIQDecompressor.jar') : '',
-    path.join(__dirname, '..', 'vendor', 'BIQDecompressor.jar')
-  ].filter(Boolean);
-  return candidates.find((p) => fs.existsSync(p)) || '';
-}
-
-function findJavaBinary(javaPath) {
-  if (javaPath && fs.existsSync(javaPath)) {
-    return javaPath;
-  }
-  return 'java';
-}
-
-function findBiqBridgeClasspath() {
-  const classDirs = [
-    path.join(__dirname, '..', 'vendor', 'biqbridge'),
-    process.resourcesPath ? path.join(process.resourcesPath, 'vendor', 'biqbridge') : ''
-  ].filter(Boolean);
-  const depsJars = [
-    path.join(__dirname, '..', 'vendor', 'lib', 'xplatformeditor-1.12-jar-with-dependencies.jar'),
-    process.resourcesPath ? path.join(process.resourcesPath, 'vendor', 'lib', 'xplatformeditor-1.12-jar-with-dependencies.jar') : ''
-  ].filter(Boolean);
-  const classDir = classDirs.find((p) => fs.existsSync(path.join(p, 'BiqBridge.class'))) || '';
-  const depsJar = depsJars.find((p) => fs.existsSync(p)) || '';
-  if (!classDir || !depsJar) return '';
-  return [classDir, depsJar].join(path.delimiter);
-}
-
-function inflateBiqIfNeeded(filePath, civ3Path, javaPath) {
+function inflateBiqIfNeeded(filePath, civ3Path) {
   if (!filePath || !fs.existsSync(filePath)) {
     return { ok: false, error: `BIQ file not found: ${filePath || '(empty path)'}` };
   }
@@ -160,41 +130,11 @@ function inflateBiqIfNeeded(filePath, civ3Path, javaPath) {
     return { ok: true, buffer: raw, compressed: false, decompressorPath: '' };
   }
 
-  const decompressorPath = findBiqDecompressorJar(civ3Path);
-  if (!decompressorPath) {
-    return {
-      ok: false,
-      error: 'BIQ appears compressed and no bundled BIQ decompressor was found.'
-    };
+  const jsResult = biqDecompress(raw);
+  if (jsResult.ok) {
+    return { ok: true, buffer: jsResult.data, compressed: true, decompressorPath: 'js' };
   }
-
-  const tmpBase = path.join(
-    os.tmpdir(),
-    `c3x-biq-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
-  );
-  const outPath = `${tmpBase}.biq`;
-  try {
-    const javaBinary = findJavaBinary(javaPath);
-    const proc = spawnSync(javaBinary, ['-jar', decompressorPath, filePath, outPath], {
-      encoding: 'utf8'
-    });
-    if (proc.status !== 0 || !fs.existsSync(outPath)) {
-      return {
-        ok: false,
-        error: `BIQ decompression failed: ${proc.stderr || proc.stdout || 'unknown error'}`
-      };
-    }
-    const inflated = fs.readFileSync(outPath);
-    return { ok: true, buffer: inflated, compressed: true, decompressorPath };
-  } catch (err) {
-    return { ok: false, error: `BIQ decompression failed: ${err.message}` };
-  } finally {
-    try {
-      if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
-    } catch (_err) {
-      // Best effort temp cleanup.
-    }
-  }
+  return { ok: false, error: `BIQ decompression failed: ${jsResult.error}` };
 }
 
 function normalizeBiqFieldKey(rawKey) {
@@ -1126,64 +1066,36 @@ function enrichBridgeSections(sections) {
   return sections;
 }
 
-function runBiqBridgeOnInflatedBuffer({ buffer, javaPath }) {
-  const classpath = findBiqBridgeClasspath();
-  if (!classpath) {
-    return { ok: false, error: 'BIQ bridge classes not found in vendor/biqbridge and vendor/lib.' };
-  }
-  const tmpPath = path.join(
-    os.tmpdir(),
-    `c3x-biq-bridge-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.biq`
-  );
-  try {
-    fs.writeFileSync(tmpPath, buffer);
-    const javaBinary = findJavaBinary(javaPath);
-    const proc = spawnSync(javaBinary, ['-cp', classpath, 'BiqBridge', tmpPath], {
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024
-    });
-    if (proc.status !== 0) {
-      return { ok: false, error: `BIQ bridge failed: ${proc.stderr || proc.stdout || 'unknown error'}` };
-    }
-    const raw = String(proc.stdout || '').trim();
-    const start = raw.indexOf('{');
-    const end = raw.lastIndexOf('}');
-    if (start < 0 || end < start) {
-      return { ok: false, error: 'BIQ bridge output was not valid JSON.' };
-    }
-    const parsed = JSON.parse(raw.slice(start, end + 1));
-    if (!parsed || !parsed.ok) {
-      return { ok: false, error: (parsed && parsed.error) || 'BIQ bridge returned an error.' };
-    }
+function normalizeBridgeSections(parsed) {
+  const sections = (parsed.sections || []).map((section) => {
+    const limit = getBiqBridgeRecordLimit(section.code);
+    const records = (section.records || [])
+      .slice(0, limit)
+      .map((record) => ({
+        index: record.index || 0,
+        name: cleanRecordName(record.name, `${section.code} ${(record.index || 0) + 1}`),
+        fields: parseEnglishFields(section.code, record.english || ''),
+        writableBaseKeys: Array.isArray(record.writableBaseKeys) ? record.writableBaseKeys : []
+      }));
+    return {
+      id: `${section.code}-${section.count || records.length}`,
+      code: section.code,
+      title: section.title || section.code,
+      count: Number(section.count || records.length),
+      records,
+      recordsTruncated: Number(section.count || 0) > records.length
+    };
+  });
+  return { ok: true, sections: enrichBridgeSections(sections) };
+}
 
-    const sections = (parsed.sections || []).map((section) => {
-      const limit = getBiqBridgeRecordLimit(section.code);
-      const records = (section.records || [])
-        .slice(0, limit)
-        .map((record) => ({
-          index: record.index || 0,
-          name: cleanRecordName(record.name, `${section.code} ${(record.index || 0) + 1}`),
-          fields: parseEnglishFields(section.code, record.english || ''),
-          writableBaseKeys: Array.isArray(record.writableBaseKeys) ? record.writableBaseKeys : []
-        }));
-      return {
-        id: `${section.code}-${section.count || records.length}`,
-        code: section.code,
-        title: section.title || section.code,
-        count: Number(section.count || records.length),
-        records,
-        recordsTruncated: Number(section.count || 0) > records.length
-      };
-    });
-    return { ok: true, sections: enrichBridgeSections(sections) };
+function runBiqBridgeOnInflatedBuffer({ buffer }) {
+  try {
+    const jsResult = jsParseBiqBuffer(buffer);
+    if (jsResult.ok) return normalizeBridgeSections(jsResult);
+    return { ok: false, error: jsResult.error || 'BIQ parse failed' };
   } catch (err) {
-    return { ok: false, error: `BIQ bridge parsing failed: ${err.message}` };
-  } finally {
-    try {
-      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-    } catch (_err) {
-      // best effort cleanup
-    }
+    return { ok: false, error: `BIQ parse failed: ${err.message}` };
   }
 }
 
@@ -1538,7 +1450,7 @@ function resolveBiqPath({ mode, civ3Path, scenarioPath }) {
   return path.join(root, 'Conquests', 'conquests.biq');
 }
 
-function loadBiqTab({ mode, civ3Path, scenarioPath, javaPath }) {
+function loadBiqTab({ mode, civ3Path, scenarioPath }) {
   const biqPath = resolveBiqPath({ mode, civ3Path, scenarioPath });
   if (!biqPath) {
     return {
@@ -1552,7 +1464,7 @@ function loadBiqTab({ mode, civ3Path, scenarioPath, javaPath }) {
       sections: []
     };
   }
-  const inflated = inflateBiqIfNeeded(biqPath, civ3Path, javaPath);
+  const inflated = inflateBiqIfNeeded(biqPath, civ3Path);
   if (!inflated.ok) {
     return {
       title: 'BIQ',
@@ -1565,7 +1477,7 @@ function loadBiqTab({ mode, civ3Path, scenarioPath, javaPath }) {
   }
   try {
     const headerMeta = parseBiqHeaderMetadata(inflated.buffer);
-    const bridged = runBiqBridgeOnInflatedBuffer({ buffer: inflated.buffer, javaPath });
+    const bridged = runBiqBridgeOnInflatedBuffer({ buffer: inflated.buffer });
     if (bridged.ok) {
       return {
         title: 'BIQ',
@@ -1837,7 +1749,6 @@ function createScenario(payload = {}) {
 
     const c3xPath = String(payload.c3xPath || '').trim();
     const civ3Root = resolveCiv3RootPath(String(payload.civ3Path || '').trim());
-    const javaPath = String(payload.javaPath || '').trim();
     const includeBaseText = payload.includeBaseText !== false;
     const includeC3xDefaults = payload.includeC3xDefaults !== false;
     const dryRun = payload.dryRun === true;
@@ -1881,8 +1792,7 @@ function createScenario(payload = {}) {
       sourceBiqTab = loadBiqTab({
         mode: 'scenario',
         civ3Path: civ3Root,
-        scenarioPath: sourceScenarioPath,
-        javaPath
+        scenarioPath: sourceScenarioPath
       });
       sourceSearchRoots = resolveScenarioSearchDirsFromBiq({
         scenarioPath: sourceScenarioPath,
@@ -2009,7 +1919,6 @@ function createScenario(payload = {}) {
               fieldKey: sourceSearchField.fieldKey,
               value: rewrittenValue
             }],
-            javaPath,
             civ3Path,
             outputPath: targetBiqInTemp
           });
@@ -3591,7 +3500,7 @@ function buildBaseModel(defaultText, scenarioText, customText, mode, targetText)
     rows,
     defaultMap: defaultParsed.map,
     effectiveMap: effective,
-    sourceOrder: mode === 'scenario' ? ['default', 'custom', 'scenario'] : ['default', 'custom'],
+    sourceOrder: mode === 'scenario' ? ['default', 'scenario', 'custom'] : ['default', 'custom'],
     commentsByKey
   };
 }
@@ -3848,9 +3757,8 @@ function loadBundle(payload) {
   const c3xPath = payload.c3xPath || '';
   const civ3Path = payload.civ3Path || '';
   const scenarioPath = payload.scenarioPath || '';
-  const javaPath = payload.javaPath || '';
   try {
-    const biqTab = loadBiqTab({ mode, civ3Path, scenarioPath, javaPath });
+    const biqTab = loadBiqTab({ mode, civ3Path, scenarioPath });
     const scenarioContext = mode === 'scenario'
       ? deriveScenarioPathContext({ scenarioPath, civ3Path, biqTab })
       : {
@@ -4323,8 +4231,7 @@ function buildSavePlan(payload) {
   const c3xPath = payload.c3xPath || '';
   const civ3Path = payload.civ3Path || '';
   const scenarioPath = payload.scenarioPath || '';
-  const javaPath = payload.javaPath || '';
-  const biqTab = loadBiqTab({ mode, civ3Path, scenarioPath, javaPath });
+  const biqTab = loadBiqTab({ mode, civ3Path, scenarioPath });
   const scenarioContext = mode === 'scenario'
     ? deriveScenarioPathContext({ scenarioPath, civ3Path, biqTab })
     : {
@@ -4435,7 +4342,6 @@ function buildSavePlan(payload) {
       const biqSave = applyBiqReferenceEdits({
         biqPath: scenarioPath,
         edits: allBiqEdits,
-        javaPath,
         civ3Path,
         outputPath: path.join(
           os.tmpdir(),
@@ -5483,101 +5389,31 @@ function buildScenarioUnitIniEditResult({ targetPath, sourcePath, actions, origi
   }
 }
 
-function applyBiqReferenceEdits({ biqPath, edits, javaPath, civ3Path, outputPath }) {
+function applyBiqReferenceEdits({ biqPath, edits, civ3Path, outputPath }) {
   if (!biqPath || !Array.isArray(edits) || edits.length === 0) {
     return { ok: true, applied: 0, skipped: 0, warning: '', outputPath: '' };
   }
-  const classpath = findBiqBridgeClasspath();
-  if (!classpath) {
-    return { ok: false, error: 'BIQ bridge classes not found in vendor/biqbridge and vendor/lib.' };
-  }
-  const inflated = inflateBiqIfNeeded(biqPath, civ3Path, javaPath);
+  const inflated = inflateBiqIfNeeded(biqPath, civ3Path);
   if (!inflated.ok) {
     return { ok: false, error: inflated.error || 'Failed to read BIQ before applying edits.' };
   }
-
-  const patchPath = path.join(
-    os.tmpdir(),
-    `c3x-biq-edits-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.txt`
-  );
-  const needsTempBiq = !!inflated.compressed;
   const finalOutputPath = String(outputPath || biqPath).trim() || biqPath;
-  const inBiqPath = needsTempBiq
-    ? path.join(os.tmpdir(), `c3x-biq-apply-in-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.biq`)
-    : biqPath;
-  const outBiqPath = needsTempBiq
-    ? path.join(os.tmpdir(), `c3x-biq-apply-out-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.biq`)
-    : finalOutputPath;
   try {
-    if (needsTempBiq) {
-      fs.writeFileSync(inBiqPath, inflated.buffer);
+    const jsResult = jsApplyBiqEdits({ buffer: inflated.buffer, edits });
+    if (!jsResult.ok) {
+      return { ok: false, error: jsResult.error || 'BIQ edit failed' };
     }
-    const lines = edits.map((edit) => {
-      const op = String(edit && edit.op || 'set').toLowerCase();
-      if (op === 'add') {
-        return `ADD\t${edit.sectionCode}\t${String(edit.newRecordRef || '').trim().toUpperCase()}\t${String(edit.copyFromRef || '').trim().toUpperCase()}`;
-      }
-      if (op === 'copy') {
-        const source = String(edit.sourceRef || edit.copyFromRef || '').trim().toUpperCase();
-        return `COPY\t${edit.sectionCode}\t${source}\t${String(edit.newRecordRef || '').trim().toUpperCase()}`;
-      }
-      if (op === 'delete') {
-        return `DELETE\t${edit.sectionCode}\t${String(edit.recordRef || '').trim().toUpperCase()}`;
-      }
-      const encoded = Buffer.from(String(edit.value || ''), 'utf8').toString('base64');
-      return `SET\t${edit.sectionCode}\t${edit.recordRef}\t${edit.fieldKey}\t${encoded}`;
-    });
-    fs.writeFileSync(patchPath, `${lines.join('\n')}\n`, 'utf8');
-    const javaBinary = findJavaBinary(javaPath);
-    const proc = spawnSync(javaBinary, ['-cp', classpath, 'BiqBridge', '--apply', inBiqPath, patchPath, outBiqPath], {
-      encoding: 'utf8',
-      maxBuffer: 16 * 1024 * 1024
-    });
-    if (proc.status !== 0) {
-      return { ok: false, error: `BIQ bridge apply failed: ${proc.stderr || proc.stdout || 'unknown error'}` };
-    }
-    const out = String(proc.stdout || '').trim();
-    const start = out.indexOf('{');
-    const end = out.lastIndexOf('}');
-    if (start < 0 || end < start) {
-      return { ok: false, error: 'BIQ bridge apply output was not valid JSON.' };
-    }
-    const parsed = JSON.parse(out.slice(start, end + 1));
-    if (!parsed || !parsed.ok) {
-      return { ok: false, error: (parsed && parsed.error) || 'BIQ bridge apply returned an error.' };
-    }
-    if (needsTempBiq) {
-      if (!fs.existsSync(outBiqPath)) {
-        return { ok: false, error: 'BIQ bridge apply did not produce an output BIQ.' };
-      }
-      fs.mkdirSync(path.dirname(finalOutputPath), { recursive: true });
-      fs.copyFileSync(outBiqPath, finalOutputPath);
-    }
+    fs.mkdirSync(path.dirname(finalOutputPath), { recursive: true });
+    fs.writeFileSync(finalOutputPath, jsResult.buffer);
     return {
       ok: true,
-      applied: Number(parsed.applied || 0),
-      skipped: Number(parsed.skipped || 0),
-      warning: String(parsed.warning || ''),
+      applied: jsResult.applied,
+      skipped: jsResult.skipped,
+      warning: jsResult.warning || '',
       outputPath: finalOutputPath
     };
   } catch (err) {
-    return { ok: false, error: `BIQ bridge apply failed: ${err.message}` };
-  } finally {
-    try {
-      if (fs.existsSync(patchPath)) fs.unlinkSync(patchPath);
-    } catch (_err) {
-      // best effort cleanup
-    }
-    try {
-      if (needsTempBiq && fs.existsSync(inBiqPath)) fs.unlinkSync(inBiqPath);
-    } catch (_err) {
-      // best effort cleanup
-    }
-    try {
-      if (needsTempBiq && fs.existsSync(outBiqPath)) fs.unlinkSync(outBiqPath);
-    } catch (_err) {
-      // best effort cleanup
-    }
+    return { ok: false, error: `BIQ edit failed: ${err.message}` };
   }
 }
 

@@ -7,10 +7,6 @@ const { getPreview } = require('./src/artPreview');
 const APP_SETTINGS_FILE = 'settings.json';
 const APP_NAME = 'Civ 3 C3X Modern Configuration Manager';
 const DEV_APP_ICON_PATH = path.join(__dirname, 'build', 'icon.png');
-const JAVA_BIN_RELATIVE_PATHS = process.platform === 'win32'
-  ? [path.join('bin', 'javaw.exe'), path.join('bin', 'java.exe')]
-  : [path.join('bin', 'java')];
-
 app.setName(APP_NAME);
 app.name = APP_NAME;
 
@@ -159,28 +155,6 @@ function getSettingsPath() {
 
 function findFirstExisting(paths) {
   return paths.find((p) => !!p && fs.existsSync(p)) || '';
-}
-
-function resolveBundledJavaPath() {
-  const candidates = [];
-
-  // Packaged app: resources/vendor/jre/<platform>/bin/java
-  if (process.resourcesPath) {
-    const base = path.join(process.resourcesPath, 'vendor', 'jre', process.platform);
-    JAVA_BIN_RELATIVE_PATHS.forEach((rel) => candidates.push(path.join(base, rel)));
-  }
-
-  // Development paths under repo vendor/jre/<platform>/bin/java
-  const devBaseCandidates = [
-    path.join(__dirname, 'vendor', 'jre', process.platform),
-    path.join(path.dirname(__dirname), 'vendor', 'jre', process.platform),
-    path.join(process.cwd(), 'vendor', 'jre', process.platform)
-  ];
-  devBaseCandidates.forEach((base) => {
-    JAVA_BIN_RELATIVE_PATHS.forEach((rel) => candidates.push(path.join(base, rel)));
-  });
-
-  return findFirstExisting(candidates);
 }
 
 function readJsonIfExists(filePath, fallback) {
@@ -470,10 +444,7 @@ ipcMain.handle('manager:list-scenarios', async (_event, civ3Path) => {
 });
 
 ipcMain.handle('manager:create-scenario', async (_event, payload) => {
-  return createScenario({
-    ...(payload || {}),
-    javaPath: resolveBundledJavaPath()
-  });
+  return createScenario(payload || {});
 });
 
 ipcMain.handle('manager:relaunch', async () => {
@@ -483,31 +454,19 @@ ipcMain.handle('manager:relaunch', async () => {
 });
 
 ipcMain.handle('manager:load-bundle', async (_event, payload) => {
-  return loadBundle({
-    ...(payload || {}),
-    javaPath: resolveBundledJavaPath()
-  });
+  return loadBundle(payload || {});
 });
 
 ipcMain.handle('manager:save-bundle', async (_event, payload) => {
-  return saveBundle({
-    ...(payload || {}),
-    javaPath: resolveBundledJavaPath()
-  });
+  return saveBundle(payload || {});
 });
 
 ipcMain.handle('manager:preview-save-plan', async (_event, payload) => {
-  return previewSavePlan({
-    ...(payload || {}),
-    javaPath: resolveBundledJavaPath()
-  });
+  return previewSavePlan(payload || {});
 });
 
 ipcMain.handle('manager:preview-file-diff', async (_event, payload) => {
-  return previewFileDiff({
-    ...(payload || {}),
-    javaPath: resolveBundledJavaPath()
-  });
+  return previewFileDiff(payload || {});
 });
 
 ipcMain.handle('manager:get-preview', async (_event, payload) => {

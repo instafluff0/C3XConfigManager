@@ -21,7 +21,7 @@ function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-config-manager-'));
 }
 
-test('base config precedence is default -> custom -> scenario', () => {
+test('base config precedence is default -> scenario -> custom', () => {
   const defaultText = 'a = 1\nb = 2\n';
   const scenarioText = 'b = 20\nc = 30\n';
   const customText = 'c = 300\n';
@@ -29,8 +29,8 @@ test('base config precedence is default -> custom -> scenario', () => {
   const model = buildBaseModel(defaultText, scenarioText, customText, 'scenario', '');
   assert.equal(model.effectiveMap.a, '1');
   assert.equal(model.effectiveMap.b, '20');
-  assert.equal(model.effectiveMap.c, '30');
-  assert.deepEqual(model.sourceOrder, ['default', 'custom', 'scenario']);
+  assert.equal(model.effectiveMap.c, '300');
+  assert.deepEqual(model.sourceOrder, ['default', 'scenario', 'custom']);
 });
 
 test('sectioned config parsing round-trips marker blocks', () => {

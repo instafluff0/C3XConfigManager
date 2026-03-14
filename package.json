@@ -21,12 +21,6 @@
       "preload.js",
       "src/**/*",
       "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "vendor",
-        "to": "vendor"
-      }
     ]
   }
 }
