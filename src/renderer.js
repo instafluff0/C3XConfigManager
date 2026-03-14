@@ -8169,9 +8169,10 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
   GAME: {
     order: [
       'title', 'description', 'scenariosearchfolders',
+      'usedefaultrules',
       'debugmode',
       'numberofplayablecivs', 'playable_civ',
-      'defaultvictoryconditions',
+      'defaultvictoryconditions', 'victoryconditionsandrules',
       'dominationenabled', 'spaceraceenabled', 'diplomacticenabled', 'conquestenabled', 'culturalenabled', 'wondervictoryenabled',
       'culturallylinkedstart', 'restartplayersenabled', 'preserverandomseed', 'acceleratedproduction', 'eliminationenabled', 'regicideenabled', 'massregicideenabled', 'allowculturalconversions',
       'autoplacekings', 'placecaptureunits', 'autoplacevictorylocations', 'mapvisible', 'retainculture',
@@ -8196,10 +8197,12 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       title: { group: 'Scenario', control: 'text' },
       description: { group: 'Scenario', control: 'text' },
       scenariosearchfolders: { group: 'Scenario', control: 'text', label: 'Scenario Search Folders' },
+      usedefaultrules: { group: 'Game Options', control: 'bool', label: 'Use Default Rules' },
       debugmode: { group: 'Map Options', control: 'bool' },
       numberofplayablecivs: { group: 'Player Options', control: 'number', min: 1, max: 32, label: 'Number of Players' },
       playable_civ: { group: 'Player Options', control: 'reference', label: 'Playable Civilization' },
       defaultvictoryconditions: { group: 'Game Options', control: 'bool' },
+      victoryconditionsandrules: { group: 'Game Options', control: 'number', label: 'Victory Conditions and Rules' },
       dominationenabled: { group: 'Game Options', control: 'bool' },
       spaceraceenabled: { group: 'Game Options', control: 'bool' },
       diplomacticenabled: { group: 'Game Options', control: 'bool' },
@@ -8564,8 +8567,9 @@ function getBiqStructureFieldGroup(sectionCode, field) {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
   const canon = base.replace(/[^a-z0-9]/g, '');
   if (code === 'GAME') {
-    if (/^playable_civ$/.test(base)) return 'Player Options';
-    if (/^turns_in_time_section_\d+$/.test(base) || /^time_per_turn_in_time_section_\d+$/.test(base)) return 'Time Scale';
+    if (/^playable_civ(_\d+)?$/.test(base)) return 'Player Options';
+    if (/^turns_in_time_section_\d+$/.test(base) || /^time_per_turn_in_time_section_\d+$/.test(base) ||
+        base === 'turns_per_timescale_part' || base === 'time_units_per_turn') return 'Time Scale';
     const allianceName = base.match(/^alliance(\d+)$/);
     if (allianceName) {
       const idx = Number.parseInt(allianceName[1], 10);
@@ -8605,11 +8609,13 @@ function getBiqStructureFieldOrder(sectionCode, field) {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
   const schema = BIQ_STRUCTURE_RULE_SCHEMAS[code] || null;
   if (code === 'GAME') {
-    if (/^playable_civ$/.test(base)) return 60;
+    if (/^playable_civ(_\d+)?$/.test(base)) return 60;
     const turnsMatch = base.match(/^turns_in_time_section_(\d+)$/);
     if (turnsMatch) return 260 + Number.parseInt(turnsMatch[1], 10) * 2;
     const perMatch = base.match(/^time_per_turn_in_time_section_(\d+)$/);
     if (perMatch) return 261 + Number.parseInt(perMatch[1], 10) * 2;
+    if (base === 'turns_per_timescale_part') return 260;
+    if (base === 'time_units_per_turn') return 261;
     const allianceMemberMatch = base.match(/^alliance(\d+)_member_(\d+)$/);
     if (allianceMemberMatch) {
       const allianceIdx = Number.parseInt(allianceMemberMatch[1], 10);

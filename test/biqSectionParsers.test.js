@@ -205,6 +205,54 @@ test('GOVT parser produces human-readable fields', () => {
   assert.equal(map.get('name'), 'Despotism');
   assert.equal(map.get('corruption'), '5');
   assert.equal(map.get('xenophobic'), '1');
+  // numGovts=0 in fixture → numGovts field must be present
+  assert.equal(map.get('numGovts'), '0', 'GOVT: expected numGovts');
+});
+
+test('GOVT toEnglish expands relations array', () => {
+  const reg = SECTION_REGISTRY.GOVT;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeInt(0); // defaultType
+  w.writeInt(1); // transitionType
+  w.writeInt(0); // requiresMaintenance
+  w.writeInt(0); // questionMark1
+  w.writeInt(0); // tilePenalty
+  w.writeInt(0); // commerceBonus
+  w.writeBytes(ws('Republic', 64));
+  w.writeBytes(ws('GOVT_REPUBLIC', 32));
+  for (let i = 0; i < 8; i++) w.writeBytes(ws('', 32)); // rulerTitles
+  w.writeInt(0);  // corruption
+  w.writeInt(0);  // immuneTo
+  w.writeInt(0);  // diplomatLevel
+  w.writeInt(0);  // spyLevel
+  w.writeInt(2);  // numGovts = 2 relations
+  // relation 0: canBribe=1, briberyMod=50, resistanceMod=25
+  w.writeInt(1); w.writeInt(50); w.writeInt(25);
+  // relation 1: canBribe=0, briberyMod=0, resistanceMod=10
+  w.writeInt(0); w.writeInt(0); w.writeInt(10);
+  // s2names: 17 × int32
+  for (let i = 0; i < 17; i++) w.writeInt(0);
+  // Conquests: xenophobic=0, forceResettlement=0
+  w.writeInt(0); w.writeInt(0);
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.numGovts, 2);
+  assert.deepEqual(rec.relations, [
+    { canBribe: 1, briberyMod: 50, resistanceMod: 25 },
+    { canBribe: 0, briberyMod: 0, resistanceMod: 10 },
+  ]);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'GOVT', io);
+  assertNoGenericFields(english, 'GOVT');
+  const map = parseEnglish(english);
+  assert.equal(map.get('numGovts'), '2', 'GOVT: expected numGovts=2');
+  assert.equal(map.get('govt_relation_0_can_bribe'), '1', 'GOVT: expected relation 0 canBribe');
+  assert.equal(map.get('govt_relation_0_bribery_mod'), '50', 'GOVT: expected relation 0 briberyMod');
+  assert.equal(map.get('govt_relation_0_resistance_mod'), '25', 'GOVT: expected relation 0 resistanceMod');
+  assert.equal(map.get('govt_relation_1_can_bribe'), '0', 'GOVT: expected relation 1 canBribe');
+  assert.equal(map.get('govt_relation_1_resistance_mod'), '10', 'GOVT: expected relation 1 resistanceMod');
 });
 
 // ---------------------------------------------------------------------------
@@ -264,6 +312,23 @@ test('RACE parser produces human-readable fields', () => {
   const map = parseEnglish(english);
   assert.equal(map.get('name'), 'Caesar');
   assert.equal(map.get('aggressionLevel'), '2');
+  // City names array must be expanded
+  assert.equal(map.get('numCities'), '2', 'RACE: expected numCities');
+  assert.equal(map.get('cityName_0'), 'Rome', 'RACE: expected cityName_0');
+  assert.equal(map.get('cityName_1'), 'Antium', 'RACE: expected cityName_1');
+  // Military leader names array must be expanded
+  assert.equal(map.get('numMilLeaders'), '1', 'RACE: expected numMilLeaders');
+  assert.equal(map.get('milLeader_0'), 'Caesar', 'RACE: expected milLeader_0');
+  // Era filenames must be expanded (3 eras, empty in fixture)
+  assert.ok(map.has('forwardFilename_0'), 'RACE: expected forwardFilename_0');
+  assert.ok(map.has('reverseFilename_0'), 'RACE: expected reverseFilename_0');
+  // uniqueCivCounter and governorSettings must be present
+  assert.ok(map.has('uniqueCivCounter'), 'RACE: expected uniqueCivCounter');
+  assert.ok(map.has('governorSettings'), 'RACE: expected governorSettings');
+  // PTW+: kingUnit must be present
+  assert.ok(map.has('kingUnit'), 'RACE: expected kingUnit (PTW+)');
+  // Conquests: numScientificLeaders (0 in fixture)
+  assert.equal(map.get('numScientificLeaders'), '0', 'RACE: expected numScientificLeaders');
   assertNameNotFallback({ index: 0, ...rec }, 'RACE');
 });
 
@@ -307,6 +372,17 @@ test('PRTO parser produces human-readable fields', () => {
   const map = parseEnglish(english);
   assert.equal(map.get('name'), 'Warrior');
   assert.equal(map.get('attack'), '1');
+  // All 14 scalars + zoc must be present (not just the original 7)
+  assert.equal(map.get('zoc'), '1', 'PRTO: expected zoc');
+  assert.equal(map.get('defence'), '1', 'PRTO: expected defence');
+  assert.equal(map.get('movement'), '1', 'PRTO: expected movement');
+  assert.equal(map.get('bombardRange'), '0', 'PRTO: expected bombardRange');
+  assert.equal(map.get('bombard'), '0', 'PRTO: expected bombard');
+  assert.equal(map.get('navalBombard'), '0', 'PRTO: expected navalBombard');
+  assert.equal(map.get('visibilityRange'), '1', 'PRTO: expected visibilityRange');
+  assert.equal(map.get('AIBombardRange'), '0', 'PRTO: expected AIBombardRange');
+  assert.equal(map.get('nationalityMod'), '0', 'PRTO: expected nationalityMod');
+  assert.equal(map.get('healthMod'), '0', 'PRTO: expected healthMod');
 });
 
 // ---------------------------------------------------------------------------
@@ -622,6 +698,11 @@ test('WMAP parser produces human-readable fields', () => {
   assert.equal(map.get('width'), '160');
   assert.equal(map.get('height'), '100');
   assert.equal(map.get('mapSeed'), '12345');
+  // resourceOccurrences array must be expanded
+  assert.equal(map.get('numResources'), '3', 'WMAP: expected numResources');
+  assert.equal(map.get('resource_occurrence_0'), '10', 'WMAP: expected resource_occurrence_0');
+  assert.equal(map.get('resource_occurrence_1'), '20', 'WMAP: expected resource_occurrence_1');
+  assert.equal(map.get('resource_occurrence_2'), '30', 'WMAP: expected resource_occurrence_2');
 });
 
 // ---------------------------------------------------------------------------
@@ -732,6 +813,10 @@ test('RULE parser produces human-readable fields', () => {
   assert.equal(map.get('townName'), 'Town');
   assert.equal(map.get('cityName'), 'City');
   assert.equal(map.get('advancedBarbarian'), '7');
+  // Spaceship parts must be present
+  assert.equal(map.get('numSpaceshipParts'), '5', 'RULE: expected numSpaceshipParts');
+  assert.equal(map.get('number_of_parts_0_required'), '1', 'RULE: expected number_of_parts_0_required');
+  assert.equal(map.get('number_of_parts_4_required'), '5', 'RULE: expected number_of_parts_4_required');
 
   // RULE has a static name, verify it is not a code+index fallback
   const name = sectionRecordName({ index: 0, ...rec }, 'RULE');
@@ -781,6 +866,13 @@ test('LEAD parser produces human-readable fields', () => {
   const map = parseEnglish(english);
   assert.equal(map.get('name'), 'Caesar');
   assert.equal(map.get('startCash'), '500');
+  // Start units array must be expanded
+  assert.equal(map.get('numberOfDifferentStartUnits'), '1', 'LEAD: expected numberOfDifferentStartUnits');
+  assert.equal(map.get('starting_units_of_type_3'), '2', 'LEAD: expected starting_units_of_type_3 (count=2)');
+  // Starting techs array must be expanded
+  assert.equal(map.get('numberOfStartingTechnologies'), '2', 'LEAD: expected numberOfStartingTechnologies');
+  assert.equal(map.get('starting_technology_0'), '0', 'LEAD: expected starting_technology_0');
+  assert.equal(map.get('starting_technology_1'), '1', 'LEAD: expected starting_technology_1');
   assertNameNotFallback({ index: 0, ...rec }, 'LEAD');
 });
 
@@ -819,6 +911,51 @@ test('GAME parser produces human-readable fields with individual playable_civ_N 
   assert.equal(map.get('playable_civ_2'), '5');
   // Must not have a combined "playableCivIds" key
   assert.ok(!map.has('playableCivIds'), 'GAME: playableCivIds should be expanded into individual playable_civ_N fields');
+  // Playable civ count field must be present
+  assert.equal(map.get('number_of_playable_civs'), '3', 'GAME: expected number_of_playable_civs');
+  // Time progression arrays must be present as comma-joined strings (7 slots, all 0 in fixture)
+  assert.equal(map.get('turns_per_timescale_part'), '0, 0, 0, 0, 0, 0, 0', 'GAME: expected turns_per_timescale_part CSV');
+  assert.equal(map.get('time_units_per_turn'), '0, 0, 0, 0, 0, 0, 0', 'GAME: expected time_units_per_turn CSV');
+  // useDefaultRules and victoryConditionsAndRules must both be present
+  assert.equal(map.get('victoryConditionsAndRules'), '7', 'GAME: expected victoryConditionsAndRules');
+});
+
+// ---------------------------------------------------------------------------
+// UNIT
+// ---------------------------------------------------------------------------
+
+test('UNIT parser produces human-readable fields including PTW+ customName', () => {
+  const reg = SECTION_REGISTRY.UNIT;
+  const io = makeIo(); // isPTWPlus = true (BICX majorVersion 12 >= 2)
+  const w = new BiqWriter();
+  w.writeBytes(ws('Warrior', 32));  // name
+  w.writeInt(1);  // ownerType
+  w.writeInt(2);  // experienceLevel
+  w.writeInt(3);  // owner
+  w.writeInt(5);  // pRTONumber
+  w.writeInt(0);  // AIStrategy
+  w.writeInt(10); // x
+  w.writeInt(20); // y
+  // PTW+: customName (57 bytes) + useCivilizationKing (4)
+  w.writeBytes(ws('Legionary', 57));
+  w.writeInt(1);  // useCivilizationKing
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.name, 'Warrior');
+  assert.equal(rec.pRTONumber, 5);
+  assert.equal(rec.customName, 'Legionary');
+  assert.equal(rec.useCivilizationKing, 1);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'UNIT', io);
+  assertNoGenericFields(english, 'UNIT');
+  const map = parseEnglish(english);
+  assert.equal(map.get('name'), 'Warrior');
+  assert.equal(map.get('x'), '10');
+  assert.equal(map.get('y'), '20');
+  assert.equal(map.get('pRTONumber'), '5');
+  assert.equal(map.get('customName'), 'Legionary', 'UNIT: expected customName (PTW+)');
+  assert.equal(map.get('useCivilizationKing'), '1', 'UNIT: expected useCivilizationKing (PTW+)');
 });
 
 // ---------------------------------------------------------------------------

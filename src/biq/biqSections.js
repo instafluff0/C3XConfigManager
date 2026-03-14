@@ -329,6 +329,13 @@ function toEnglishGOVT(rec, io) {
   const titleLabels = ['maleTitleEra1', 'femaleTitleEra1', 'maleTitleEra2', 'femaleTitleEra2',
     'maleTitleEra3', 'femaleTitleEra3', 'maleTitleEra4', 'femaleTitleEra4'];
   for (let i = 0; i < 8; i++) pairs.push([titleLabels[i] || `rulerTitle${i + 1}`, titles[i] || '']);
+  const rels = Array.isArray(rec.relations) ? rec.relations : [];
+  pairs.push(['numGovts', String(rels.length)]);
+  rels.forEach((r, i) => {
+    pairs.push([`govt_relation_${i}_can_bribe`, String((r.canBribe != null ? r.canBribe : 0) | 0)]);
+    pairs.push([`govt_relation_${i}_bribery_mod`, String((r.briberyMod != null ? r.briberyMod : 0) | 0)]);
+    pairs.push([`govt_relation_${i}_resistance_mod`, String((r.resistanceMod != null ? r.resistanceMod : 0) | 0)]);
+  });
   if (io.isConquests) {
     pairs.push(['xenophobic', String(rec.xenophobic | 0)]);
     pairs.push(['forceResettlement', String(rec.forceResettlement | 0)]);
@@ -477,6 +484,8 @@ function toEnglishRACE(rec, io) {
     ['shunnedGovernment', String(rec.shunnedGovernment | 0)],
     ['defaultColor', String(rec.defaultColor | 0)],
     ['uniqueColor', String(rec.uniqueColor | 0)],
+    ['uniqueCivCounter', String(rec.uniqueCivCounter | 0)],
+    ['governorSettings', String(rec.governorSettings | 0)],
     ['bonuses', String(rec.bonuses | 0)],
     ['buildNever', String(rec.buildNever | 0)],
     ['buildOften', String(rec.buildOften | 0)],
@@ -484,14 +493,30 @@ function toEnglishRACE(rec, io) {
   ];
   const ft = Array.isArray(rec.freeTechs) ? rec.freeTechs : [-1, -1, -1, -1];
   ft.forEach((v, i) => pairs.push([`freeTech${i + 1}`, String(v != null ? (v | 0) : -1)]));
+  const cityNames = Array.isArray(rec.cityNames) ? rec.cityNames : [];
+  pairs.push(['numCities', String(cityNames.length)]);
+  cityNames.forEach((cn, i) => pairs.push([`cityName_${i}`, cn || '']));
+  const milLeaderNames = Array.isArray(rec.milLeaderNames) ? rec.milLeaderNames : [];
+  pairs.push(['numMilLeaders', String(milLeaderNames.length)]);
+  milLeaderNames.forEach((ml, i) => pairs.push([`milLeader_${i}`, ml || '']));
+  const fwd = Array.isArray(rec.forwardFilenames) ? rec.forwardFilenames : [];
+  fwd.forEach((fn, i) => pairs.push([`forwardFilename_${i}`, fn || '']));
+  const rev = Array.isArray(rec.reverseFilenames) ? rec.reverseFilenames : [];
+  rev.forEach((fn, i) => pairs.push([`reverseFilename_${i}`, fn || '']));
+  if (io.isPTWPlus) {
+    pairs.push(['kingUnit', String(rec.kingUnit | 0)]);
+  }
   if (io.isConquests) {
     pairs.push(['flavors', String(rec.flavors | 0)]);
     pairs.push(['diplomacyTextIndex', String(rec.diplomacyTextIndex | 0)]);
+    const sl = Array.isArray(rec.scientificLeaderNames) ? rec.scientificLeaderNames : [];
+    pairs.push(['numScientificLeaders', String(sl.length)]);
+    sl.forEach((sln, i) => pairs.push([`scientificLeader_${i}`, sln || '']));
   }
   return lines(pairs);
 }
 
-const WRITABLE_RACE = ['name', 'leader_title', 'adjective', 'civilization_name', 'noun', 'culture_group', 'leader_gender', 'civilization_gender', 'aggression_level', 'favorite_government', 'shunned_government', 'default_color', 'unique_color', 'bonuses', 'build_never', 'build_often', 'plurality', 'free_tech1', 'free_tech2', 'free_tech3', 'free_tech4'];
+const WRITABLE_RACE = ['name', 'leader_title', 'adjective', 'civilization_name', 'noun', 'culture_group', 'leader_gender', 'civilization_gender', 'aggression_level', 'favorite_government', 'shunned_government', 'default_color', 'unique_color', 'unique_civ_counter', 'governor_settings', 'bonuses', 'build_never', 'build_often', 'plurality', 'free_tech1', 'free_tech2', 'free_tech3', 'free_tech4', 'king_unit'];
 
 // ---------------------------------------------------------------------------
 // PRTO (Unit Types) - partial: parse enough for name/civKey + basic fields
@@ -543,12 +568,20 @@ function toEnglishPRTO(rec, io) {
   return lines([
     ['name', rec.name || ''],
     ['civilopediaEntry', rec.civilopediaEntry || ''],
+    ['zoc', String(rec.zoc | 0)],
     ['attack', String(rec.attack | 0)],
     ['defence', String(rec.defence | 0)],
     ['movement', String(rec.movement | 0)],
-    ['cost', String(rec.cost | 0)],
+    ['bombardRange', String(rec.bombardRange | 0)],
+    ['bombard', String(rec.bombard | 0)],
+    ['navalBombard', String(rec.navalBombard | 0)],
     ['range', String(rec.range | 0)],
     ['transportCapacity', String(rec.transportCapacity | 0)],
+    ['cost', String(rec.cost | 0)],
+    ['nationalityMod', String(rec.nationalityMod | 0)],
+    ['healthMod', String(rec.healthMod | 0)],
+    ['visibilityRange', String(rec.visibilityRange | 0)],
+    ['AIBombardRange', String(rec.AIBombardRange | 0)],
     ['upgradesTo', String(rec.upgradesTo | 0)],
   ]);
 }
@@ -676,10 +709,12 @@ function toEnglishUNIT(rec, io) {
     ['experienceLevel', String(rec.experienceLevel | 0)],
     ['x', String(rec.x | 0)],
     ['y', String(rec.y | 0)],
+    io.isPTWPlus ? ['customName', rec.customName || ''] : null,
+    io.isPTWPlus ? ['useCivilizationKing', String(rec.useCivilizationKing | 0)] : null,
   ]);
 }
 
-const WRITABLE_UNIT = ['name', 'owner_type', 'owner', 'p_r_t_o_number', 'a_i_strategy', 'experience_level', 'x', 'y'];
+const WRITABLE_UNIT = ['name', 'owner_type', 'owner', 'p_r_t_o_number', 'a_i_strategy', 'experience_level', 'x', 'y', 'custom_name', 'use_civilization_king'];
 
 // ---------------------------------------------------------------------------
 // GAME (Scenario Properties) - partial: key fields only, rest stored raw
@@ -717,6 +752,7 @@ function toEnglishGAME(rec, io) {
   const pairs = [
     ['useDefaultRules', String(rec.useDefaultRules | 0)],
     ['defaultVictoryConditions', String(rec.defaultVictoryConditions | 0)],
+    ['number_of_playable_civs', String(civIds.length)],
     ...civIds.map((id, i) => [`playable_civ_${i}`, String(id | 0)]),
     ['victoryConditionsAndRules', String(rec.victoryConditionsAndRules | 0)],
   ];
@@ -738,14 +774,13 @@ function toEnglishGAME(rec, io) {
   if (off + 28 <= tail.length) {
     const turnsPerScale = [];
     for (let i = 0; i < 7; i++) { turnsPerScale.push(tail.readInt32LE(off)); off += 4; }
-    pairs.push(['turnsPerTimescalePart', turnsPerScale.join(', ')]);
+    pairs.push(['turns_per_timescale_part', turnsPerScale.join(', ')]);
   }
   // 7 time units per turn
   if (off + 28 <= tail.length) {
     const timeUnitsPerTurn = [];
     for (let i = 0; i < 7; i++) { timeUnitsPerTurn.push(tail.readInt32LE(off)); off += 4; }
-    pairs.push(['timeUnitsPerTurn', timeUnitsPerTurn.join(', ')]);
-    off += 0; // already advanced
+    pairs.push(['time_units_per_turn', timeUnitsPerTurn.join(', ')]);
   }
   // 5200 bytes scenario search folders
   if (off + 5200 <= tail.length) {
@@ -1296,7 +1331,8 @@ function serializeWMAP(rec, io) {
 }
 
 function toEnglishWMAP(rec, io) {
-  return lines([
+  const resOcc = Array.isArray(rec.resourceOccurrences) ? rec.resourceOccurrences : [];
+  const pairs = [
     ['name', 'World Map'],
     ['width', String(rec.width | 0)],
     ['height', String(rec.height | 0)],
@@ -1305,8 +1341,10 @@ function toEnglishWMAP(rec, io) {
     ['distanceBetweenCivs', String(rec.distanceBetweenCivs | 0)],
     ['mapSeed', String(rec.mapSeed | 0)],
     ['flags', String(rec.flags | 0)],
-    ['numResources', String((Array.isArray(rec.resourceOccurrences) ? rec.resourceOccurrences.length : (rec.numResources | 0)))],
-  ]);
+    ['numResources', String(resOcc.length)],
+  ];
+  resOcc.forEach((v, i) => pairs.push([`resource_occurrence_${i}`, String(v | 0)]));
+  return lines(pairs);
 }
 
 const WRITABLE_WMAP = ['width', 'height', 'num_continents', 'num_civs', 'distance_between_civs', 'map_seed', 'flags'];
@@ -1510,7 +1548,11 @@ function toEnglishRULE(rec, io) {
     ['townName', rec.townName || ''],
     ['cityName', rec.cityName || ''],
     ['metropolisName', rec.metropolisName || ''],
+    ['numSpaceshipParts', String(rec.numSSParts | 0)],
   ];
+  (rec.numberOfPartsRequired || []).forEach((v, i) => {
+    pairs.push([`number_of_parts_${i}_required`, String(v | 0)]);
+  });
   for (const sn of RULE_SCALAR_NAMES) {
     pairs.push([sn, String((rec[sn] != null ? rec[sn] : 0) | 0)]);
   }
@@ -1610,6 +1652,16 @@ function toEnglishLEAD(rec, io) {
     ['color', String(rec.color | 0)],
     ['genderOfLeaderName', String(rec.genderOfLeaderName | 0)],
   ];
+  const startUnits = Array.isArray(rec.startUnits) ? rec.startUnits : [];
+  pairs.push(['numberOfDifferentStartUnits', String(startUnits.length)]);
+  startUnits.forEach((su) => {
+    pairs.push([`starting_units_of_type_${su.startUnitIndex}`, String(su.startUnitCount | 0)]);
+  });
+  const techIndices = Array.isArray(rec.techIndices) ? rec.techIndices : [];
+  pairs.push(['numberOfStartingTechnologies', String(techIndices.length)]);
+  techIndices.forEach((idx, i) => {
+    pairs.push([`starting_technology_${i}`, String(idx | 0)]);
+  });
   if (io.isPTWPlus) {
     pairs.push(['skipFirstTurn', String(rec.skipFirstTurn | 0)]);
     pairs.push(['startEmbassies', String(rec.startEmbassies | 0)]);
