@@ -1,20 +1,18 @@
-# BIQ Java Port Notes
+# BIQ Binary Format Reference
 
-Comprehensive reference for the JavaScript port of `BIQDecompressor.jar` and
-`BiqBridge.java` / `xplatformeditor-1.12-jar-with-dependencies.jar`.
+Comprehensive reference for BIQ binary layout, derived from the Quint_Editor source.
+The app is a pure-JS implementation — no Java or JAR dependencies at runtime.
 
-## Source Mapping
+## JS Implementation
 
-| Java artifact | Source location | JS replacement |
-|---|---|---|
-| `BIQDecompressor.jar` | `c3sat/civ3decompress/decompress.go` (Go port, MIT) | `src/biq/decompress.js` |
-| `BiqBridge.java` | `vendor/biqbridge/BiqBridge.java` | `src/biq/biqBridgeJs.js` |
-| `xplatformeditor-…-jar` | `../Quint_Editor/Shared/Civ3_Shared_Components/…` | `src/biq/biqSections.js` |
+| Concern | JS module |
+|---|---|
+| PKWare IMPLODE decompression | `src/biq/decompress.js` |
+| Section orchestration (parse/serialize) | `src/biq/biqBridgeJs.js` |
+| Per-section parsers and serializers | `src/biq/biqSections.js` |
 
-The Quint_Editor repository's `artifactId=xplatformeditor.shared-components` and
-`groupId=com.civfanatics.civ3` exactly matches the JAR used in production.  The
-primary parsing engine is the 6,860-line
-`…/biqFile/IO.java`.
+Binary layout was derived from the Quint_Editor `IO.java` source at
+`../Quint_Editor/Shared/Civ3_Shared_Components/…/biqFile/IO.java` (read-only reference, not used at runtime).
 
 ---
 
@@ -365,9 +363,9 @@ and `parseIntLoose("Pottery (5)")` → 5 in the save path.
 
 ### writableBaseKeys
 
-Snake_case field names derived from setter method names (matching Java
-`toSnakeLowerFromSetterName`).  Example: `setPrerequisite1` → `prerequisite1`.
-Used to mark fields as editable in the UI.
+Snake_case field names from the `writableKeys` array on each section's registry entry
+in `src/biq/biqSections.js`.  Example: `prerequisite1`.  Used to mark fields as
+editable in the UI.
 
 ### Patch Format (apply edits)
 

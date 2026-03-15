@@ -717,33 +717,226 @@ function toEnglishUNIT(rec, io) {
 const WRITABLE_UNIT = ['name', 'owner_type', 'owner', 'p_r_t_o_number', 'a_i_strategy', 'experience_level', 'x', 'y', 'custom_name', 'use_civilization_king'];
 
 // ---------------------------------------------------------------------------
-// GAME (Scenario Properties) - partial: key fields only, rest stored raw
+// GAME (Scenario Properties)
 // ---------------------------------------------------------------------------
 
 function parseGAME(data, io) {
   let off = 0;
-  const useDefaultRules = off + 4 <= data.length ? data.readInt32LE(off) : 0; off += 4;
-  const defaultVictoryConditions = off + 4 <= data.length ? data.readInt32LE(off) : 0; off += 4;
-  const numPlayableCivs = off + 4 <= data.length ? data.readInt32LE(off) : 0; off += 4;
-  const playableCivIds = [];
-  for (let i = 0; i < numPlayableCivs && off + 4 <= data.length; i++) {
-    playableCivIds.push(data.readInt32LE(off)); off += 4;
+  function ri() {
+    if (off + 4 > data.length) { off += 4; return 0; }
+    const v = data.readInt32LE(off); off += 4; return v;
   }
-  const victoryConditionsAndRules = off + 4 <= data.length ? data.readInt32LE(off) : 0; off += 4;
-  // Remaining data is complex; store as raw
-  const _tail = off < data.length ? Buffer.from(data.subarray(off)) : Buffer.alloc(0);
-  return { useDefaultRules, defaultVictoryConditions, numPlayableCivs, playableCivIds, victoryConditionsAndRules, _tail };
+  function rb() {
+    if (off >= data.length) { off += 1; return 0; }
+    const v = data[off]; off += 1; return v;
+  }
+  function rs(len) {
+    const s = off + len <= data.length ? readStr(data, off, len) : '';
+    off += len; return s;
+  }
+
+  const useDefaultRules = ri();
+  const defaultVictoryConditions = ri();
+  const numPlayableCivs = ri();
+  const playableCivIds = [];
+  for (let i = 0; i < numPlayableCivs; i++) playableCivIds.push(ri());
+  const victoryConditionsAndRules = ri();
+
+  const placeCaptureUnits = ri();
+  const autoPlaceKings = ri();
+  const autoPlaceVictoryLocations = ri();
+  const debugMode = ri();
+  const useTimeLimit = ri();
+  const baseTimeUnit = ri();
+  const startMonth = ri();
+  const startWeek = ri();
+  const startYear = ri();
+  const minuteTimeLimit = ri();
+  const turnTimeLimit = ri();
+
+  const turnsPerTimescale = [];
+  for (let i = 0; i < 7; i++) turnsPerTimescale.push(ri());
+  const timeUnitsPerTurn = [];
+  for (let i = 0; i < 7; i++) timeUnitsPerTurn.push(ri());
+
+  const scenarioSearchFolders = rs(5200);
+
+  // Conquests tail: civPartOfWhichAlliance (numPlayableCivs int32s, no length prefix)
+  const civPartOfWhichAlliance = [];
+  for (let i = 0; i < numPlayableCivs; i++) civPartOfWhichAlliance.push(ri());
+
+  // Victory point fields (13 int32s)
+  const victoryPointLimit = ri();
+  const cityEliminationCount = ri();
+  const oneCityCultureWinLimit = ri();
+  const allCitiesCultureWinLimit = ri();
+  const dominationTerrainPercent = ri();
+  const dominationPopulationPercent = ri();
+  const wonderVP = ri();
+  const defeatingOpposingUnitVP = ri();
+  const advancementVP = ri();
+  const cityConquestVP = ri();
+  const victoryPointVP = ri();
+  const captureSpecialUnitVP = ri();
+  const questionMark1 = ri();
+  const questionMark2 = rb();
+
+  // 5 alliance name strings (256 bytes each), stored as individual properties
+  const alliance0 = rs(256);
+  const alliance1 = rs(256);
+  const alliance2 = rs(256);
+  const alliance3 = rs(256);
+  const alliance4 = rs(256);
+
+  // warWith[k][j]: interleaved — 5 rounds of 5 ints (k=source alliance, j=target)
+  const warWith = [[], [], [], [], []];
+  for (let round = 0; round < 5; round++) {
+    for (let k = 0; k < 5; k++) warWith[k].push(ri());
+  }
+
+  const allianceVictoryType = ri();
+  const plaugeName = rs(260); // note: intentional typo preserved from original format
+  const permitPlagues = rb();
+  const plagueEarliestStart = ri();
+  const plagueVariation = ri();
+  const plagueDuration = ri();
+  const plagueStrength = ri();
+  const plagueGracePeriod = ri();
+  const plagueMaxOccurance = ri();
+  const questionMark3 = ri();
+  const _unknownStr = rs(260);
+  const respawnFlagUnits = ri();
+  const captureAnyFlag = rb();
+  const goldForCapture = ri();
+  const mapVisible = rb();
+  const retainCulture = rb();
+  const questionMark4 = ri();
+  const eruptionPeriod = ri();
+
+  let mpBaseTime = 0, mpCityTime = 0, mpUnitTime = 0;
+  if (io.isConquests && io.minorVersion >= 7 && off + 12 <= data.length) {
+    mpBaseTime = ri(); mpCityTime = ri(); mpUnitTime = ri();
+  }
+
+  return {
+    useDefaultRules, defaultVictoryConditions, numPlayableCivs, playableCivIds, victoryConditionsAndRules,
+    placeCaptureUnits, autoPlaceKings, autoPlaceVictoryLocations, debugMode, useTimeLimit,
+    baseTimeUnit, startMonth, startWeek, startYear, minuteTimeLimit, turnTimeLimit,
+    turnsPerTimescale, timeUnitsPerTurn, scenarioSearchFolders,
+    civPartOfWhichAlliance,
+    victoryPointLimit, cityEliminationCount, oneCityCultureWinLimit, allCitiesCultureWinLimit,
+    dominationTerrainPercent, dominationPopulationPercent,
+    wonderVP, defeatingOpposingUnitVP, advancementVP, cityConquestVP, victoryPointVP, captureSpecialUnitVP,
+    questionMark1, questionMark2,
+    alliance0, alliance1, alliance2, alliance3, alliance4,
+    warWith, allianceVictoryType,
+    plaugeName, permitPlagues,
+    plagueEarliestStart, plagueVariation, plagueDuration, plagueStrength, plagueGracePeriod, plagueMaxOccurance,
+    questionMark3, _unknownStr,
+    respawnFlagUnits, captureAnyFlag, goldForCapture, mapVisible, retainCulture, questionMark4, eruptionPeriod,
+    mpBaseTime, mpCityTime, mpUnitTime,
+  };
 }
 
 function serializeGAME(rec, io) {
+  // Legacy fallback: records with a raw _tail (e.g. parsed before this rewrite)
+  if (rec._tail && rec._tail.length > 0) {
+    const w = new BiqWriter();
+    w.writeInt(rec.useDefaultRules | 0);
+    w.writeInt(rec.defaultVictoryConditions | 0);
+    const civIds = Array.isArray(rec.playableCivIds) ? rec.playableCivIds : [];
+    w.writeInt(civIds.length);
+    for (const id of civIds) w.writeInt(id | 0);
+    w.writeInt(rec.victoryConditionsAndRules | 0);
+    w.writeBytes(rec._tail);
+    return w.toBuffer();
+  }
+
   const w = new BiqWriter();
+  const civIds = Array.isArray(rec.playableCivIds) ? rec.playableCivIds : [];
+
   w.writeInt(rec.useDefaultRules | 0);
   w.writeInt(rec.defaultVictoryConditions | 0);
-  const civIds = Array.isArray(rec.playableCivIds) ? rec.playableCivIds : [];
   w.writeInt(civIds.length);
   for (const id of civIds) w.writeInt(id | 0);
   w.writeInt(rec.victoryConditionsAndRules | 0);
-  if (rec._tail && rec._tail.length > 0) w.writeBytes(rec._tail);
+
+  w.writeInt(rec.placeCaptureUnits | 0);
+  w.writeInt(rec.autoPlaceKings | 0);
+  w.writeInt(rec.autoPlaceVictoryLocations | 0);
+  w.writeInt(rec.debugMode | 0);
+  w.writeInt(rec.useTimeLimit | 0);
+  w.writeInt(rec.baseTimeUnit | 0);
+  w.writeInt(rec.startMonth | 0);
+  w.writeInt(rec.startWeek | 0);
+  w.writeInt(rec.startYear | 0);
+  w.writeInt(rec.minuteTimeLimit | 0);
+  w.writeInt(rec.turnTimeLimit | 0);
+
+  const tpts = Array.isArray(rec.turnsPerTimescale) ? rec.turnsPerTimescale : [];
+  for (let i = 0; i < 7; i++) w.writeInt((tpts[i] != null ? tpts[i] : 0) | 0);
+  const tupt = Array.isArray(rec.timeUnitsPerTurn) ? rec.timeUnitsPerTurn : [];
+  for (let i = 0; i < 7; i++) w.writeInt((tupt[i] != null ? tupt[i] : 0) | 0);
+
+  writeStr(w, rec.scenarioSearchFolders || '', 5200);
+
+  const cpa = Array.isArray(rec.civPartOfWhichAlliance) ? rec.civPartOfWhichAlliance : [];
+  for (let i = 0; i < civIds.length; i++) w.writeInt((cpa[i] != null ? cpa[i] : 4) | 0);
+
+  w.writeInt(rec.victoryPointLimit | 0);
+  w.writeInt(rec.cityEliminationCount | 0);
+  w.writeInt(rec.oneCityCultureWinLimit | 0);
+  w.writeInt(rec.allCitiesCultureWinLimit | 0);
+  w.writeInt(rec.dominationTerrainPercent | 0);
+  w.writeInt(rec.dominationPopulationPercent | 0);
+  w.writeInt(rec.wonderVP | 0);
+  w.writeInt(rec.defeatingOpposingUnitVP | 0);
+  w.writeInt(rec.advancementVP | 0);
+  w.writeInt(rec.cityConquestVP | 0);
+  w.writeInt(rec.victoryPointVP | 0);
+  w.writeInt(rec.captureSpecialUnitVP | 0);
+  w.writeInt(rec.questionMark1 | 0);
+  w.writeByte(rec.questionMark2 | 0);
+
+  writeStr(w, rec.alliance0 || '', 256);
+  writeStr(w, rec.alliance1 || '', 256);
+  writeStr(w, rec.alliance2 || '', 256);
+  writeStr(w, rec.alliance3 || '', 256);
+  writeStr(w, rec.alliance4 || '', 256);
+
+  const ww = Array.isArray(rec.warWith) ? rec.warWith : [[], [], [], [], []];
+  for (let round = 0; round < 5; round++) {
+    for (let k = 0; k < 5; k++) {
+      const arr = Array.isArray(ww[k]) ? ww[k] : [];
+      w.writeInt((arr[round] != null ? arr[round] : 0) | 0);
+    }
+  }
+
+  w.writeInt(rec.allianceVictoryType | 0);
+  writeStr(w, rec.plaugeName || '', 260);
+  w.writeByte(rec.permitPlagues | 0);
+  w.writeInt(rec.plagueEarliestStart | 0);
+  w.writeInt(rec.plagueVariation | 0);
+  w.writeInt(rec.plagueDuration | 0);
+  w.writeInt(rec.plagueStrength | 0);
+  w.writeInt(rec.plagueGracePeriod | 0);
+  w.writeInt(rec.plagueMaxOccurance | 0);
+  w.writeInt(rec.questionMark3 | 0);
+  writeStr(w, rec._unknownStr || '', 260);
+  w.writeInt(rec.respawnFlagUnits | 0);
+  w.writeByte(rec.captureAnyFlag | 0);
+  w.writeInt(rec.goldForCapture | 0);
+  w.writeByte(rec.mapVisible | 0);
+  w.writeByte(rec.retainCulture | 0);
+  w.writeInt(rec.questionMark4 | 0);
+  w.writeInt(rec.eruptionPeriod | 0);
+
+  if (io.isConquests && io.minorVersion >= 7) {
+    w.writeInt(rec.mpBaseTime | 0);
+    w.writeInt(rec.mpCityTime | 0);
+    w.writeInt(rec.mpUnitTime | 0);
+  }
+
   return w.toBuffer();
 }
 
@@ -754,48 +947,124 @@ function toEnglishGAME(rec, io) {
     ['defaultVictoryConditions', String(rec.defaultVictoryConditions | 0)],
     ['number_of_playable_civs', String(civIds.length)],
     ...civIds.map((id, i) => [`playable_civ_${i}`, String(id | 0)]),
-    ['victoryConditionsAndRules', String(rec.victoryConditionsAndRules | 0)],
+    // victoryConditionsAndRules bitmask: expand to individual bool flags
+    ...[
+      ['dominationEnabled', 0], ['spaceRaceEnabled', 1], ['diplomacticEnabled', 2],
+      ['conquestEnabled', 3], ['culturalEnabled', 4], ['civSpecificAbilitiesEnabled', 5],
+      ['culturallyLinkedStart', 6], ['restartPlayersEnabled', 7],
+      ['preserveRandomSeed', 8], ['acceleratedProduction', 9],
+      ['eliminationEnabled', 10], ['regicideEnabled', 11], ['massRegicideEnabled', 12],
+      ['victoryLocationsEnabled', 13], ['captureTheFlag', 14], ['allowCulturalConversions', 15],
+      ['wonderVictoryEnabled', 16], ['reverseCaptureTheFlag', 17], ['scientificLeaders', 18],
+    ].map(([name, bit]) => [name, String(((rec.victoryConditionsAndRules | 0) >> bit) & 1)]),
+    ['placeCaptureUnits', String(rec.placeCaptureUnits | 0)],
+    ['autoPlaceKings', String(rec.autoPlaceKings | 0)],
+    ['autoPlaceVictoryLocations', String(rec.autoPlaceVictoryLocations | 0)],
+    ['debugMode', String(rec.debugMode | 0)],
+    ['useTimeLimit', String(rec.useTimeLimit | 0)],
+    ['baseTimeUnit', String(rec.baseTimeUnit | 0)],
+    ['startMonth', String(rec.startMonth | 0)],
+    ['startWeek', String(rec.startWeek | 0)],
+    ['startYear', String(rec.startYear | 0)],
+    ['minuteTimeLimit', String(rec.minuteTimeLimit | 0)],
+    ['turnTimeLimit', String(rec.turnTimeLimit | 0)],
+    ['mapVisible', String(rec.mapVisible | 0)],
+    ['retainCulture', String(rec.retainCulture | 0)],
   ];
-  // Parse known fields from tail
-  const tail = rec._tail || Buffer.alloc(0);
-  let off = 0;
-  // Skip: placeCaptureUnits, autoPlaceKings, autoPlaceVictoryLocations, debugMode,
-  //        useTimeLimit, baseTimeUnit, startMonth, startWeek, startYear,
-  //        minuteTimeLimit, turnTimeLimit = 11 × int32 = 44 bytes
-  const FIXED_TAIL_SCALARS = ['placeCaptureUnits', 'autoPlaceKings', 'autoPlaceVictoryLocations',
-    'debugMode', 'useTimeLimit', 'baseTimeUnit', 'startMonth', 'startWeek', 'startYear',
-    'minuteTimeLimit', 'turnTimeLimit'];
-  for (const sn of FIXED_TAIL_SCALARS) {
-    if (off + 4 > tail.length) break;
-    pairs.push([sn, String(tail.readInt32LE(off))]);
-    off += 4;
+
+  // Time scale: individual fields for schema-driven UI display
+  const tpts = Array.isArray(rec.turnsPerTimescale) ? rec.turnsPerTimescale : [];
+  const tupt = Array.isArray(rec.timeUnitsPerTurn) ? rec.timeUnitsPerTurn : [];
+  for (let i = 0; i < 7; i++) {
+    pairs.push([`turns_in_time_section_${i}`, String((tpts[i] != null ? tpts[i] : 0) | 0)]);
+    pairs.push([`time_per_turn_in_time_section_${i}`, String((tupt[i] != null ? tupt[i] : 0) | 0)]);
   }
-  // 7 turns per timescale
-  if (off + 28 <= tail.length) {
-    const turnsPerScale = [];
-    for (let i = 0; i < 7; i++) { turnsPerScale.push(tail.readInt32LE(off)); off += 4; }
-    pairs.push(['turns_per_timescale_part', turnsPerScale.join(', ')]);
+
+  pairs.push(['scenarioSearchFolders', rec.scenarioSearchFolders || '(none)']);
+
+  // Victory Point Winning Conditions
+  pairs.push(['victoryPointLimit', String(rec.victoryPointLimit | 0)]);
+  pairs.push(['cityEliminationCount', String(rec.cityEliminationCount | 0)]);
+  pairs.push(['oneCityCultureWinLimit', String(rec.oneCityCultureWinLimit | 0)]);
+  pairs.push(['allCitiesCultureWinLimit', String(rec.allCitiesCultureWinLimit | 0)]);
+  pairs.push(['dominationTerrainPercent', String(rec.dominationTerrainPercent | 0)]);
+  pairs.push(['dominationPopulationPercent', String(rec.dominationPopulationPercent | 0)]);
+  pairs.push(['respawnFlagUnits', String(rec.respawnFlagUnits | 0)]);
+  pairs.push(['captureAnyFlag', String(rec.captureAnyFlag | 0)]);
+
+  // Victory Points
+  pairs.push(['wonderVP', String(rec.wonderVP | 0)]);
+  pairs.push(['defeatingOpposingUnitVP', String(rec.defeatingOpposingUnitVP | 0)]);
+  pairs.push(['advancementVP', String(rec.advancementVP | 0)]);
+  pairs.push(['cityConquestVP', String(rec.cityConquestVP | 0)]);
+  pairs.push(['victoryPointVP', String(rec.victoryPointVP | 0)]);
+  pairs.push(['captureSpecialUnitVP', String(rec.captureSpecialUnitVP | 0)]);
+  pairs.push(['goldForCapture', String(rec.goldForCapture | 0)]);
+
+  // Alliance names and settings
+  pairs.push(['alliance0', rec.alliance0 || '']);
+  pairs.push(['alliance1', rec.alliance1 || '']);
+  pairs.push(['alliance2', rec.alliance2 || '']);
+  pairs.push(['alliance3', rec.alliance3 || '']);
+  pairs.push(['alliance4', rec.alliance4 || '']);
+  pairs.push(['allianceVictoryType', String(rec.allianceVictoryType | 0)]);
+
+  // warWith flags (display only, not writable)
+  const ww = Array.isArray(rec.warWith) ? rec.warWith : [[], [], [], [], []];
+  for (let k = 0; k < 5; k++) {
+    const arr = Array.isArray(ww[k]) ? ww[k] : [];
+    for (let j = 0; j < 5; j++) {
+      pairs.push([`alliance${k}_is_at_war_with_alliance${j}_0`, String((arr[j] != null ? arr[j] : 0) | 0)]);
+    }
   }
-  // 7 time units per turn
-  if (off + 28 <= tail.length) {
-    const timeUnitsPerTurn = [];
-    for (let i = 0; i < 7; i++) { timeUnitsPerTurn.push(tail.readInt32LE(off)); off += 4; }
-    pairs.push(['time_units_per_turn', timeUnitsPerTurn.join(', ')]);
+
+  // Plague Information
+  pairs.push(['permitPlagues', String(rec.permitPlagues | 0)]);
+  pairs.push(['plaugeName', rec.plaugeName || '']);
+  pairs.push(['plagueEarliestStart', String(rec.plagueEarliestStart | 0)]);
+  pairs.push(['plagueVariation', String(rec.plagueVariation | 0)]);
+  pairs.push(['plagueDuration', String(rec.plagueDuration | 0)]);
+  pairs.push(['plagueStrength', String(rec.plagueStrength | 0)]);
+  pairs.push(['plagueGracePeriod', String(rec.plagueGracePeriod | 0)]);
+  pairs.push(['plagueMaxOccurance', String(rec.plagueMaxOccurance | 0)]);
+
+  // Volcanos
+  pairs.push(['eruptionPeriod', String(rec.eruptionPeriod | 0)]);
+
+  // MP Timers (Conquests minorVersion >= 7 only)
+  if (io.isConquests && io.minorVersion >= 7) {
+    pairs.push(['mpBaseTime', String(rec.mpBaseTime | 0)]);
+    pairs.push(['mpCityTime', String(rec.mpCityTime | 0)]);
+    pairs.push(['mpUnitTime', String(rec.mpUnitTime | 0)]);
   }
-  // 5200 bytes scenario search folders
-  if (off + 5200 <= tail.length) {
-    let end = off;
-    while (end < off + 5200 && tail[end] !== 0) end++;
-    const folders = tail.subarray(off, end).toString('latin1');
-    pairs.push(['scenarioSearchFolders', folders || '(none)']);
-  } else {
-    pairs.push(['scenarioSearchFolders', '(truncated)']);
-  }
+
   return lines(pairs);
 }
 
-// GAME scenario search folders: read-only (not in writable keys)
-const WRITABLE_GAME = ['use_default_rules', 'default_victory_conditions', 'victory_conditions_and_rules', 'place_capture_units', 'auto_place_kings', 'debug_mode', 'use_time_limit', 'start_month', 'start_week', 'start_year'];
+// scenarioSearchFolders and warWith are read-only; all other named fields are writable
+const WRITABLE_GAME = [
+  'use_default_rules', 'default_victory_conditions',
+  'domination_enabled', 'space_race_enabled', 'diplomactic_enabled',
+  'conquest_enabled', 'cultural_enabled', 'civ_specific_abilities_enabled',
+  'culturally_linked_start', 'restart_players_enabled',
+  'preserve_random_seed', 'accelerated_production',
+  'elimination_enabled', 'regicide_enabled', 'mass_regicide_enabled',
+  'victory_locations_enabled', 'capture_the_flag', 'allow_cultural_conversions',
+  'wonder_victory_enabled', 'reverse_capture_the_flag', 'scientific_leaders',
+  'place_capture_units', 'auto_place_kings', 'auto_place_victory_locations',
+  'debug_mode', 'use_time_limit', 'start_month', 'start_week', 'start_year',
+  'minute_time_limit', 'turn_time_limit', 'base_time_unit',
+  'map_visible', 'retain_culture',
+  'victory_point_limit', 'city_elimination_count', 'one_city_culture_win_limit', 'all_cities_culture_win_limit',
+  'domination_terrain_percent', 'domination_population_percent',
+  'respawn_flag_units', 'capture_any_flag',
+  'wonder_v_p', 'defeating_opposing_unit_v_p', 'advancement_v_p', 'city_conquest_v_p', 'victory_point_v_p', 'capture_special_unit_v_p', 'gold_for_capture',
+  'alliance0', 'alliance1', 'alliance2', 'alliance3', 'alliance4', 'alliance_victory_type',
+  'permit_plagues', 'plauge_name',
+  'plague_earliest_start', 'plague_variation', 'plague_duration', 'plague_strength', 'plague_grace_period', 'plague_max_occurance',
+  'eruption_period',
+  'mp_base_time', 'mp_city_time', 'mp_unit_time',
+];
 
 // ---------------------------------------------------------------------------
 // TILE - fixed-size, surgical edits via raw buffer
@@ -1669,7 +1938,7 @@ function toEnglishLEAD(rec, io) {
   return lines(pairs);
 }
 
-const WRITABLE_LEAD = ['name', 'human_player', 'custom_civ_data', 'civ', 'government', 'initial_era', 'difficulty', 'start_cash', 'color', 'gender_of_leader_name', 'skip_first_turn', 'start_embassies'];
+const WRITABLE_LEAD = ['human_player', 'custom_civ_data', 'civ', 'government', 'initial_era', 'difficulty', 'start_cash', 'color', 'gender_of_leader_name', 'skip_first_turn', 'start_embassies'];
 
 // ---------------------------------------------------------------------------
 // CONT (Continent data) - fixed-size 12
@@ -2199,6 +2468,48 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
 
   // GAME scenario search folders: blocked (read-only)
   if (code === 'GAME' && ck === 'scenariosearchfolders') return false;
+
+  // LEAD: tech indices (dynamic list keyed by position)
+  if (code === 'LEAD') {
+    if (ck === 'numberofstartingtechnologies') {
+      const n = Number.parseInt(value, 10);
+      if (Number.isFinite(n) && n >= 0) {
+        if (!Array.isArray(rec.techIndices)) rec.techIndices = [];
+        while (rec.techIndices.length < n) rec.techIndices.push(0);
+        if (rec.techIndices.length > n) rec.techIndices.length = n;
+      }
+      return true;
+    }
+    const techMatch = ck.match(/^startingtechnology(\d+)$/);
+    if (techMatch) {
+      const techPos = Number.parseInt(techMatch[1], 10);
+      if (!Array.isArray(rec.techIndices)) rec.techIndices = [];
+      while (rec.techIndices.length <= techPos) rec.techIndices.push(0);
+      const n = Number.parseInt(value, 10);
+      rec.techIndices[techPos] = Number.isFinite(n) ? n : 0;
+      return true;
+    }
+  }
+
+  // GAME: victoryConditionsAndRules bitmask individual flags
+  if (code === 'GAME') {
+    const VCR_FLAG_BITS = {
+      dominationenabled: 0, spaceraceenabled: 1, diplomacticenabled: 2,
+      conquestenabled: 3, culturalenabled: 4, civspecificabilitiesenabled: 5,
+      culturallylinkedstart: 6, restartplayersenabled: 7,
+      preserverandomseed: 8, acceleratedproduction: 9,
+      eliminationenabled: 10, regicideenabled: 11, massregicideenabled: 12,
+      victorylocationsenabled: 13, capturetheflag: 14, allowculturalconversions: 15,
+      wondervictoryenabled: 16, reversecapturetheflag: 17, scientificleaders: 18,
+    };
+    if (Object.prototype.hasOwnProperty.call(VCR_FLAG_BITS, ck)) {
+      const bit = VCR_FLAG_BITS[ck];
+      const on = value === '1' || value === 'true';
+      const cur = rec.victoryConditionsAndRules | 0;
+      rec.victoryConditionsAndRules = on ? (cur | (1 << bit)) : (cur & ~(1 << bit));
+      return true;
+    }
+  }
 
   // Generic: set field on rec object
   // Try exact camelCase match first

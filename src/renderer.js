@@ -1964,7 +1964,13 @@ function setDirty(next) {
     }
   } else {
     updateActiveDirtyCaches();
-    state.isDirty = Object.keys(state.dirtyTabCounts || {}).length > 0;
+    // updateActiveDirtyCaches only covers the active tab. If that tab has no dirty
+    // count (e.g. modifying a biqStructure tab that isn't the active tab, like
+    // editing LEAD records while state.activeTab === 'scenario'), fall back to a
+    // full snapshot comparison so isDirty is never cleared incorrectly.
+    if (Object.keys(state.dirtyTabCounts || {}).length === 0) {
+      state.isDirty = snapshotTabs() !== state.cleanSnapshot;
+    }
     if (!state.isDirty) {
       state.undoSnapshot = null;
     }
@@ -3407,11 +3413,12 @@ function collectGlobalSearchItems() {
         const friendlyName = toFriendlyKey(rawKey);
         const docs = String((tab.fieldDocs && tab.fieldDocs[rawKey]) || '').trim();
         const rowValue = String(row && row.value || '').trim();
+        const releaseLabel = getC3xReleaseInfo(rawKey).label;
         items.push({
           kind: 'C3X Field',
           title: `${tabTitle}: ${friendlyName}`,
           subtitle: rawKey,
-          search: `${tabTitle} c3x base field setting ${friendlyName} ${rawKey} ${docs} ${rowValue}`,
+          search: `${tabTitle} c3x base field setting ${friendlyName} ${rawKey} ${docs} ${rowValue} ${releaseLabel}`,
           action: () => {
             navigateWithHistory(() => {
               state.activeTab = tabKey;
@@ -7903,8 +7910,6 @@ const BIQ_FIELD_ENUMS = {
       { value: '9', label: 'Difficulty 10' }
     ],
     genderofleadername: [
-      { value: 'Male', label: 'Male' },
-      { value: 'Female', label: 'Female' },
       { value: '0', label: 'Male' },
       { value: '1', label: 'Female' }
     ]
@@ -8202,21 +8207,25 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       numberofplayablecivs: { group: 'Player Options', control: 'number', min: 1, max: 32, label: 'Number of Players' },
       playable_civ: { group: 'Player Options', control: 'reference', label: 'Playable Civilization' },
       defaultvictoryconditions: { group: 'Game Options', control: 'bool' },
-      victoryconditionsandrules: { group: 'Game Options', control: 'number', label: 'Victory Conditions and Rules' },
-      dominationenabled: { group: 'Game Options', control: 'bool' },
-      spaceraceenabled: { group: 'Game Options', control: 'bool' },
-      diplomacticenabled: { group: 'Game Options', control: 'bool' },
-      conquestenabled: { group: 'Game Options', control: 'bool' },
-      culturalenabled: { group: 'Game Options', control: 'bool' },
-      wondervictoryenabled: { group: 'Game Options', control: 'bool' },
-      culturallylinkedstart: { group: 'Game Options', control: 'bool' },
-      restartplayersenabled: { group: 'Game Options', control: 'bool' },
-      preserverandomseed: { group: 'Game Options', control: 'bool' },
-      acceleratedproduction: { group: 'Game Options', control: 'bool' },
-      eliminationenabled: { group: 'Game Options', control: 'bool' },
-      regicideenabled: { group: 'Game Options', control: 'bool' },
-      massregicideenabled: { group: 'Game Options', control: 'bool' },
-      allowculturalconversions: { group: 'Game Options', control: 'bool' },
+      dominationenabled: { group: 'Victory Conditions', control: 'bool', label: 'Domination Victory' },
+      spaceraceenabled: { group: 'Victory Conditions', control: 'bool', label: 'Space Race Victory' },
+      diplomacticenabled: { group: 'Victory Conditions', control: 'bool', label: 'Diplomatic Victory' },
+      conquestenabled: { group: 'Victory Conditions', control: 'bool', label: 'Conquest Victory' },
+      culturalenabled: { group: 'Victory Conditions', control: 'bool', label: 'Cultural Victory' },
+      wondervictoryenabled: { group: 'Victory Conditions', control: 'bool', label: 'Wonder Victory' },
+      eliminationenabled: { group: 'Victory Conditions', control: 'bool', label: 'Elimination Victory' },
+      regicideenabled: { group: 'Victory Conditions', control: 'bool', label: 'Regicide' },
+      massregicideenabled: { group: 'Victory Conditions', control: 'bool', label: 'Mass Regicide' },
+      victorylocationsenabled: { group: 'Victory Conditions', control: 'bool', label: 'Victory Locations' },
+      capturetheflag: { group: 'Victory Conditions', control: 'bool', label: 'Capture The Flag' },
+      reversecapturetheflag: { group: 'Victory Conditions', control: 'bool', label: 'Reverse Capture The Flag' },
+      culturallylinkedstart: { group: 'Game Options', control: 'bool', label: 'Culturally Linked Start' },
+      restartplayersenabled: { group: 'Game Options', control: 'bool', label: 'Restart Players' },
+      preserverandomseed: { group: 'Game Options', control: 'bool', label: 'Preserve Random Seed' },
+      acceleratedproduction: { group: 'Game Options', control: 'bool', label: 'Accelerated Production' },
+      allowculturalconversions: { group: 'Game Options', control: 'bool', label: 'Allow Cultural Conversions' },
+      civspecificabilitiesenabled: { group: 'Game Options', control: 'bool', label: 'Civ-Specific Abilities' },
+      scientificleaders: { group: 'Game Options', control: 'bool', label: 'Scientific Leaders' },
       autoplacekings: { group: 'Game Options', control: 'bool' },
       placecaptureunits: { group: 'Game Options', control: 'bool' },
       autoplacevictorylocations: { group: 'Game Options', control: 'bool' },
@@ -8536,9 +8545,11 @@ function getBiqStructureRefSpec(sectionCode, baseKey) {
   if ((code === 'GAME' || code === 'RULE') && canon === 'defaultmoneyresource') return { section: 'GOOD', oneBased: false };
   if ((code === 'GAME' || code === 'RULE') && canon === 'defaultdifficultylevel') return { section: 'DIFF', oneBased: false };
   if (code === 'GAME' && canon.startsWith('playableciv')) return { section: 'RACE', oneBased: false };
+  if (code === 'GAME' && canon === 'playableciv') return { section: 'RACE', oneBased: false };
   if (code === 'LEAD' && canon === 'civ') return { section: 'RACE', oneBased: false };
   if (code === 'LEAD' && canon === 'government') return { section: 'GOVT', oneBased: false };
   if (code === 'LEAD' && canon === 'initialera') return { section: 'ERAS', oneBased: false };
+  if (code === 'LEAD' && /^startingtechnology\d+$/.test(canon)) return { section: 'TECH', oneBased: false };
   if (code === 'LEAD' && canon === 'difficulty') return { section: 'DIFF', oneBased: false };
   if (code === 'TERR' && canon === 'workerjob') return { section: 'TFRM', oneBased: false };
   if (code === 'TERR' && canon === 'pollutioneffect') return { section: 'TERR', oneBased: false };
@@ -16253,32 +16264,7 @@ function renderBiqTab(tab) {
               setStatus('Added playable civilization slot.');
               renderActiveTab({ preserveTabScroll: true });
             });
-            const removeBtn = document.createElement('button');
-            removeBtn.type = 'button';
-            removeBtn.className = 'ghost action-delete';
-            removeBtn.textContent = '🗑 Remove Slot';
-            removeBtn.disabled = playableFields.length <= 1;
-            removeBtn.addEventListener('click', () => {
-              const allFields = Array.isArray(record.fields) ? record.fields : [];
-              let lastIdx = -1;
-              for (let i = allFields.length - 1; i >= 0; i -= 1) {
-                const base = String(allFields[i] && (allFields[i].baseKey || allFields[i].key) || '').toLowerCase();
-                if (base === 'playable_civ') {
-                  lastIdx = i;
-                  break;
-                }
-              }
-              if (lastIdx < 0) return;
-              rememberUndoSnapshot();
-              allFields.splice(lastIdx, 1);
-              const count = syncNumberOfPlayableCivsField(record);
-              syncLeadRecordCountToTarget(count);
-              setDirty(true);
-              setStatus('Removed playable civilization slot.');
-              renderActiveTab({ preserveTabScroll: true });
-            });
             actionBtns.appendChild(addBtn);
-            actionBtns.appendChild(removeBtn);
             actionsWrap.appendChild(actionBtns);
           }
           actionsRow.appendChild(actionsWrap);
@@ -16360,6 +16346,117 @@ function renderBiqTab(tab) {
             }
           }
         }
+        if (selected.code === 'LEAD' && groupName === 'Free Techs') {
+          const countField = groupFields.find((f) => String(f.baseKey || f.key || '').toLowerCase() === 'numberofstartingtechnologies');
+          const techFields = groupFields.filter((f) => /^starting_technology_\d+$/.test(String(f.baseKey || f.key || '').toLowerCase()));
+          if (countField) consumedSpecialFields.add(countField);
+          techFields.forEach((f) => consumedSpecialFields.add(f));
+
+          const techOptions = makeBiqSectionIndexOptions('TECH', false);
+          const techRefTabKey = BIQ_SECTION_TO_REFERENCE_TAB['TECH'] || '';
+
+          const syncTechCount = () => {
+            if (!countField) return;
+            const currentTechs = (record.fields || []).filter((f) => /^starting_technology_\d+$/.test(String(f.baseKey || f.key || '').toLowerCase()));
+            countField.value = String(currentTechs.length);
+          };
+
+          techFields.forEach((techField, idx) => {
+            const techRow = document.createElement('div');
+            techRow.className = 'rule-row';
+            const techLabel = document.createElement('label');
+            techLabel.className = 'field-meta';
+            techLabel.textContent = `Free Technology ${idx + 1}`;
+            techRow.appendChild(techLabel);
+            const controlWrap = document.createElement('div');
+            controlWrap.className = 'rule-control free-tech-control';
+            const parsed = parseIntFromDisplayValue(techField.value);
+            if (!tab.readOnly) {
+              const picker = createReferencePicker({
+                options: techOptions,
+                targetTabKey: techRefTabKey,
+                currentValue: parsed == null ? '-1' : String(parsed),
+                searchPlaceholder: 'Search TECH...',
+                noneLabel: '(none)',
+                onSelect: (value) => {
+                  rememberUndoSnapshot();
+                  techField.value = String(value);
+                  setDirty(true);
+                }
+              });
+              controlWrap.appendChild(picker);
+              const removeBtn = document.createElement('button');
+              removeBtn.type = 'button';
+              removeBtn.className = 'ghost action-delete';
+              removeBtn.textContent = '×';
+              removeBtn.title = `Remove Free Technology ${idx + 1}`;
+              removeBtn.addEventListener('click', () => {
+                rememberUndoSnapshot();
+                const allFields = Array.isArray(record.fields) ? record.fields : [];
+                const techsNow = allFields.filter((f) => /^starting_technology_\d+$/.test(String(f.baseKey || f.key || '').toLowerCase()));
+                const target = techsNow[idx];
+                if (target) {
+                  const pos = allFields.indexOf(target);
+                  if (pos >= 0) allFields.splice(pos, 1);
+                }
+                // Re-index remaining tech fields so keys stay contiguous
+                const remaining = allFields.filter((f) => /^starting_technology_\d+$/.test(String(f.baseKey || f.key || '').toLowerCase()));
+                remaining.forEach((f, i) => { f.key = `starting_technology_${i}`; f.baseKey = `starting_technology_${i}`; });
+                syncTechCount();
+                setDirty(true);
+                renderActiveTab({ preserveTabScroll: true });
+              });
+              controlWrap.appendChild(removeBtn);
+            } else {
+              const picker = createReferencePicker({
+                options: techOptions,
+                targetTabKey: techRefTabKey,
+                currentValue: parsed == null ? '-1' : String(parsed),
+                noneLabel: '(none)',
+                readOnly: true
+              });
+              controlWrap.appendChild(picker);
+            }
+            techRow.appendChild(controlWrap);
+            groupCard.appendChild(techRow);
+          });
+
+          if (!tab.readOnly) {
+            const addRow = document.createElement('div');
+            addRow.className = 'rule-row';
+            addRow.appendChild(document.createElement('label')).className = 'field-meta';
+            const addWrap = document.createElement('div');
+            addWrap.className = 'rule-control';
+            const addBtn = document.createElement('button');
+            addBtn.type = 'button';
+            addBtn.className = 'ghost action-add';
+            addBtn.textContent = '＋ Add Free Technology';
+            addBtn.addEventListener('click', () => {
+              rememberUndoSnapshot();
+              const allFields = Array.isArray(record.fields) ? record.fields : [];
+              const currentTechs = allFields.filter((f) => /^starting_technology_\d+$/.test(String(f.baseKey || f.key || '').toLowerCase()));
+              const newIdx = currentTechs.length;
+              const newField = { key: `starting_technology_${newIdx}`, baseKey: `starting_technology_${newIdx}`, value: '-1' };
+              let insertPos = allFields.length;
+              if (currentTechs.length > 0) {
+                const lastTech = currentTechs[currentTechs.length - 1];
+                const lastPos = allFields.indexOf(lastTech);
+                if (lastPos >= 0) insertPos = lastPos + 1;
+              } else if (countField) {
+                const countPos = allFields.indexOf(countField);
+                if (countPos >= 0) insertPos = countPos + 1;
+              }
+              allFields.splice(insertPos, 0, newField);
+              syncTechCount();
+              setDirty(true);
+              renderActiveTab({ preserveTabScroll: true });
+            });
+            addWrap.appendChild(addBtn);
+            addRow.appendChild(addWrap);
+            groupCard.appendChild(addRow);
+          }
+        }
+
         if (timeProgressionModel && Array.isArray(timeProgressionModel.rows) && timeProgressionModel.rows.length > 0) {
           const tableRow = document.createElement('div');
           tableRow.className = 'rule-row';
@@ -16564,6 +16661,20 @@ function renderBiqTab(tab) {
               });
             }
           }
+          if (selected.code === 'GAME' && baseKey === 'playable_civ') {
+            const usedValues = new Set(
+              getGamePlayableCivFields(record)
+                .filter((f) => f !== field)
+                .map((f) => parseIntFromDisplayValue(f.value))
+                .filter((n) => Number.isFinite(n))
+            );
+            if (usedValues.size > 0) {
+              refOptions = refOptions.filter((opt) => {
+                const idx = Number.parseInt(String(opt && opt.value || ''), 10);
+                return !Number.isFinite(idx) || !usedValues.has(idx);
+              });
+            }
+          }
           const refTargetTabKey = refSpec ? (BIQ_SECTION_TO_REFERENCE_TAB[String(refSpec.section || '').toUpperCase()] || '') : '';
           const parsed = parseIntFromDisplayValue(field.value);
           const rawText = String(field.value || '').trim();
@@ -16572,7 +16683,9 @@ function renderBiqTab(tab) {
           const looksBoolean = boolRaw === 'true' || boolRaw === 'false';
           const spec = getBiqStructureFieldSpec(selected.code, field) || {};
           const desiredControl = spec.control || '';
-          const enumOptions = getEnumOptionsForBiqStructureTab(activeTabKey, field);
+          const BIQ_SECTION_ENUM_CATEGORY = { LEAD: 'players', GAME: 'scenarioSettings', GOVT: 'governments', RACE: 'civilizations', GOOD: 'resources', PRTO: 'units', RULE: 'rules' };
+          const enumCategoryKey = (selected && BIQ_SECTION_ENUM_CATEGORY[String(selected.code || '').toUpperCase()]) || activeTabKey;
+          const enumOptions = getEnumOptionsForBiqStructureTab(enumCategoryKey, field);
           const useColorSlotPicker = selected.code === 'LEAD' && baseKey === 'color';
 
           if (editable) {
@@ -16610,6 +16723,24 @@ function renderBiqTab(tab) {
                 }
               });
               controlWrap.appendChild(picker);
+              if (selected.code === 'GAME' && baseKey === 'playable_civ') {
+                const removeBtn = document.createElement('button');
+                removeBtn.type = 'button';
+                removeBtn.className = 'ghost action-delete';
+                removeBtn.textContent = '×';
+                removeBtn.title = 'Remove player slot';
+                removeBtn.addEventListener('click', () => {
+                  rememberUndoSnapshot();
+                  const allFields = Array.isArray(record.fields) ? record.fields : [];
+                  const pos = allFields.indexOf(field);
+                  if (pos >= 0) allFields.splice(pos, 1);
+                  const count = syncNumberOfPlayableCivsField(record);
+                  syncLeadRecordCountToTarget(count);
+                  setDirty(true);
+                  renderActiveTab({ preserveTabScroll: true });
+                });
+                controlWrap.appendChild(removeBtn);
+              }
             } else if (desiredControl === 'select' || enumOptions.length > 0) {
               const select = document.createElement('select');
               const hasNone = enumOptions.some((opt) => String(opt.value) === '-1');
@@ -17014,6 +17145,15 @@ function requestBiqMapUnitFlcFrame(prtoIdx, prtoName) {
     scenarioPaths: getScenarioPreviewPaths(),
     prtoName
   }).then((res) => {
+    if (res && res.ok && res.indexedBase64 && res.paletteBase64) {
+      const idxBin = atob(res.indexedBase64);
+      const palBin = atob(res.paletteBase64);
+      const indices = new Uint8Array(idxBin.length);
+      for (let i = 0; i < idxBin.length; i += 1) indices[i] = idxBin.charCodeAt(i);
+      const flcPalette = new Uint8Array(palBin.length);
+      for (let i = 0; i < palBin.length; i += 1) flcPalette[i] = palBin.charCodeAt(i);
+      state.biqMapArtCache[`unitFlcData-${prtoIdx}`] = { indices, palette: flcPalette, width: res.width, height: res.height };
+    }
     state.biqMapArtCache[cacheKey] = (res && res.ok) ? (rgbaToCanvas(res) || null) : null;
   }).catch(() => {
     state.biqMapArtCache[cacheKey] = null;
@@ -19102,13 +19242,53 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 
     let dx, dy, size;
     if (flcCanvas) {
-      const flcW = Math.max(1, Math.round(flcCanvas.width * tileScale));
-      const flcH = Math.max(1, Math.round(flcCanvas.height * tileScale));
+      // Apply NTP civ-color substitution if indexed pixel data is available
+      const flcData = state.biqMapArtCache[`unitFlcData-${unitId}`];
+      let drawSrc = flcCanvas;
+      if (flcData) {
+        const coloredFlcKey = `flc-${unitId}-${ownerSlot}`;
+        let coloredFlc = state.biqMapColoredUnitIconCache.get(coloredFlcKey);
+        if (!coloredFlc) {
+          const ntpPalette = state.biqMapArtCache[`ntp-${ownerSlot}`];
+          if (ntpPalette) {
+            const { indices, palette: flcPalette, width: fw, height: fh } = flcData;
+            const flcIconCanvas = document.createElement('canvas');
+            flcIconCanvas.width = fw;
+            flcIconCanvas.height = fh;
+            const flcCtx = flcIconCanvas.getContext('2d');
+            const imgData = flcCtx.createImageData(fw, fh);
+            const px = imgData.data;
+            for (let pi = 0; pi < indices.length; pi += 1) {
+              const palIdx = indices[pi];
+              let r, g, b, a;
+              if (palIdx === 255) {
+                r = 0; g = 0; b = 0; a = 0;
+              } else if (palIdx >= 240 && palIdx <= 254) {
+                r = 0; g = 0; b = 0; a = Math.min(255, (255 - palIdx) * 16);
+              } else if (palIdx >= 224 && palIdx <= 239) {
+                r = 255; g = 255; b = 255; a = Math.min(255, (palIdx - 224) * 16);
+              } else {
+                const isCivColor = palIdx <= 14 || (palIdx >= 16 && palIdx <= 62 && (palIdx & 1) === 0);
+                const pal = isCivColor ? ntpPalette : flcPalette;
+                r = pal[palIdx * 3]; g = pal[palIdx * 3 + 1]; b = pal[palIdx * 3 + 2]; a = 255;
+              }
+              const di = pi * 4;
+              px[di] = r; px[di + 1] = g; px[di + 2] = b; px[di + 3] = a;
+            }
+            flcCtx.putImageData(imgData, 0, 0);
+            coloredFlc = flcIconCanvas;
+            state.biqMapColoredUnitIconCache.set(coloredFlcKey, coloredFlc);
+          }
+        }
+        if (coloredFlc) drawSrc = coloredFlc;
+      }
+      const flcW = Math.max(1, Math.round(drawSrc.width * tileScale));
+      const flcH = Math.max(1, Math.round(drawSrc.height * tileScale));
       dx = screenX + Math.round((tileW - flcW) / 2);
       dy = tileBottom - flcH;
       size = flcW;
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(flcCanvas, 0, 0, flcCanvas.width, flcCanvas.height, dx, dy, flcW, flcH);
+      ctx.drawImage(drawSrc, 0, 0, drawSrc.width, drawSrc.height, dx, dy, flcW, flcH);
       ctx.imageSmoothingEnabled = true;
     } else {
       // Fallback: units32 icon atlas

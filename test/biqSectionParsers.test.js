@@ -913,11 +913,256 @@ test('GAME parser produces human-readable fields with individual playable_civ_N 
   assert.ok(!map.has('playableCivIds'), 'GAME: playableCivIds should be expanded into individual playable_civ_N fields');
   // Playable civ count field must be present
   assert.equal(map.get('number_of_playable_civs'), '3', 'GAME: expected number_of_playable_civs');
-  // Time progression arrays must be present as comma-joined strings (7 slots, all 0 in fixture)
-  assert.equal(map.get('turns_per_timescale_part'), '0, 0, 0, 0, 0, 0, 0', 'GAME: expected turns_per_timescale_part CSV');
-  assert.equal(map.get('time_units_per_turn'), '0, 0, 0, 0, 0, 0, 0', 'GAME: expected time_units_per_turn CSV');
-  // useDefaultRules and victoryConditionsAndRules must both be present
-  assert.equal(map.get('victoryConditionsAndRules'), '7', 'GAME: expected victoryConditionsAndRules');
+  // Time scale: individual section fields must be present (7 slots, all 0 in fixture)
+  assert.equal(map.get('turns_in_time_section_0'), '0', 'GAME: expected turns_in_time_section_0');
+  assert.equal(map.get('turns_in_time_section_6'), '0', 'GAME: expected turns_in_time_section_6');
+  assert.equal(map.get('time_per_turn_in_time_section_0'), '0', 'GAME: expected time_per_turn_in_time_section_0');
+  // victoryConditionsAndRules=7 means bits 0,1,2 set: domination, spaceRace, diplomactic
+  assert.equal(map.get('dominationEnabled'), '1', 'GAME: expected dominationEnabled=1 for vcr=7');
+  assert.equal(map.get('spaceRaceEnabled'), '1', 'GAME: expected spaceRaceEnabled=1 for vcr=7');
+  assert.equal(map.get('diplomacticEnabled'), '1', 'GAME: expected diplomacticEnabled=1 for vcr=7');
+  assert.equal(map.get('conquestEnabled'), '0', 'GAME: expected conquestEnabled=0 for vcr=7');
+});
+
+test('GAME parser emits Victory Point Limits panel fields', () => {
+  const reg = SECTION_REGISTRY.GAME;
+  const io = makeIo();
+  const w = new BiqWriter();
+  // Head
+  w.writeInt(0);   // useDefaultRules
+  w.writeInt(0);   // defaultVictoryConditions
+  w.writeInt(2);   // numPlayableCivs
+  w.writeInt(1);   // playableCivIds[0]
+  w.writeInt(2);   // playableCivIds[1]
+  w.writeInt(0);   // victoryConditionsAndRules
+  // 11 scalars (placeCaptureUnits..turnTimeLimit)
+  for (let i = 0; i < 11; i++) w.writeInt(0);
+  // 7 turnsPerTimescale + 7 timeUnitsPerTurn
+  for (let i = 0; i < 14; i++) w.writeInt(0);
+  // 5200 scenario search folders
+  w.writeBytes(Buffer.alloc(5200));
+  // civPartOfWhichAlliance (2 civs)
+  w.writeInt(4); w.writeInt(4);
+  // 13 VP ints: victoryPointLimit=500, cityEliminationCount=10, oneCityCultureWinLimit=200,
+  //             allCitiesCultureWinLimit=1000, dominationTerrainPercent=66, dominationPopulationPercent=50,
+  //             wonderVP=5, defeatingOpposingUnitVP=2, advancementVP=3, cityConquestVP=4, victoryPointVP=6,
+  //             captureSpecialUnitVP=7, questionMark1=0
+  w.writeInt(500); w.writeInt(10); w.writeInt(200); w.writeInt(1000);
+  w.writeInt(66); w.writeInt(50);
+  w.writeInt(5); w.writeInt(2); w.writeInt(3); w.writeInt(4); w.writeInt(6); w.writeInt(7);
+  w.writeInt(0); // questionMark1
+  w.writeByte(0); // questionMark2
+  // 5 alliance names (256 bytes each)
+  for (let i = 0; i < 5; i++) w.writeBytes(Buffer.alloc(256));
+  // warWith (25 ints)
+  for (let i = 0; i < 25; i++) w.writeInt(0);
+  w.writeInt(0); // allianceVictoryType
+  w.writeBytes(Buffer.alloc(260)); // plaugeName
+  w.writeByte(0); // permitPlagues
+  for (let i = 0; i < 6; i++) w.writeInt(0); // plague scalars
+  w.writeInt(0); // questionMark3
+  w.writeBytes(Buffer.alloc(260)); // unknown
+  w.writeInt(1); // respawnFlagUnits
+  w.writeByte(1); // captureAnyFlag
+  w.writeInt(99); // goldForCapture
+  w.writeByte(0); // mapVisible
+  w.writeByte(0); // retainCulture
+  w.writeInt(0); // questionMark4
+  w.writeInt(0); // eruptionPeriod
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.victoryPointLimit, 500);
+  assert.equal(rec.cityEliminationCount, 10);
+  assert.equal(rec.dominationTerrainPercent, 66);
+  assert.equal(rec.dominationPopulationPercent, 50);
+  assert.equal(rec.wonderVP, 5);
+  assert.equal(rec.advancementVP, 3);
+  assert.equal(rec.respawnFlagUnits, 1);
+  assert.equal(rec.captureAnyFlag, 1);
+  assert.equal(rec.goldForCapture, 99);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'GAME', io);
+  assertNoGenericFields(english, 'GAME VP');
+  const map = parseEnglish(english);
+  assert.equal(map.get('victoryPointLimit'), '500', 'GAME: victoryPointLimit must appear in english output');
+  assert.equal(map.get('cityEliminationCount'), '10', 'GAME: cityEliminationCount must appear');
+  assert.equal(map.get('oneCityCultureWinLimit'), '200', 'GAME: oneCityCultureWinLimit must appear');
+  assert.equal(map.get('allCitiesCultureWinLimit'), '1000', 'GAME: allCitiesCultureWinLimit must appear');
+  assert.equal(map.get('dominationTerrainPercent'), '66', 'GAME: dominationTerrainPercent must appear');
+  assert.equal(map.get('dominationPopulationPercent'), '50', 'GAME: dominationPopulationPercent must appear');
+  assert.equal(map.get('wonderVP'), '5', 'GAME: wonderVP must appear');
+  assert.equal(map.get('defeatingOpposingUnitVP'), '2', 'GAME: defeatingOpposingUnitVP must appear');
+  assert.equal(map.get('advancementVP'), '3', 'GAME: advancementVP must appear');
+  assert.equal(map.get('cityConquestVP'), '4', 'GAME: cityConquestVP must appear');
+  assert.equal(map.get('victoryPointVP'), '6', 'GAME: victoryPointVP must appear');
+  assert.equal(map.get('captureSpecialUnitVP'), '7', 'GAME: captureSpecialUnitVP must appear');
+  assert.equal(map.get('respawnFlagUnits'), '1', 'GAME: respawnFlagUnits must appear');
+  assert.equal(map.get('captureAnyFlag'), '1', 'GAME: captureAnyFlag must appear');
+  assert.equal(map.get('goldForCapture'), '99', 'GAME: goldForCapture must appear');
+});
+
+test('GAME parser emits Disasters panel fields (plague + volcano)', () => {
+  const reg = SECTION_REGISTRY.GAME;
+  const io = makeIo();
+  const w = new BiqWriter();
+  // Head + fixed fields (minimal, all zeros)
+  w.writeInt(0); w.writeInt(0); w.writeInt(0); // useDefaultRules, defaultVictoryConditions, numPlayableCivs
+  w.writeInt(0); // victoryConditionsAndRules
+  for (let i = 0; i < 11 + 14; i++) w.writeInt(0); // scalars + timescale
+  w.writeBytes(Buffer.alloc(5200)); // search folders
+  // No civPartOfWhichAlliance (numPlayableCivs=0)
+  // 13 VP ints + questionMark1
+  for (let i = 0; i < 13; i++) w.writeInt(0);
+  w.writeByte(0); // questionMark2
+  for (let i = 0; i < 5; i++) w.writeBytes(Buffer.alloc(256)); // alliance names
+  for (let i = 0; i < 25; i++) w.writeInt(0); // warWith
+  w.writeInt(0); // allianceVictoryType
+  // plaugeName: "Black Death"
+  const pName = Buffer.alloc(260, 0);
+  Buffer.from('Black Death', 'latin1').copy(pName);
+  w.writeBytes(pName);
+  w.writeByte(1); // permitPlagues = true
+  w.writeInt(20);  // plagueEarliestStart
+  w.writeInt(5);   // plagueVariation
+  w.writeInt(8);   // plagueDuration
+  w.writeInt(3);   // plagueStrength
+  w.writeInt(10);  // plagueGracePeriod
+  w.writeInt(2);   // plagueMaxOccurance
+  w.writeInt(0);   // questionMark3
+  w.writeBytes(Buffer.alloc(260)); // unknown
+  w.writeInt(0); w.writeByte(0); w.writeInt(0); // respawnFlagUnits, captureAnyFlag, goldForCapture
+  w.writeByte(0); w.writeByte(0); // mapVisible, retainCulture
+  w.writeInt(0);   // questionMark4
+  w.writeInt(15);  // eruptionPeriod
+  const data = w.toBuffer();
+
+  const rec = reg.parse(data, io);
+  assert.equal(rec.permitPlagues, 1);
+  assert.equal(rec.plaugeName, 'Black Death');
+  assert.equal(rec.plagueEarliestStart, 20);
+  assert.equal(rec.plagueDuration, 8);
+  assert.equal(rec.eruptionPeriod, 15);
+
+  const english = sectionToEnglish({ index: 0, ...rec }, 'GAME', io);
+  assertNoGenericFields(english, 'GAME Disasters');
+  const map = parseEnglish(english);
+  assert.equal(map.get('permitPlagues'), '1', 'GAME: permitPlagues must appear in english output');
+  assert.equal(map.get('plaugeName'), 'Black Death', 'GAME: plaugeName must appear');
+  assert.equal(map.get('plagueEarliestStart'), '20', 'GAME: plagueEarliestStart must appear');
+  assert.equal(map.get('plagueVariation'), '5', 'GAME: plagueVariation must appear');
+  assert.equal(map.get('plagueDuration'), '8', 'GAME: plagueDuration must appear');
+  assert.equal(map.get('plagueStrength'), '3', 'GAME: plagueStrength must appear');
+  assert.equal(map.get('plagueGracePeriod'), '10', 'GAME: plagueGracePeriod must appear');
+  assert.equal(map.get('plagueMaxOccurance'), '2', 'GAME: plagueMaxOccurance must appear');
+  assert.equal(map.get('eruptionPeriod'), '15', 'GAME: eruptionPeriod must appear');
+});
+
+test('GAME parser emits MP timer fields only when minorVersion >= 7', () => {
+  const reg = SECTION_REGISTRY.GAME;
+
+  function buildMinimalGame(w) {
+    w.writeInt(0); w.writeInt(0); w.writeInt(0); w.writeInt(0); // head
+    for (let i = 0; i < 11 + 14; i++) w.writeInt(0);
+    w.writeBytes(Buffer.alloc(5200));
+    for (let i = 0; i < 13; i++) w.writeInt(0); // VP ints
+    w.writeByte(0);
+    for (let i = 0; i < 5; i++) w.writeBytes(Buffer.alloc(256));
+    for (let i = 0; i < 25; i++) w.writeInt(0);
+    w.writeInt(0); w.writeBytes(Buffer.alloc(260)); w.writeByte(0);
+    for (let i = 0; i < 6; i++) w.writeInt(0);
+    w.writeInt(0); w.writeBytes(Buffer.alloc(260));
+    w.writeInt(0); w.writeByte(0); w.writeInt(0);
+    w.writeByte(0); w.writeByte(0); w.writeInt(0); w.writeInt(0);
+  }
+
+  // With minorVersion >= 7: mp fields present
+  const w1 = new BiqWriter();
+  buildMinimalGame(w1);
+  w1.writeInt(300); w1.writeInt(400); w1.writeInt(500); // mpBaseTime, mpCityTime, mpUnitTime
+  const io7 = makeIo({ minorVersion: 7 });
+  const rec7 = reg.parse(w1.toBuffer(), io7);
+  assert.equal(rec7.mpBaseTime, 300);
+  assert.equal(rec7.mpCityTime, 400);
+  assert.equal(rec7.mpUnitTime, 500);
+  const map7 = parseEnglish(sectionToEnglish({ index: 0, ...rec7 }, 'GAME', io7));
+  assert.equal(map7.get('mpBaseTime'), '300', 'GAME: mpBaseTime must appear when minorVersion >= 7');
+  assert.equal(map7.get('mpCityTime'), '400', 'GAME: mpCityTime must appear when minorVersion >= 7');
+  assert.equal(map7.get('mpUnitTime'), '500', 'GAME: mpUnitTime must appear when minorVersion >= 7');
+
+  // With minorVersion < 7: mp fields absent
+  const w2 = new BiqWriter();
+  buildMinimalGame(w2);
+  const io6 = makeIo({ minorVersion: 6 });
+  const rec6 = reg.parse(w2.toBuffer(), io6);
+  const map6 = parseEnglish(sectionToEnglish({ index: 0, ...rec6 }, 'GAME', io6));
+  assert.ok(!map6.has('mpBaseTime'), 'GAME: mpBaseTime must NOT appear when minorVersion < 7');
+});
+
+test('GAME serialization roundtrip preserves all Conquests tail fields', () => {
+  const reg = SECTION_REGISTRY.GAME;
+  const io = makeIo({ minorVersion: 8 });
+  const w = new BiqWriter();
+  w.writeInt(1);   // useDefaultRules
+  w.writeInt(0);   // defaultVictoryConditions
+  w.writeInt(2);   // numPlayableCivs
+  w.writeInt(7); w.writeInt(9); // playableCivIds
+  w.writeInt(3);   // victoryConditionsAndRules
+  for (let i = 0; i < 11; i++) w.writeInt(i); // scalars
+  for (let i = 0; i < 14; i++) w.writeInt(i + 1); // timescale arrays
+  w.writeBytes(Buffer.alloc(5200)); // search folders
+  w.writeInt(1); w.writeInt(2); // civPartOfWhichAlliance
+  // VP fields with known values
+  w.writeInt(750); w.writeInt(5); w.writeInt(300); w.writeInt(2000);
+  w.writeInt(55); w.writeInt(45);
+  w.writeInt(10); w.writeInt(3); w.writeInt(4); w.writeInt(6); w.writeInt(8); w.writeInt(9);
+  w.writeInt(42); // questionMark1
+  w.writeByte(1);  // questionMark2
+  // alliance names
+  const names = ['Romans', 'Barbarians', 'Greeks', 'Persians', ''];
+  for (const name of names) {
+    const buf = Buffer.alloc(256, 0);
+    Buffer.from(name, 'latin1').copy(buf);
+    w.writeBytes(buf);
+  }
+  for (let i = 0; i < 25; i++) w.writeInt(i % 2); // warWith
+  w.writeInt(2); // allianceVictoryType
+  const pn = Buffer.alloc(260, 0); Buffer.from('Plague', 'latin1').copy(pn); w.writeBytes(pn);
+  w.writeByte(1); // permitPlagues
+  w.writeInt(15); w.writeInt(3); w.writeInt(6); w.writeInt(2); w.writeInt(8); w.writeInt(1);
+  w.writeInt(0); // questionMark3
+  w.writeBytes(Buffer.alloc(260));
+  w.writeInt(1); // respawnFlagUnits
+  w.writeByte(1); // captureAnyFlag
+  w.writeInt(50); // goldForCapture
+  w.writeByte(1); // mapVisible
+  w.writeByte(1); // retainCulture
+  w.writeInt(0);  // questionMark4
+  w.writeInt(20); // eruptionPeriod
+  w.writeInt(100); w.writeInt(200); w.writeInt(300); // mpBaseTime, mpCityTime, mpUnitTime
+  const original = w.toBuffer();
+
+  const rec = reg.parse(original, io);
+  const reserialized = reg.serialize(rec, io);
+  const rec2 = reg.parse(reserialized, io);
+
+  assert.equal(rec2.victoryPointLimit, 750, 'roundtrip: victoryPointLimit');
+  assert.equal(rec2.cityEliminationCount, 5, 'roundtrip: cityEliminationCount');
+  assert.equal(rec2.dominationTerrainPercent, 55, 'roundtrip: dominationTerrainPercent');
+  assert.equal(rec2.wonderVP, 10, 'roundtrip: wonderVP');
+  assert.equal(rec2.alliance0, 'Romans', 'roundtrip: alliance0');
+  assert.equal(rec2.alliance1, 'Barbarians', 'roundtrip: alliance1');
+  assert.equal(rec2.allianceVictoryType, 2, 'roundtrip: allianceVictoryType');
+  assert.equal(rec2.plaugeName, 'Plague', 'roundtrip: plaugeName');
+  assert.equal(rec2.permitPlagues, 1, 'roundtrip: permitPlagues');
+  assert.equal(rec2.plagueEarliestStart, 15, 'roundtrip: plagueEarliestStart');
+  assert.equal(rec2.eruptionPeriod, 20, 'roundtrip: eruptionPeriod');
+  assert.equal(rec2.mapVisible, 1, 'roundtrip: mapVisible');
+  assert.equal(rec2.retainCulture, 1, 'roundtrip: retainCulture');
+  assert.equal(rec2.mpBaseTime, 100, 'roundtrip: mpBaseTime');
+  assert.equal(rec2.mpCityTime, 200, 'roundtrip: mpCityTime');
+  assert.equal(rec2.mpUnitTime, 300, 'roundtrip: mpUnitTime');
+  assert.equal(reserialized.length, original.length, 'roundtrip: serialized length must match original');
 });
 
 // ---------------------------------------------------------------------------

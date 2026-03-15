@@ -256,6 +256,18 @@ function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
   const h = u16(b, 10);
   const headerFrameCount = u16(b, 6);
   const speedRaw = u32(b, 16);
+  // Civ3 FlicAnimHeader at byte 88 (reserved3): num_anims at +8, anim_length at +10.
+  const civ3NumAnims = b.length >= 98 ? u16(b, 96) : 0;
+  const civ3AnimLength = b.length >= 100 ? u16(b, 98) : 0;
+  // Clamp directionIndex to available directions so single-direction FLCs still yield a frame.
+  const safeDir = (options.directionIndex > 0 && civ3NumAnims > 1)
+    ? Math.min(options.directionIndex, civ3NumAnims - 1)
+    : 0;
+  // Each direction block = anim_length animation frames + 1 ring frame = (anim_length + 1) total.
+  // Using anim_length alone undershoots by `safeDir` frames (one ring frame per skipped direction).
+  const startFrame = (safeDir > 0 && civ3AnimLength > 0)
+    ? (civ3AnimLength + 1) * safeDir
+    : 0;
   // FLC (0xAF12) uses milliseconds; legacy FLI (0xAF11) uses 1/70s ticks.
   const speedField = (magic === 0xAF11)
     ? Math.round((speedRaw * 1000) / 70)
@@ -274,6 +286,7 @@ function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
   let frame = new Uint8Array(w * h);
   const chunkCounts = {};
   let off = 128;
+  let frameIdx = 0;
   while (off + 6 <= b.length) {
     const chunkSize = u32(b, off);
     const chunkType = u16(b, off + 4);
@@ -320,10 +333,13 @@ function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
       }
 
       if (touched) {
-        frames.push(new Uint8Array(frame));
-        if (frames.length >= frameLimit) {
-          break;
+        if (frameIdx >= startFrame) {
+          frames.push(new Uint8Array(frame));
+          if (frames.length >= frameLimit) {
+            break;
+          }
         }
+        frameIdx += 1;
       }
     }
 
@@ -367,10 +383,19 @@ function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
     return Buffer.from(rgba).toString('base64');
   });
 
+  const indexedBase64 = (options && options.returnIndexed)
+    ? frames.map((pix) => Buffer.from(pix).toString('base64'))
+    : undefined;
+  const paletteBase64 = (options && options.returnIndexed)
+    ? Buffer.from(palette).toString('base64')
+    : undefined;
+
   return {
     width: w,
     height: h,
     framesBase64,
+    indexedBase64,
+    paletteBase64,
     speedField,
     speedRaw,
     magic,
@@ -788,11 +813,19 @@ function getPreview(request) {
     const action = manifest.actions.find((a) => a.key === 'DEFAULT' && a.exists)
       || manifest.actions.find((a) => a.exists);
     if (!action || !fileExists(action.flcPath)) return { ok: false, error: 'No valid FLC for DEFAULT action' };
-    // SW-facing is always frame 0 (direction index 0, firstFrame = anim_length * 0).
-    const decoded = decodeFlcFrames(action.flcPath, 1, { civ3UnitPalette: true });
+    // SE-facing: direction index 2, firstFrame = anim_length * 2.
+    const decoded = decodeFlcFrames(action.flcPath, 1, { civ3UnitPalette: true, returnIndexed: true, directionIndex: 2 });
     const frameBase64 = decoded.framesBase64 && decoded.framesBase64[0];
     if (!frameBase64) return { ok: false, error: 'Could not decode first frame' };
-    return { ok: true, animated: false, rgbaBase64: frameBase64, width: decoded.width, height: decoded.height };
+    return {
+      ok: true,
+      animated: false,
+      rgbaBase64: frameBase64,
+      indexedBase64: decoded.indexedBase64 && decoded.indexedBase64[0],
+      paletteBase64: decoded.paletteBase64,
+      width: decoded.width,
+      height: decoded.height
+    };
   }
 
   if (kind === 'unitAnimationManifest') {

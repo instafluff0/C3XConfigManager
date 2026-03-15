@@ -1,28 +1,23 @@
 # IO Pipeline Details
 
-## Reference: Quint_Editor Java pipeline
+## Binary layout reference
 
-The original Java implementation lives at:
+The binary layout for all BIQ sections was derived from the Quint_Editor Java source at:
 `../Quint_Editor/Shared/Civ3_Shared_Components/src/main/java/com/civfanatics/civ3/biqFile/IO.java`
 
-This is a read-only reference for understanding BIQ binary layout and section semantics. It is not used at runtime.
+This file is a read-only layout reference only. It is not used at runtime and there is no Java dependency.
 
-### Key behaviors documented for reference
-- Compression auto-detect and external decompressor invocation (BIQDecompressor.jar).
-- Little-endian parsing across all sections.
-- Optional section families:
-  - custom rules (BLDG ... FLAV)
-  - custom map (WCHR ... map payload)
-  - custom player data (LEAD)
-- Version-sensitive behavior:
-  - legacy/Vanilla/PTW support with conversion path toward Conquests model.
-- Multithreaded import paths for heavy map sections (TILE, CONT, SLOC) via helper thread classes.
+### Key layout notes
+- All integers are little-endian.
+- Optional section families: custom rules (`BLDG`…`FLAV`), custom map (`WCHR`…map payload), custom player data (`LEAD`).
+- Version-sensitive fields: Conquests (`majorVersion=12`) adds extra tail data to GAME; `minorVersion>=7` adds MP timer fields.
+- Compressed BIQs use PKWare IMPLODE; raw BIQs start with `BIC`.
 
 ---
 
 ## JS pipeline (C3X implementation)
 
-The app uses a pure-JS pipeline. No Java dependency.
+The app uses a pure-JS pipeline with no external dependencies.
 
 See `docs/biq/JSBridge.md` for the full architecture and per-section notes.
 

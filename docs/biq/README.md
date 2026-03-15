@@ -1,16 +1,17 @@
-# BIQ Handling Deep Reference (from Quint_Editor)
+# BIQ Handling Deep Reference
 
 ## Scope
-This directory documents BIQ parsing/writing behavior based on ../Quint_Editor source.
+This directory documents BIQ binary layout and parsing behavior.
+The app is a pure-JS implementation (`src/biq/`). No Java or JAR dependencies at runtime.
 
-Primary code paths:
-- Shared/Civ3_Shared_Components/.../biqFile/IO.java (file IO, section ordering, optional blocks, post-processing)
-- Shared/Civ3_Shared_Components/.../biqFile/*.java (section models and field semantics)
-- Shared/Civ3_Editor/.../xplatformeditor/*Tab.java (UI tab-to-section mappings)
+Binary layout was derived from the Quint_Editor source (read-only reference):
+- `Shared/Civ3_Shared_Components/.../biqFile/IO.java` — file IO, section ordering, optional blocks
+- `Shared/Civ3_Shared_Components/.../biqFile/*.java` — section models and field semantics
+- `Shared/Civ3_Editor/.../xplatformeditor/*Tab.java` — UI tab-to-section mappings
 
-## BIQ Processing Pipeline (IO.java)
-- Reads little-endian BIQ data via LittleEndianDataInputStream.
-- Detects compressed files by checking first 4 bytes for BIC; if absent, runs BIQDecompressor.jar and re-reads temporary output.
+## BIQ Processing Pipeline
+- Reads little-endian BIQ data.
+- Detects compressed files by checking first 4 bytes for BIC; if absent, decompresses with `src/biq/decompress.js` (PKWare IMPLODE).
 - Detects version using header and major/minor values:
   - BICX + major 12 -> Conquests
   - BICX + non-12 -> PTW
