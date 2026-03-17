@@ -8149,9 +8149,9 @@ const GAME_PANEL_DEFINITIONS = [
     groups: ['Scenario', 'Map Options', 'Player Options', 'Game Options', 'Time Options', 'Base Unit of Time', 'Start Date', 'MP Timers', 'Time Scale']
   },
   {
-    id: 'victory',
-    label: 'Victory Point Limits',
-    groups: ['Victory Point Winning Conditions', 'Victory Points']
+    id: 'victoryconditions',
+    label: 'Victory Conditions',
+    groups: ['Victory Conditions', 'Victory Point Winning Conditions', 'Victory Points']
   },
   {
     id: 'alliances',
@@ -19185,8 +19185,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if ((col * cellW + cellW) > atlas.width || (row * cellH + cellH) > atlas.height) return;
     const tileScale = tileW / 128;
     const size = Math.max(8, Math.round(50 * tileScale));
+    const midY = sy + Math.floor(tileH / 2);
     const dx = sx + Math.round(40 * tileScale);
-    const dy = sy + Math.round(9 * tileScale);
+    const dy = midY + Math.round(9 * tileScale);
     ctx.drawImage(atlas, col * cellW, row * cellH, cellW, cellH, dx, dy, size, size);
   };
 
@@ -19208,6 +19209,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     }
     if (!Number.isFinite(unitId)) return;
     const tileScale = tileW / 128;
+    const quintUnitTop = screenY + Math.round(41 * tileScale);
+    const quintUnitBottom = quintUnitTop + Math.round(32 * tileScale);
 
     // Resolve owner color for the civ dot
     let ownerTypeRaw = '';
@@ -19236,9 +19239,6 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const prtoName = prtoNameById[unitId];
       if (prtoName) requestBiqMapUnitFlcFrame(unitId, prtoName);
     }
-
-    // Bottom of unit aligns to tile bottom edge (screenY is midY, so tile bottom = screenY + tileH/2)
-    const tileBottom = screenY + Math.floor(tileH / 2);
 
     let dx, dy, size;
     if (flcCanvas) {
@@ -19285,7 +19285,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const flcW = Math.max(1, Math.round(drawSrc.width * tileScale));
       const flcH = Math.max(1, Math.round(drawSrc.height * tileScale));
       dx = screenX + Math.round((tileW - flcW) / 2);
-      dy = tileBottom - flcH;
+      // Quint draws units_32 at defaultYPosition + 9 with a 32px icon.
+      // Use that icon's bottom edge as the FLC baseline so animated units sit
+      // in the same vertical slot as Quint's map units rather than floating a
+      // half-tile too high.
+      dy = quintUnitBottom - flcH;
       size = flcW;
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(drawSrc, 0, 0, drawSrc.width, drawSrc.height, dx, dy, flcW, flcH);
@@ -19306,7 +19310,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       if (srcX + cellW > atlas.width || srcY + cellH > atlas.height) return;
       size = Math.max(12, Math.round(48 * tileScale));
       dx = screenX + Math.round(48 * tileScale);
-      dy = screenY + Math.round(7 * tileScale);
+      dy = quintUnitTop;
       const ntpSlot = ownerSlot;
       const iconCacheKey = `${iconIdx}-${ntpSlot}`;
       let coloredIcon = state.biqMapColoredUnitIconCache.get(iconCacheKey);
@@ -19431,8 +19435,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         const drawH = Math.max(1, Math.round(srcH * tileScale));
         const widthOffset = Math.max(0, Math.floor((srcW - 167) / 2));
         const heightOffset = Math.max(0, Math.floor((srcH - 95) / 2));
+        const midY = sy + Math.floor(tileH / 2);
         const dx = sx - Math.round((18 + widthOffset) * tileScale);
-        const dy = sy - Math.round((18 + heightOffset) * tileScale);
+        const dy = midY - Math.round((18 + heightOffset) * tileScale);
         ctx.drawImage(sheet, srcX, srcY, srcW, srcH, dx, dy, drawW, drawH);
         drewCity = true;
       }
@@ -19580,8 +19585,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
 
   const drawTileFeatureOverlays = (record, geom, sx, sy, pass = 'all') => {
     if (!record || !geom) return;
-    // Quint draws all overlays relative to defaultYPosition = yPos*32, which is the vertical
-    // center of the tile diamond (sy + tileH/2). Base terrain uses yPos*32 - 32 (= sy).
+    // Quint draws all overlays relative to defaultYPosition = yPos*32 = tileTopBoundary + 32.
+    // Terrain is drawn at tileTopBoundary = sy - stepY in Quint's frame, but our renderer draws
+    // terrain at item.sy directly. midY = sy + stepY gives the same +32 offset relative to
+    // our terrain position, matching Quint's defaultYPosition offset from tileTopBoundary.
     const midY = sy + Math.floor(tileH / 2);
     const c3cOverlays = parseIntLoose(getFieldByBaseKey(record, 'c3coverlays')?.value, 0) >>> 0;
     const c3cBonuses = parseIntLoose(getFieldByBaseKey(record, 'c3cbonuses')?.value, 0) >>> 0;
@@ -19775,11 +19782,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const drawTerritoryBorders = () => {
       const ownerInfo = resolveTileTerritoryInfo(record, geom);
       if (!ownerInfo.hasOwner) return;
-      const borderRaw = getFieldRawValue(record, 'bordercolor') || getFieldDisplayValue(record, 'bordercolor');
-      let borderColorId = parseIntLoose(borderRaw, NaN);
-      if (Number.isFinite(parseIntLoose(ownerInfo.borderColorId, NaN))) borderColorId = parseIntLoose(ownerInfo.borderColorId, NaN);
-      if (!Number.isFinite(borderColorId) && ownerInfo.civId >= 0) borderColorId = parseIntLoose(raceDefaultColorById[ownerInfo.civId], NaN);
-      if (!Number.isFinite(borderColorId) && Number.isFinite(ownerInfo.borderTag) && ownerInfo.borderTag > 0) borderColorId = ownerInfo.borderTag % 32;
+      let borderColorId = parseIntLoose(ownerInfo.borderColorId, NaN);
+      if (!Number.isFinite(borderColorId)) {
+        borderColorId = parseIntLoose(getFieldByBaseKey(record, 'bordercolor')?.value, NaN);
+      }
+      if (!Number.isFinite(borderColorId) && ownerInfo.civId >= 0) {
+        borderColorId = parseIntLoose(raceDefaultColorById[ownerInfo.civId], NaN);
+      }
+      if (!Number.isFinite(borderColorId) && Number.isFinite(ownerInfo.borderTag) && ownerInfo.borderTag > 0) {
+        borderColorId = ownerInfo.borderTag % 32;
+      }
       if (!Number.isFinite(borderColorId)) borderColorId = 0;
       borderColorId = ((borderColorId % 32) + 32) % 32;
       const hasDifferentOwner = (nx, ny) => {
@@ -20030,28 +20042,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     for (let i = 0; i < overlayPassItems.length; i += 1) {
       const item = overlayPassItems[i];
       drawTileFeatureOverlays(item.record, item.geom, item.sx, item.sy, 'flat');
-      const itemMidY = item.sy + Math.floor(tileH / 2);
-      drawResourceOverlay(item.record, item.sx, itemMidY);
+      drawResourceOverlay(item.record, item.sx, item.sy);
       drawDistrictOverlay(item.record, item.sx, item.sy);
-      drawCityOverlay(item.record, item.geom, item.sx, itemMidY);
+      drawCityOverlay(item.record, item.geom, item.sx, item.sy);
       drawSlocOverlay(item.geom, item.sx, item.sy);
       drawVpOverlay(item.record, item.sx, item.sy);
-      drawUnitOverlay(item.record, item.geom, item.sx, itemMidY);
+      drawUnitOverlay(item.record, item.geom, item.sx, item.sy);
       drawFogOverlay(item.record, item.sx, item.sy);
-    }
-  }
-
-  if (state.biqMapShowGrid && tilePx >= 5) {
-    for (let i = 0; i < overlayPassItems.length; i += 1) {
-      const item = overlayPassItems[i];
-      ctx.strokeStyle = 'rgba(0,0,0,0.2)';
-      ctx.beginPath();
-      ctx.moveTo(item.sx + Math.floor(tileW / 2), item.sy);
-      ctx.lineTo(item.sx + tileW, item.sy + Math.floor(tileH / 2));
-      ctx.lineTo(item.sx + Math.floor(tileW / 2), item.sy + tileH);
-      ctx.lineTo(item.sx, item.sy + Math.floor(tileH / 2));
-      ctx.closePath();
-      ctx.stroke();
     }
   }
 
@@ -20087,6 +20084,24 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   ctx.lineTo(sx + 1, sy + Math.floor(tileH / 2));
   ctx.closePath();
   ctx.stroke();
+
+  if (state.biqMapShowGrid && tilePx >= 5) {
+    ctx.strokeStyle = 'rgba(38, 44, 58, 0.72)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < overlayPassItems.length; i += 1) {
+      const item = overlayPassItems[i];
+      const leftX = item.sx;
+      const topVertexY = item.sy;
+      // Quint's grid uses gpxY - 32 as the shared top vertex.
+      // Our item.sy already is that terrain-top / top-vertex position.
+      ctx.moveTo(leftX + 0.5, topVertexY + 0.5);
+      ctx.lineTo(leftX + stepX + 0.5, topVertexY + stepY + 0.5);
+      ctx.moveTo(leftX + 0.5, topVertexY + 0.5);
+      ctx.lineTo(leftX + stepX + 0.5, topVertexY - stepY + 0.5);
+    }
+    ctx.stroke();
+  }
 
   let paintStroke = null;
   const readHitFromPointer = (ev) => {
