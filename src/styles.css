@@ -3371,6 +3371,49 @@ details > summary:focus-visible {
   flex-wrap: wrap;
 }
 
+.improvement-compact-row {
+  align-items: start;
+}
+
+.improvement-compact-control {
+  gap: 10px;
+}
+
+.improvement-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.improvement-radio-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(242, 246, 255, 0.92);
+  border: 1px solid rgba(73, 69, 98, 0.16);
+  color: #324067;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.improvement-radio-option input[type="radio"] {
+  margin: 0;
+  accent-color: #1aa79c;
+}
+
+.improvement-number-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.improvement-number-pill input[type="number"] {
+  width: 72px;
+}
+
 .free-tech-control .tech-picker {
   flex: 1;
   min-width: 0;
@@ -3495,6 +3538,31 @@ details > summary:focus-visible {
   gap: 8px;
   min-width: 0;
   flex: 1 1 220px;
+}
+
+.improvement-top-row {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 420px);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.improvement-top-control {
+  justify-self: start;
+  flex: 0 1 420px;
+  width: min(420px, 100%);
+}
+
+.improvement-top-control .tech-picker {
+  flex: 0 1 420px;
+  width: min(420px, 100%);
+  min-width: 220px;
+}
+
+.improvement-top-control .segmented-control {
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .key-display-chip {

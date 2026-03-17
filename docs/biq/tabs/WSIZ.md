@@ -1,14 +1,25 @@
 # WSIZ Tab
 
 ## Source
-- ../Quint_Editor/Shared/Civ3_Editor/src/main/java/com/civfanatics/civ3/xplatformeditor/WSIZTab.java
+- `../Quint_Editor/Shared/Civ3_Editor/src/main/java/com/civfanatics/civ3/xplatformeditor/WSIZTab.java`
 
 ## Backing BIQ Sections
-- WSIZ
+- `WSIZ`
 
 ## Data Dependencies
-- none beyond own section
+- WSIZ records only
+
+## Quint Layout Contract
+Quint presents world sizes as a flat form.
+
+### Fields
+- `Width`: numeric field
+- `Height`: numeric field
+- `Number of Civs`: numeric field
+- `Tech Rate`: numeric field
+- `Optimal City Number`: numeric field
+- `Distance between Civs`: numeric field
+- `Unknown String (24 characters maximum)`: text field
 
 ## Notes
-- Mapping taken from EditorTabbedPane setup/sendData wiring in Quint_Editor.
-- Use this as the first-stop reference when aligning C3XConfigManager UI with Quint_Editor data expectations.
+- There are no titled subpanels in Quint’s WSIZ tab.

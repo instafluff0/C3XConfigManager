@@ -4141,7 +4141,9 @@ function attachSuggestions(input, suggestions) {
   return dl;
 }
 
-function makeSegmentedChoiceControl(options, value, onChange) {
+function makeSegmentedChoiceControl(options, value, onChange, config = null) {
+  const cfg = config || {};
+  const disabled = !!cfg.disabled;
   const wrap = document.createElement('div');
   wrap.className = 'segmented-control';
   const opts = (Array.isArray(options) ? options : []).map((opt) => String(opt || '').trim()).filter(Boolean);
@@ -4151,8 +4153,10 @@ function makeSegmentedChoiceControl(options, value, onChange) {
     btn.type = 'button';
     btn.className = 'segmented-control-btn';
     btn.textContent = opt;
+    btn.disabled = disabled;
     btn.classList.toggle('active', opt === selected);
     btn.addEventListener('click', () => {
+      if (disabled) return;
       Array.from(wrap.querySelectorAll('.segmented-control-btn')).forEach((node) => node.classList.remove('active'));
       btn.classList.add('active');
       if (typeof onChange === 'function') onChange(opt);
@@ -4367,7 +4371,6 @@ function makeInputForBaseRow(row, onChange) {
     inputC.addEventListener('input', recalc);
     inputD.addEventListener('input', recalc);
     rerender();
-    recalc();
     return wrap;
   }
 
@@ -4948,7 +4951,6 @@ function makeInputForBaseRow(row, onChange) {
       });
       wrap.appendChild(add);
     };
-    onChange(serializeBuildingPrereqItems(items));
     rerender();
     return wrap;
   }
@@ -5042,7 +5044,6 @@ function makeInputForBaseRow(row, onChange) {
       });
       wrap.appendChild(add);
     };
-    onChange(serializeBuildingResourceItems(items));
     rerender();
     return wrap;
   }
@@ -7999,7 +8000,7 @@ const QUINT_IMPROVEMENT_RULE_VISIBLE_KEYS = new Set([
   'allowairtrade', 'allowwatertrade', 'capitalization', 'increasedtaxes', 'increasestradeinwater',
   'increasedtrade', 'reducescorruption', 'forbiddenpalace', 'paystrademaintenance', 'treasuryearnsinterest',
   'happy', 'happyall', 'unhappy', 'unhappyall', 'increasesluxurytrade', 'increasedluxuries',
-  'doubleshappiness', 'reduceswarweariness', 'reducewarweariness', 'empirereduceswarweariness',
+  'doubleshappiness', 'continentalmoodeffects', 'reduceswarweariness', 'reducewarweariness', 'empirereduceswarweariness',
   'centerofempire', 'replacesotherwiththistag', 'removepoppollution', 'reducebldgpollution',
   'mayexplodeormeltdown', 'doublessacrifice', 'increasesshieldsinwater', 'resistanttobribery',
   'spaceshippart', 'buildspaceshipparts', 'touristattraction', 'allowspymissions', 'allowdiplomaticvictory',
@@ -8756,13 +8757,13 @@ const REFERENCE_RULE_SCHEMAS = {
       enablesconscription: { group: 'Military', control: 'bool', label: 'Enables Conscription' },
       enablesmobilizationlevels: { group: 'Military', control: 'bool', label: 'Enables Mobilization Levels' },
       enablesprecisionbombing: { group: 'Military', control: 'bool', label: 'Enables Precision Bombing' },
-      flavor_1: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor1' },
-      flavor_2: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor2' },
-      flavor_3: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor3' },
-      flavor_4: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor4' },
-      flavor_5: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor5' },
-      flavor_6: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor6' },
-      flavor_7: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor7' }
+      flavor_1: { group: 'Flavors', control: 'bool', label: 'Flavor1' },
+      flavor_2: { group: 'Flavors', control: 'bool', label: 'Flavor2' },
+      flavor_3: { group: 'Flavors', control: 'bool', label: 'Flavor3' },
+      flavor_4: { group: 'Flavors', control: 'bool', label: 'Flavor4' },
+      flavor_5: { group: 'Flavors', control: 'bool', label: 'Flavor5' },
+      flavor_6: { group: 'Flavors', control: 'bool', label: 'Flavor6' },
+      flavor_7: { group: 'Flavors', control: 'bool', label: 'Flavor7' }
     }
   },
   improvements: {
@@ -8777,14 +8778,15 @@ const REFERENCE_RULE_SCHEMAS = {
       'cheaperupgrades', 'allowshealinginenemyterritory', 'increasedarmyvalue', 'doublecitydefences',
       'increasesfoodinwater', 'doublescitygrowthrate', 'doublecitygrowth', 'allowcitylevel2', 'allowcitylevel3',
       'increasedresearch', 'doublesresearchoutput', 'twofreeadvances', 'gainanytechsknownbytwocivs',
-      'gainineverycity', 'gainoncontinent', 'unitproduced', 'unitfrequency', 'obsoleteby',
+      'gainineverycity', 'gainoncontinent', 'unitproduced', 'unitfrequency',
+      'obsoleteby',
       'reqimprovement', 'numreqbuildings', 'reqgovernment', 'reqadvance', 'mustbenearriver',
       'coastalinstallation', 'requiresvictoriousarmy', 'mustbenearwater', 'requireseliteship', 'armiesrequired',
       'reqresource1', 'reqresource2', 'goodsmustbeincityradius',
       'allowairtrade', 'allowwatertrade', 'capitalization', 'increasedtaxes', 'increasestradeinwater',
       'increasedtrade', 'reducescorruption', 'forbiddenpalace', 'paystrademaintenance', 'treasuryearnsinterest',
       'happy', 'happyall', 'unhappy', 'unhappyall', 'increasesluxurytrade', 'increasedluxuries',
-      'doubleshappiness', 'reduceswarweariness', 'reducewarweariness', 'empirereduceswarweariness',
+      'doubleshappiness', 'continentalmoodeffects', 'reduceswarweariness', 'reducewarweariness', 'empirereduceswarweariness',
       'centerofempire', 'replacesotherwiththistag', 'removepoppollution', 'reducebldgpollution',
       'mayexplodeormeltdown', 'doublessacrifice', 'increasesshieldsinwater', 'resistanttobribery',
       'spaceshippart', 'buildspaceshipparts', 'touristattraction', 'allowspymissions', 'allowdiplomaticvictory',
@@ -8838,7 +8840,7 @@ const REFERENCE_RULE_SCHEMAS = {
       gainoncontinent: { group: 'Gain', control: 'reference', label: 'In every city on this continent' },
       unitproduced: { group: 'Gain', control: 'reference', label: 'Unit' },
       unitfrequency: { group: 'Gain', control: 'number', min: 0, label: 'Frequency' },
-      obsoleteby: { group: 'Gain', control: 'reference', label: 'Made obsolete by' },
+      obsoleteby: { group: 'Made obsolete by', control: 'reference', label: 'Made obsolete by' },
       reqimprovement: { group: 'Requirements', control: 'reference', label: 'Building' },
       numreqbuildings: { group: 'Requirements', control: 'number', min: 0, label: 'Number' },
       reqgovernment: { group: 'Requirements', control: 'reference', label: 'Government' },
@@ -8849,9 +8851,9 @@ const REFERENCE_RULE_SCHEMAS = {
       mustbenearwater: { group: 'Requirements', control: 'bool', label: 'By water' },
       requireseliteship: { group: 'Requirements', control: 'bool', label: 'Elite Ship' },
       armiesrequired: { group: 'Requirements', control: 'number', min: 0, label: 'Armies' },
-      reqresource1: { group: 'Resources', control: 'reference', label: 'Resource slot 1' },
-      reqresource2: { group: 'Resources', control: 'reference', label: 'Resource slot 2' },
-      goodsmustbeincityradius: { group: 'Resources', control: 'bool', label: 'In city radius' },
+      reqresource1: { group: 'Requirements', control: 'reference', label: 'Resource 1' },
+      reqresource2: { group: 'Requirements', control: 'reference', label: 'Resource 2' },
+      goodsmustbeincityradius: { group: 'Requirements', control: 'bool', label: 'In city radius' },
       allowairtrade: { group: 'Trade', control: 'bool', label: 'Air trade' },
       allowwatertrade: { group: 'Trade', control: 'bool', label: 'Water trade' },
       capitalization: { group: 'Trade', control: 'bool', label: 'Capitalization' },
@@ -8862,10 +8864,11 @@ const REFERENCE_RULE_SCHEMAS = {
       forbiddenpalace: { group: 'Trade', control: 'bool', label: 'Reduces corruption: Empire' },
       paystrademaintenance: { group: 'Trade', control: 'bool', label: 'Pays trade maintenance' },
       treasuryearnsinterest: { group: 'Trade', control: 'bool', label: '5% treasury interest' },
-      happy: { group: 'Happiness', control: 'number', min: 0, label: 'Content faces: City' },
-      happyall: { group: 'Happiness', control: 'number', min: 0, label: 'Content faces: Global' },
+      happy: { group: 'Happiness', control: 'number', min: 0, label: 'Happy faces: City' },
+      happyall: { group: 'Happiness', control: 'number', min: 0, label: 'Happy faces: Global' },
       unhappy: { group: 'Happiness', control: 'number', min: 0, label: 'Unhappy faces: City' },
       unhappyall: { group: 'Happiness', control: 'number', min: 0, label: 'Unhappy faces: Global' },
+      continentalmoodeffects: { group: 'Happiness', control: 'bool', label: 'Continental' },
       increasesluxurytrade: { group: 'Happiness', control: 'bool', label: 'More luxury happiness' },
       increasedluxuries: { group: 'Happiness', control: 'bool', label: '+50% luxury tax' },
       doubleshappiness: { group: 'Happiness', control: 'reference', label: 'Doubles happiness of' },
@@ -8893,15 +8896,15 @@ const REFERENCE_RULE_SCHEMAS = {
       scientific: { group: 'Characteristics', control: 'bool', label: 'Scientific' },
       agricultural: { group: 'Characteristics', control: 'bool', label: 'Agricultural' },
       seafaring: { group: 'Characteristics', control: 'bool', label: 'Seafaring' },
-      charmbarrier: { group: 'Special Toggles', control: 'bool', label: 'Charm Barrier' },
-      actsasgeneraltelepad: { group: 'Special Toggles', control: 'bool', label: 'General Telepad' },
-      flavor_1: { group: 'Flavors', control: 'number', min: 0 },
-      flavor_2: { group: 'Flavors', control: 'number', min: 0 },
-      flavor_3: { group: 'Flavors', control: 'number', min: 0 },
-      flavor_4: { group: 'Flavors', control: 'number', min: 0 },
-      flavor_5: { group: 'Flavors', control: 'number', min: 0 },
-      flavor_6: { group: 'Flavors', control: 'number', min: 0 },
-      flavor_7: { group: 'Flavors', control: 'number', min: 0 }
+      charmbarrier: { group: 'Special', control: 'bool', label: 'Charm Barrier' },
+      actsasgeneraltelepad: { group: 'Special', control: 'bool', label: 'General Telepad' },
+      flavor_1: { group: 'Flavors', control: 'bool' },
+      flavor_2: { group: 'Flavors', control: 'bool' },
+      flavor_3: { group: 'Flavors', control: 'bool' },
+      flavor_4: { group: 'Flavors', control: 'bool' },
+      flavor_5: { group: 'Flavors', control: 'bool' },
+      flavor_6: { group: 'Flavors', control: 'bool' },
+      flavor_7: { group: 'Flavors', control: 'bool' }
     }
   },
   governments: {
@@ -9010,8 +9013,7 @@ const REFERENCE_RULE_SCHEMAS = {
       'freetech1index', 'freetech2index', 'freetech3index', 'freetech4index',
       'managecitizens', 'manageproduction', 'nowonders', 'nosmallwonders', 'emphasizefood', 'emphasizeshields', 'emphasizetrade',
       'flavor_1', 'flavor_2', 'flavor_3', 'flavor_4', 'flavor_5', 'flavor_6', 'flavor_7',
-      'uniquecolor', 'defaultcolor',
-      'diplomacytextindex', 'questionmark'
+      'uniquecolor', 'defaultcolor'
     ],
     fields: {
       civilopediaentry: { group: 'Civilization Identity', control: 'text', label: 'Civilopedia Entry' },
@@ -9087,17 +9089,15 @@ const REFERENCE_RULE_SCHEMAS = {
       emphasizefood: { group: 'Governor Settings', control: 'bool', label: 'Emphasize Food' },
       emphasizeshields: { group: 'Governor Settings', control: 'bool', label: 'Emphasize Production' },
       emphasizetrade: { group: 'Governor Settings', control: 'bool', label: 'Emphasize Trade' },
-      flavor_1: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor1' },
-      flavor_2: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor2' },
-      flavor_3: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor3' },
-      flavor_4: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor4' },
-      flavor_5: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor5' },
-      flavor_6: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor6' },
-      flavor_7: { group: 'Flavors', control: 'number', min: 0, label: 'Flavor7' },
+      flavor_1: { group: 'Flavors', control: 'bool', label: 'Flavor1' },
+      flavor_2: { group: 'Flavors', control: 'bool', label: 'Flavor2' },
+      flavor_3: { group: 'Flavors', control: 'bool', label: 'Flavor3' },
+      flavor_4: { group: 'Flavors', control: 'bool', label: 'Flavor4' },
+      flavor_5: { group: 'Flavors', control: 'bool', label: 'Flavor5' },
+      flavor_6: { group: 'Flavors', control: 'bool', label: 'Flavor6' },
+      flavor_7: { group: 'Flavors', control: 'bool', label: 'Flavor7' },
       uniquecolor: { group: 'Colors', control: 'select', label: 'Unique Color' },
-      defaultcolor: { group: 'Colors', control: 'select', label: 'Default Color' },
-      diplomacytextindex: { group: 'Misc Settings', control: 'reference', label: 'Diplomacy Text Index' },
-      questionmark: { group: 'Misc Settings', control: 'number', label: 'Unknown' }
+      defaultcolor: { group: 'Colors', control: 'select', label: 'Default Color' }
     }
   },
   units: {
@@ -9256,11 +9256,19 @@ function shouldHideBiqField(tabKey, field) {
   return !!(tabHidden && (tabHidden.has(base) || tabHidden.has(canon)));
 }
 
+function normalizeRuleLookupKey(key) {
+  return String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 function getRuleFieldSpec(tabKey, field) {
-  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const rawBase = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const base = normalizeRuleLookupKey(rawBase);
   const schema = REFERENCE_RULE_SCHEMAS[tabKey] || null;
   if (!schema || !schema.fields) return null;
-  return schema.fields[base] || null;
+  if (schema.fields[rawBase]) return schema.fields[rawBase];
+  if (schema.fields[base]) return schema.fields[base];
+  const matchKey = Object.keys(schema.fields).find((key) => normalizeRuleLookupKey(key) === base);
+  return matchKey ? schema.fields[matchKey] : null;
 }
 
 function getBiqFlavorNames() {
@@ -9282,15 +9290,20 @@ function getBiqFlavorNames() {
 
 function getRuleFieldDisplayLabel(tabKey, field, spec) {
   const fallback = String((spec && spec.label) || field.label || field.key || '');
-  if (tabKey !== 'civilizations' && tabKey !== 'technologies') return fallback;
-  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
-  const m = base.match(/^flavor_(\d+)$/);
+  if (tabKey !== 'civilizations' && tabKey !== 'technologies' && tabKey !== 'improvements') return fallback;
+  const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
+  const m = base.match(/^flavor(\d+)$/);
   if (!m) return fallback;
   const idx = Number.parseInt(m[1], 10);
   if (!Number.isFinite(idx) || idx <= 0) return fallback;
   const names = getBiqFlavorNames();
   const name = String(names[idx - 1] || '').trim();
   return name || fallback;
+}
+
+function isReadonlyRuleField(tabKey, field) {
+  const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
+  return (tabKey === 'improvements' || tabKey === 'technologies' || tabKey === 'civilizations') && base === 'civilopediaentry';
 }
 
 function getRuleFieldGroup(tabKey, field) {
@@ -9300,11 +9313,356 @@ function getRuleFieldGroup(tabKey, field) {
 }
 
 function getRuleFieldOrder(tabKey, field) {
-  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
   const schema = REFERENCE_RULE_SCHEMAS[tabKey] || null;
   if (!schema || !Array.isArray(schema.order)) return Number.MAX_SAFE_INTEGER;
-  const idx = schema.order.indexOf(base);
+  const idx = schema.order.findIndex((item) => normalizeRuleLookupKey(item) === base);
   return idx >= 0 ? idx : Number.MAX_SAFE_INTEGER;
+}
+
+function getRuleFieldByBaseKey(fields, baseKey) {
+  const target = normalizeRuleLookupKey(baseKey);
+  return (Array.isArray(fields) ? fields : []).find((field) => normalizeRuleLookupKey(field && (field.baseKey || field.key)) === target) || null;
+}
+
+function isRuleFieldChecked(field) {
+  const raw = String(field && field.value || '').trim().toLowerCase();
+  return raw === 'true' || raw === '1';
+}
+
+function createRuleFieldTooltipText(entry, tabKey, field) {
+  const ruleFieldKey = String(field && (field.baseKey || field.key) || '');
+  return withFieldHelp(
+    `${formatSourceInfo(entry && entry.sourceMeta && entry.sourceMeta.biq, 'BIQ')}\nField: ${ruleFieldKey}`,
+    { tabKey, fieldKey: ruleFieldKey }
+  );
+}
+
+function createImprovementCompactRow(entry, labelText) {
+  const row = document.createElement('div');
+  row.className = 'rule-row improvement-compact-row';
+  const label = document.createElement('label');
+  label.className = 'field-meta';
+  label.textContent = labelText;
+  row.appendChild(label);
+  const controlWrap = document.createElement('div');
+  controlWrap.className = 'rule-control improvement-compact-control';
+  row.appendChild(controlWrap);
+  return { row, label, controlWrap };
+}
+
+function buildImprovementBoolChip(field, chipLabel, editable) {
+  if (!field) return null;
+  if (editable) {
+    const toggle = document.createElement('label');
+    toggle.className = 'bool-toggle';
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = isRuleFieldChecked(field);
+    const text = document.createElement('span');
+    text.textContent = chipLabel;
+    check.addEventListener('change', () => {
+      rememberUndoSnapshot();
+      field.value = check.checked ? 'true' : 'false';
+      setDirty(true);
+    });
+    toggle.appendChild(check);
+    toggle.appendChild(text);
+    return toggle;
+  }
+  const chip = document.createElement('span');
+  chip.className = 'key-display-chip';
+  chip.textContent = isRuleFieldChecked(field) ? chipLabel : `${chipLabel}: Off`;
+  return chip;
+}
+
+function buildImprovementNumberPill(field, pillLabel, editable, min = null) {
+  if (!field) return null;
+  const wrap = document.createElement('div');
+  wrap.className = 'improvement-number-pill';
+  const title = document.createElement('span');
+  title.className = 'field-meta';
+  title.textContent = pillLabel;
+  wrap.appendChild(title);
+  if (editable) {
+    const input = document.createElement('input');
+    input.type = 'number';
+    if (Number.isFinite(min)) input.min = String(min);
+    const n = parseIntFromDisplayValue(field.value);
+    input.value = n == null ? '' : String(n);
+    input.addEventListener('input', () => {
+      rememberUndoSnapshot();
+      field.value = input.value;
+      setDirty(true);
+    });
+    wrap.appendChild(input);
+  } else {
+    const value = document.createElement('span');
+    value.className = 'key-display-chip';
+    value.textContent = String(parseIntFromDisplayValue(field.value) ?? 0);
+    wrap.appendChild(value);
+  }
+  return wrap;
+}
+
+const IMPROVEMENT_TOP_FIELD_KEYS = new Set([
+  'civilopediaentry',
+  'wonder',
+  'smallwonder',
+  'improvement',
+  'reqadvance',
+  'obsoleteby',
+  'reqgovernment',
+  'reqimprovement',
+  'reqresource1',
+  'reqresource2'
+]);
+
+function getImprovementTopFieldValue(field, fallback = '(none)') {
+  const raw = String(field && field.value || '').trim();
+  if (!raw || raw === '-1' || /^none$/i.test(raw)) return fallback;
+  return raw;
+}
+
+function createImprovementTopRow(entry, labelText, sourceFields = []) {
+  const row = document.createElement('div');
+  row.className = 'identity-key-row improvement-top-row';
+  const label = document.createElement('label');
+  label.className = 'field-meta identity-key-label';
+  label.textContent = labelText;
+  sourceFields.filter(Boolean).forEach((field) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', field)));
+  row.appendChild(label);
+  const control = document.createElement('div');
+  control.className = 'identity-key-control improvement-top-control';
+  row.appendChild(control);
+  return { row, label, control };
+}
+
+function buildImprovementTopReferenceControl(field, labelText, referenceEditable) {
+  const options = getReferenceOptionsForField('improvements', field);
+  if (options.length > 0) {
+    const normalizedCurrentValue = field.value;
+    return createReferencePicker({
+      options,
+      targetTabKey: (BIQ_FIELD_REFS.improvements || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '',
+      currentValue: normalizedCurrentValue,
+      searchPlaceholder: `Search ${labelText || String(field.label || field.key || 'value')}...`,
+      noneLabel: '(none)',
+      showOptionThumbs: true,
+      readOnly: !referenceEditable,
+      onSelect: referenceEditable ? (value) => {
+        rememberUndoSnapshot();
+        field.value = String(value);
+        setDirty(true);
+      } : null
+    });
+  }
+  const text = document.createElement('span');
+  text.className = 'key-display-chip';
+  text.textContent = getImprovementTopFieldValue(field);
+  return text;
+}
+
+function renderImprovementTopControls(entry, identityGrid, referenceEditable) {
+  if (!entry || !identityGrid) return;
+
+  const civField = getBiqFieldByBaseKey(entry, 'civilopediaentry');
+  if (civField) {
+    const { row, control } = createImprovementTopRow(entry, 'Civilopedia Entry', [civField]);
+    const chip = document.createElement('span');
+    chip.className = 'key-display-chip';
+    chip.textContent = getImprovementTopFieldValue(civField, String(entry.civilopediaKey || '(none)'));
+    control.appendChild(chip);
+    identityGrid.appendChild(row);
+  }
+
+  const wonder = getBiqFieldByBaseKey(entry, 'wonder');
+  const smallWonder = getBiqFieldByBaseKey(entry, 'smallwonder');
+  const improvement = getBiqFieldByBaseKey(entry, 'improvement');
+  const categoryFields = [wonder, smallWonder, improvement].filter(Boolean);
+  if (categoryFields.length > 0) {
+    const { row, control } = createImprovementTopRow(entry, 'Category', categoryFields);
+    const options = [
+      { field: improvement, label: 'Improvement' },
+      { field: smallWonder, label: 'Small Wonder' },
+      { field: wonder, label: 'Wonder' }
+    ].filter((item) => item.field);
+    const current = options.find((item) => isRuleFieldChecked(item.field)) || options[0] || null;
+    const segmented = makeSegmentedChoiceControl(
+      options.map((item) => item.label),
+      current ? current.label : '',
+      referenceEditable ? (nextLabel) => {
+        const selected = options.find((item) => item.label === nextLabel);
+        if (!selected) return;
+        rememberUndoSnapshot();
+        options.forEach((opt) => {
+          opt.field.value = opt.field === selected.field ? 'true' : 'false';
+        });
+        setDirty(true);
+      } : null,
+      { disabled: !referenceEditable }
+    );
+    control.appendChild(segmented);
+    identityGrid.appendChild(row);
+  }
+
+  const topReferenceRows = [
+    ['Required Technology', getBiqFieldByBaseKey(entry, 'reqadvance')],
+    ['Made obsolete by', getBiqFieldByBaseKey(entry, 'obsoleteby')],
+    ['Required Government', getBiqFieldByBaseKey(entry, 'reqgovernment')],
+    ['Required Improvement', getBiqFieldByBaseKey(entry, 'reqimprovement')],
+    ['Required Resource 1', getBiqFieldByBaseKey(entry, 'reqresource1')],
+    ['Required Resource 2', getBiqFieldByBaseKey(entry, 'reqresource2')]
+  ];
+  topReferenceRows.forEach(([labelText, field]) => {
+    if (!field) return;
+    const { row, control } = createImprovementTopRow(entry, labelText, [field]);
+    control.appendChild(buildImprovementTopReferenceControl(field, labelText, referenceEditable));
+    identityGrid.appendChild(row);
+  });
+}
+
+function appendImprovementSpecialRows(groupCard, groupName, fields, entry, referenceEditable) {
+  const consumed = new Set();
+    if (groupName === 'Properties') {
+    const wonder = getRuleFieldByBaseKey(fields, 'wonder');
+    const smallWonder = getRuleFieldByBaseKey(fields, 'smallwonder');
+    const improvement = getRuleFieldByBaseKey(fields, 'improvement');
+    const categoryFields = [wonder, smallWonder, improvement].filter(Boolean);
+    if (categoryFields.length > 0) {
+      categoryFields.forEach((field) => consumed.add(field));
+      const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Category');
+      label.textContent = 'Category';
+      categoryFields.forEach((field) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', field)));
+      const options = [
+        { field: wonder, label: 'Wonder' },
+        { field: smallWonder, label: 'Small Wonder' },
+        { field: improvement, label: 'Improvement' }
+      ].filter((item) => item.field);
+      const current = options.find((item) => isRuleFieldChecked(item.field)) || options[0] || null;
+      const segmented = makeSegmentedChoiceControl(
+        options.map((item) => item.label),
+        current ? current.label : '',
+        referenceEditable ? (nextLabel) => {
+          const selected = options.find((item) => item.label === nextLabel);
+          if (!selected) return;
+          rememberUndoSnapshot();
+          options.forEach((opt) => {
+            opt.field.value = opt.field === selected.field ? 'true' : 'false';
+          });
+          setDirty(true);
+        } : null,
+        { disabled: !referenceEditable }
+      );
+      controlWrap.appendChild(segmented);
+      groupCard.appendChild(row);
+    }
+  } else if (groupName === 'Military') {
+    const veteranFields = [
+      { field: getRuleFieldByBaseKey(fields, 'veteranairunits'), label: 'Air' },
+      { field: getRuleFieldByBaseKey(fields, 'veteranunits'), label: 'Land' },
+      { field: getRuleFieldByBaseKey(fields, 'veteranseaunits'), label: 'Sea' }
+    ].filter((item) => item.field);
+    if (veteranFields.length > 0) {
+      veteranFields.forEach((item) => consumed.add(item.field));
+      const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Veteran Units');
+      veteranFields.forEach((item) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', item.field)));
+      veteranFields.forEach((item) => {
+        controlWrap.appendChild(buildImprovementBoolChip(item.field, item.label, referenceEditable));
+      });
+      groupCard.appendChild(row);
+    }
+  } else if (groupName === 'Requirements') {
+    const resourceFields = [
+      getRuleFieldByBaseKey(fields, 'reqresource1'),
+      getRuleFieldByBaseKey(fields, 'reqresource2')
+    ].filter(Boolean);
+    const radiusField = getRuleFieldByBaseKey(fields, 'goodsmustbeincityradius');
+    if (resourceFields.length > 0 || radiusField) {
+      resourceFields.forEach((field) => consumed.add(field));
+      if (radiusField) consumed.add(radiusField);
+      const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Resources');
+      [...resourceFields, radiusField].filter(Boolean).forEach((field) => {
+        attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', field));
+      });
+      resourceFields.forEach((field) => {
+        const picker = createReferencePicker({
+          options: getReferenceOptionsForField('improvements', field),
+          targetTabKey: (BIQ_FIELD_REFS.improvements || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '',
+          currentValue: field.value,
+          searchPlaceholder: `Search ${String(field.label || field.key || 'resource')}...`,
+          noneLabel: '(none)',
+          showOptionThumbs: true,
+          readOnly: !referenceEditable,
+          onSelect: referenceEditable ? (value) => {
+            rememberUndoSnapshot();
+            field.value = String(value);
+            setDirty(true);
+          } : null
+        });
+        controlWrap.appendChild(picker);
+      });
+      if (radiusField) controlWrap.appendChild(buildImprovementBoolChip(radiusField, 'In city radius', referenceEditable));
+      groupCard.appendChild(row);
+    }
+  } else if (groupName === 'Trade') {
+    const cityField = getRuleFieldByBaseKey(fields, 'reducescorruption');
+    const empireField = getRuleFieldByBaseKey(fields, 'forbiddenpalace');
+    const pair = [cityField, empireField].filter(Boolean);
+    if (pair.length > 0) {
+      pair.forEach((field) => consumed.add(field));
+      const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Reduces Corruption');
+      pair.forEach((field) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', field)));
+      if (cityField) controlWrap.appendChild(buildImprovementBoolChip(cityField, 'City', referenceEditable));
+      if (empireField) controlWrap.appendChild(buildImprovementBoolChip(empireField, 'Empire', referenceEditable));
+      groupCard.appendChild(row);
+    }
+  } else if (groupName === 'Happiness') {
+    const happy = getRuleFieldByBaseKey(fields, 'happy');
+    const happyAll = getRuleFieldByBaseKey(fields, 'happyall');
+    const unhappy = getRuleFieldByBaseKey(fields, 'unhappy');
+    const unhappyAll = getRuleFieldByBaseKey(fields, 'unhappyall');
+    const warCity = getRuleFieldByBaseKey(fields, 'reduceswarweariness');
+    const warEmpire = getRuleFieldByBaseKey(fields, 'reducewarweariness') || getRuleFieldByBaseKey(fields, 'empirereduceswarweariness');
+    const warEmpireAlias = getRuleFieldByBaseKey(fields, 'empirereduceswarweariness');
+    if (happy || happyAll) {
+      [happy, happyAll].filter(Boolean).forEach((field) => consumed.add(field));
+      const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Happy Faces');
+      [happy, happyAll].filter(Boolean).forEach((field) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', field)));
+      if (happy) controlWrap.appendChild(buildImprovementNumberPill(happy, 'City', referenceEditable, 0));
+      if (happyAll) controlWrap.appendChild(buildImprovementNumberPill(happyAll, 'Global', referenceEditable, 0));
+      groupCard.appendChild(row);
+    }
+    if (unhappy || unhappyAll) {
+      [unhappy, unhappyAll].filter(Boolean).forEach((field) => consumed.add(field));
+      const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Unhappy Faces');
+      [unhappy, unhappyAll].filter(Boolean).forEach((field) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', field)));
+      if (unhappy) controlWrap.appendChild(buildImprovementNumberPill(unhappy, 'City', referenceEditable, 0));
+      if (unhappyAll) controlWrap.appendChild(buildImprovementNumberPill(unhappyAll, 'Global', referenceEditable, 0));
+      groupCard.appendChild(row);
+    }
+    if (warCity || warEmpire) {
+      [warCity, warEmpire, warEmpireAlias].filter(Boolean).forEach((field) => consumed.add(field));
+      const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Reduces War Weariness');
+      [warCity, warEmpire].filter(Boolean).forEach((field) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', field)));
+      if (warCity) controlWrap.appendChild(buildImprovementBoolChip(warCity, 'City', referenceEditable));
+      if (warEmpire) controlWrap.appendChild(buildImprovementBoolChip(warEmpire, 'Empire', referenceEditable));
+      groupCard.appendChild(row);
+    }
+  } else if (groupName === 'Food') {
+    const level2 = getRuleFieldByBaseKey(fields, 'allowcitylevel2');
+    const level3 = getRuleFieldByBaseKey(fields, 'allowcitylevel3');
+    const pair = [level2, level3].filter(Boolean);
+    if (pair.length > 0) {
+      pair.forEach((field) => consumed.add(field));
+      const { row, label, controlWrap } = createImprovementCompactRow(entry, 'Allows City Size');
+      pair.forEach((field) => attachRichTooltip(label, createRuleFieldTooltipText(entry, 'improvements', field)));
+      if (level2) controlWrap.appendChild(buildImprovementBoolChip(level2, '2', referenceEditable));
+      if (level3) controlWrap.appendChild(buildImprovementBoolChip(level3, '3', referenceEditable));
+      groupCard.appendChild(row);
+    }
+  }
+  return consumed;
 }
 
 function canonicalBiqFieldKey(field) {
@@ -10833,7 +11191,7 @@ function makeIndexOptionsForTab(tabKey) {
 }
 
 function getReferenceOptionsForField(tabKey, field) {
-  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
   if (tabKey === 'civilizations' && base === 'diplomacytextindex') {
     const civTab = state.bundle && state.bundle.tabs && state.bundle.tabs.civilizations;
     let options = civTab && Array.isArray(civTab.diplomacyOptions) ? civTab.diplomacyOptions : [];
@@ -10872,7 +11230,7 @@ function getRuleSectionIndexOptions(sectionCode, { includeNone = false } = {}) {
 }
 
 function getEnumOptionsForField(tabKey, field) {
-  const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+  const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
   if (tabKey === 'governments' && (base === 'diplomatlevel' || base === 'spylevel')) {
     return getRuleSectionIndexOptions('EXPR');
   }
@@ -11358,15 +11716,6 @@ function buildIdentityTechContext(tabKey, entry) {
     return ctx;
   }
   if (tabKey === 'improvements') {
-    const req = getBiqFieldByBaseKey(entry, 'reqadvance');
-    const obs = getBiqFieldByBaseKey(entry, 'obsoleteby');
-    const fields = [req, obs].filter(Boolean);
-    ctx.label = 'Tech Requirements';
-    ctx.fields = fields;
-    ctx.values = fields
-      .map((f) => String(f.value || '').trim())
-      .filter((v) => v && !/^none$/i.test(v) && v !== '-1');
-    ctx.editable = fields.some((f) => !!f.editable);
     return ctx;
   }
   if (tabKey === 'units') {
@@ -14707,6 +15056,9 @@ function renderReferenceTab(tab, tabKey) {
       attachRichTooltip(keyRow, formatSourceInfo({ source: 'Derived', readPath: '', writePath: '' }, 'Derived'));
       identityGrid.appendChild(keyRow);
     }
+    if (tabKey === 'improvements') {
+      renderImprovementTopControls(entry, identityGrid, referenceEditable);
+    }
     const depsLine = document.createElement('div');
     depsLine.className = 'field-meta';
     const techCtx = buildIdentityTechContext(tabKey, entry);
@@ -14854,6 +15206,9 @@ function renderReferenceTab(tab, tabKey) {
         visibleRuleFields = visibleRuleFields.filter((field) => !isCivilizationBuildPriorityField(field));
         visibleRuleFields = visibleRuleFields.filter((field) => !isCivilizationNoteListCountField(field));
       }
+      if (tabKey === 'improvements') {
+        visibleRuleFields = visibleRuleFields.filter((field) => !IMPROVEMENT_TOP_FIELD_KEYS.has(normalizeRuleLookupKey(field && (field.baseKey || field.key))));
+      }
       const groups = new Map();
       visibleRuleFields.forEach((field) => {
         const group = getRuleFieldGroup(tabKey, field);
@@ -14885,7 +15240,11 @@ function renderReferenceTab(tab, tabKey) {
           groupTitle.appendChild(openBtn);
         }
         groupCard.appendChild(groupTitle);
+        const consumedRuleFields = tabKey === 'improvements'
+          ? appendImprovementSpecialRows(groupCard, groupName, fields, entry, referenceEditable)
+          : new Set();
         fields.forEach((field) => {
+          if (consumedRuleFields.has(field)) return;
           const spec = getRuleFieldSpec(tabKey, field) || {};
           const row = document.createElement('div');
           row.className = 'rule-row';
@@ -14910,8 +15269,9 @@ function renderReferenceTab(tab, tabKey) {
           const desiredControl = spec.control || '';
           const baseKey = String(field.baseKey || field.key || '').toLowerCase();
           const useColorSlotPicker = tabKey === 'civilizations' && (baseKey === 'defaultcolor' || baseKey === 'uniquecolor');
+          const fieldEditable = referenceEditable && !isReadonlyRuleField(tabKey, field);
 
-          if (referenceEditable) {
+          if (fieldEditable) {
             const hasEnumOptions = enumOptions.length > 0;
             const hasRefOptions = refOptions.length > 0;
             const useReferencePicker = hasRefOptions && (desiredControl === 'reference' || (!desiredControl && !hasEnumOptions));
@@ -14953,7 +15313,7 @@ function renderReferenceTab(tab, tabKey) {
                 : field.value;
               const picker = createReferencePicker({
                 options: refOptions,
-                targetTabKey: (BIQ_FIELD_REFS[tabKey] || {})[String(field.baseKey || field.key || '').toLowerCase()] || '',
+                targetTabKey: (BIQ_FIELD_REFS[tabKey] || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '',
                 currentValue: normalizedCurrentValue,
                 searchPlaceholder: `Search ${labelText}...`,
                 noneLabel: '(none)',
@@ -15072,11 +15432,11 @@ function renderReferenceTab(tab, tabKey) {
                 : field.value;
               const picker = createReferencePicker({
                 options: refOptions,
-                targetTabKey: (BIQ_FIELD_REFS[tabKey] || {})[String(field.baseKey || field.key || '').toLowerCase()] || '',
+                targetTabKey: (BIQ_FIELD_REFS[tabKey] || {})[normalizeRuleLookupKey(field && (field.baseKey || field.key))] || '',
                 currentValue: normalizedCurrentValue,
                 searchPlaceholder: `Search ${labelText}...`,
                 noneLabel: '(none)',
-                showOptionThumbs: false,
+                showOptionThumbs: true,
                 readOnly: true
               });
               controlWrap.appendChild(picker);
@@ -15100,6 +15460,8 @@ function renderReferenceTab(tab, tabKey) {
         if (relCard) rulesGrid.appendChild(relCard);
       }
       if (tabKey === 'civilizations') {
+        const diplomacyCard = renderCivilizationDiplomacyCard(tab, entry, referenceEditable);
+        if (diplomacyCard) rulesGrid.appendChild(diplomacyCard);
         const diplomacySectionsCard = renderCivilizationDiplomacySectionsCard(tab, referenceEditable);
         if (diplomacySectionsCard) rulesGrid.appendChild(diplomacySectionsCard);
         const buildCard = renderCivilizationBuildPriorityCard(entry, referenceEditable);

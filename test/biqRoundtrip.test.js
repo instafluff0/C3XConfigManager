@@ -52,6 +52,15 @@ function findField(entry, key) {
   return entry.biqFields.find((f) => String(f.baseKey || f.key || '').trim().toLowerCase() === needle) || null;
 }
 
+function findPrimaryNameField(entry) {
+  return findField(entry, 'name') || findField(entry, 'leadername') || findField(entry, 'civilizationname');
+}
+
+function findMatrixEditableField(tab, entry) {
+  if (tab === 'civilizations') return findField(entry, 'adjective') || findField(entry, 'noun') || findField(entry, 'leadername');
+  return findPrimaryNameField(entry);
+}
+
 function biqSectionHasCivilopediaKey(bundle, sectionCode, wantedKey) {
   const biq = bundle && bundle.biq;
   const sections = biq && Array.isArray(biq.sections) ? biq.sections : [];
@@ -289,8 +298,12 @@ test('BIQ matrix set test persists edits across core reference sections', (t) =>
   fs.chmodSync(scenarioBiq, 0o644);
 
   const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const firstCivilizationEntry = Array.isArray(bundle.tabs.civilizations && bundle.tabs.civilizations.entries)
+    ? bundle.tabs.civilizations.entries[0]
+    : null;
+  assert.ok(firstCivilizationEntry && firstCivilizationEntry.civilopediaKey, 'expected at least one civilization entry in scenario bundle');
   const matrix = [
-    { tab: 'civilizations', key: 'RACE_AMERICA' },
+    { tab: 'civilizations', key: firstCivilizationEntry.civilopediaKey },
     { tab: 'technologies', key: 'TECH_POTTERY' },
     { tab: 'resources', key: 'GOOD_ALUMINUM' },
     { tab: 'improvements', key: 'BLDG_BARRACKS' },
@@ -304,7 +317,7 @@ test('BIQ matrix set test persists edits across core reference sections', (t) =>
     const entry = getEntryByCivKey(tabData && tabData.entries, key)
       || (tabData && Array.isArray(tabData.entries) ? tabData.entries.find((e) => findField(e, 'name')) : null);
     assert.ok(entry, `expected entry for ${tab}:${key}`);
-    const nameField = findField(entry, 'name');
+    const nameField = findMatrixEditableField(tab, entry);
     assert.ok(nameField, `expected name field for ${tab}:${entry.civilopediaKey}`);
     const original = String(nameField.value || '').trim();
     const next = `${original} X`;
@@ -325,7 +338,7 @@ test('BIQ matrix set test persists edits across core reference sections', (t) =>
   edits.forEach(({ tab, civKey, expectedName }) => {
     const entry = getEntryByCivKey(reloaded.tabs[tab] && reloaded.tabs[tab].entries, civKey);
     assert.ok(entry, `expected reloaded entry for ${tab}:${civKey}`);
-    const nameField = findField(entry, 'name');
+    const nameField = findMatrixEditableField(tab, entry);
     assert.ok(nameField, `expected reloaded name field for ${tab}:${civKey}`);
     assert.equal(String(nameField.value || '').trim(), expectedName, `expected persisted name for ${tab}:${civKey}`);
   });

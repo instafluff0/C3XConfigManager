@@ -1,14 +1,20 @@
 # EXPR Tab
 
 ## Source
-- ../Quint_Editor/Shared/Civ3_Editor/src/main/java/com/civfanatics/civ3/xplatformeditor/EXPRTab.java
+- `../Quint_Editor/Shared/Civ3_Editor/src/main/java/com/civfanatics/civ3/xplatformeditor/EXPRTab.java`
 
 ## Backing BIQ Sections
-- EXPR
+- `EXPR`
 
 ## Data Dependencies
-- none beyond own section
+- EXPR records only
+
+## Quint Layout Contract
+Quint presents EXPR as a very small flat form.
+
+### Fields
+- `Base hit points`: numeric field
+- `Retreat chance`: numeric field
 
 ## Notes
-- Mapping taken from EditorTabbedPane setup/sendData wiring in Quint_Editor.
-- Use this as the first-stop reference when aligning C3XConfigManager UI with Quint_Editor data expectations.
+- There are no titled subpanels in Quint’s EXPR tab.

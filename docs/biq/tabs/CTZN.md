@@ -1,14 +1,31 @@
 # CTZN Tab
 
 ## Source
-- ../Quint_Editor/Shared/Civ3_Editor/src/main/java/com/civfanatics/civ3/xplatformeditor/CTZNTab.java
+- `../Quint_Editor/Shared/Civ3_Editor/src/main/java/com/civfanatics/civ3/xplatformeditor/CTZNTab.java`
 
 ## Backing BIQ Sections
-- CTZN
+- `CTZN`
 
 ## Data Dependencies
-- TECH
+- `TECH`
+
+## Quint Layout Contract
+Quint uses a citizen list on the left and a compact form on the right.
+
+### Top-Level Fields
+- `Plural Name`: text field
+- `Civilopedia Entry`: text field
+- `Default Citizen`: checkbox
+- `Prerequisite`: technology dropdown
+
+### Panel
+- `Bonuses`
+  - Numeric/text fields for:
+    - `Entertainment`
+    - `Science`
+    - `Taxes`
+    - `Corruption`
+    - `Construction`
 
 ## Notes
-- Mapping taken from EditorTabbedPane setup/sendData wiring in Quint_Editor.
-- Use this as the first-stop reference when aligning C3XConfigManager UI with Quint_Editor data expectations.
+- The CTZN tab is one of the simplest tabs in Quint: a few identity fields plus one titled numeric-bonus panel.

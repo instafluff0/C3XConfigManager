@@ -1,14 +1,24 @@
 # ERA Tab
 
 ## Source
-- ../Quint_Editor/Shared/Civ3_Editor/src/main/java/com/civfanatics/civ3/xplatformeditor/EraTab.java
+- `../Quint_Editor/Shared/Civ3_Editor/src/main/java/com/civfanatics/civ3/xplatformeditor/EraTab.java`
 
 ## Backing BIQ Sections
-- ERAS
+- `ERAS`
 
 ## Data Dependencies
-- none beyond own section
+- ERAS records only
+
+## Quint Layout Contract
+Quint uses an era list on the left and a small editor on the right.
+
+### Top-Level Fields
+- `Civilopedia Entry`: text field
+- `Unknown Variable`: text field / numeric field
+
+### Panel
+- `Researcher Names`
+  - Four researcher-name text fields
 
 ## Notes
-- Mapping taken from EditorTabbedPane setup/sendData wiring in Quint_Editor.
-- Use this as the first-stop reference when aligning C3XConfigManager UI with Quint_Editor data expectations.
+- ERA is another compact tab: identity plus one grouped name panel.

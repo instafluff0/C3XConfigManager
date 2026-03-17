@@ -1,14 +1,26 @@
 # TFRM Tab
 
 ## Source
-- ../Quint_Editor/Shared/Civ3_Editor/src/main/java/com/civfanatics/civ3/xplatformeditor/TRFMTab.java
+- `../Quint_Editor/Shared/Civ3_Editor/src/main/java/com/civfanatics/civ3/xplatformeditor/TRFMTab.java`
 
 ## Backing BIQ Sections
-- TRFM (enum appears as TFRM)
+- `TFRM`
 
 ## Data Dependencies
-- TECH, GOOD
+- `TECH`, `GOOD`
+
+## Quint Layout Contract
+Quint uses a worker-job list on the left and a compact form on the right.
+
+### Top-Level Fields
+- `Civilopedia Entry`: text field
+- `Order`: text field
+- `Turns to Complete`: numeric field
+- `Prerequisite`: technology dropdown
+
+### Panel
+- `Required Resources`
+  - Two resource dropdown slots
 
 ## Notes
-- Mapping taken from EditorTabbedPane setup/sendData wiring in Quint_Editor.
-- Use this as the first-stop reference when aligning C3XConfigManager UI with Quint_Editor data expectations.
+- Quint treats required resources as a grouped subpanel, even though the rest of the tab is flat.

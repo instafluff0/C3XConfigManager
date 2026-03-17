@@ -5,6 +5,9 @@ const crypto = require('node:crypto');
 const { resolveUnitIniPath } = require('./artPreview');
 const { decompress: biqDecompress } = require('./biq/decompress');
 const { parseBiqBuffer: jsParseBiqBuffer, applyBiqEdits: jsApplyBiqEdits } = require('./biq/biqBridgeJs');
+const { projectImprovementBiqFields, collapseImprovementBiqFields } = require('./biq/bldgCodec');
+const { projectCivilizationBiqFields, collapseCivilizationBiqFields } = require('./biq/civCodec');
+const { projectTechnologyBiqFields, collapseTechnologyBiqFields } = require('./biq/techCodec');
 
 const FILE_SPECS = {
   base: {
@@ -2652,35 +2655,16 @@ function collectCivilopediaKeysBySection(biqTab, sectionCode, prefix) {
   return out;
 }
 
-function collectPlayableRaceKeys(biqTab) {
+function collectNonBarbarianRaceKeys(biqTab) {
   const raceKeys = collectCivilopediaKeysBySection(biqTab, 'RACE', 'RACE_');
   if (raceKeys.size === 0) return raceKeys;
-  if (!biqTab || !Array.isArray(biqTab.sections)) return raceKeys;
-  const gameSection = biqTab.sections.find((s) => s.code === 'GAME');
-  const raceSection = biqTab.sections.find((s) => s.code === 'RACE');
-  if (!gameSection || !raceSection || !Array.isArray(gameSection.records) || gameSection.records.length === 0 || !Array.isArray(raceSection.records)) {
-    return raceKeys;
-  }
-  const gameFields = gameSection.records[0].fields || [];
-  const playableIds = gameFields
-    .filter((f) => String(f.key || '').toLowerCase().startsWith('playable_civ'))
-    .map((f) => parseReferenceIdFromFieldValue(f.value))
-    .filter((n) => Number.isInteger(n) && n >= 0);
-  if (playableIds.length === 0) return raceKeys;
-  const playable = new Set();
-  playableIds.forEach((idx) => {
-    const record = raceSection.records[idx];
-    const key = String(getFieldValueByBaseKey(record, 'civilopediaentry') || '').toUpperCase();
-    if (key && key.startsWith('RACE_')) {
-      playable.add(key);
-    }
-  });
-  return playable.size > 0 ? playable : raceKeys;
+  const filtered = new Set(Array.from(raceKeys).filter((key) => key !== 'RACE_BARBARIANS'));
+  return filtered.size > 0 ? filtered : raceKeys;
 }
 
 function collectScenarioReferenceKeySets(biqTab) {
   return {
-    civilizations: collectPlayableRaceKeys(biqTab),
+    civilizations: collectNonBarbarianRaceKeys(biqTab),
     technologies: collectCivilopediaKeysBySection(biqTab, 'TECH', 'TECH_'),
     resources: collectCivilopediaKeysBySection(biqTab, 'GOOD', 'GOOD_'),
     improvements: collectCivilopediaKeysBySection(biqTab, 'BLDG', 'BLDG_'),
@@ -2912,6 +2896,8 @@ function buildReferenceTabs(civ3Path, options = {}) {
     : '';
   const civilopediaSections = mergeByPrecedence(civilopediaSectionsByLayer, layerOrder);
   const pediaBlocks = mergeByPrecedence(pediaBlocksByLayer, layerOrder);
+  const flavorSection = (((options || {}).biqTab || {}).sections || []).find((section) => String(section && section.code || '').toUpperCase() === 'FLAV');
+  const flavorCount = Array.isArray(flavorSection && flavorSection.records) ? flavorSection.records.length : 0;
 
   const tabs = {};
   for (const tabSpec of REFERENCE_TAB_SPECS) {
@@ -2978,7 +2964,7 @@ function buildReferenceTabs(civ3Path, options = {}) {
           || (eraAnimFallbackKey ? findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, eraAnimFallbackKey, layerOrder) : '')
           || iconBlockSourcePath;
         const biqRecord = biqRecordByCivilopediaKey.get(entry.civilopediaKey);
-        const biqFields = (biqRecord && Array.isArray(biqRecord.fields))
+        const rawBiqFields = (biqRecord && Array.isArray(biqRecord.fields))
           ? biqRecord.fields.filter((f) => String(f.key || '').toLowerCase() !== 'civilopediaentry').map((f) => ({
             key: f.key,
             baseKey: f.baseKey || String(f.key || '').replace(/_\d+$/, ''),
@@ -2989,8 +2975,31 @@ function buildReferenceTabs(civ3Path, options = {}) {
             expectedSetter: String(f.expectedSetter || '')
           }))
           : [];
-        const biqNameField = biqFields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === 'name');
-        const biqDisplayName = String((biqNameField && biqNameField.value) || '').trim();
+        const biqFields = tabSpec.key === 'improvements'
+          ? projectImprovementBiqFields({
+            rawFields: rawBiqFields,
+            civilopediaEntry: entry.civilopediaKey,
+            flavorCount
+          })
+          : (tabSpec.key === 'civilizations'
+            ? projectCivilizationBiqFields({
+              rawFields: rawBiqFields,
+              civilopediaEntry: entry.civilopediaKey,
+              flavorCount
+            })
+          : (tabSpec.key === 'technologies'
+            ? projectTechnologyBiqFields({
+              rawFields: rawBiqFields,
+              civilopediaEntry: entry.civilopediaKey,
+              flavorCount
+            })
+            : rawBiqFields));
+        const preferredNameBaseKey = tabSpec.key === 'civilizations' ? 'civilizationname' : 'name';
+        const biqNameField = biqFields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === preferredNameBaseKey);
+        const fallbackBiqNameField = preferredNameBaseKey === 'name'
+          ? null
+          : biqFields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === 'name');
+        const biqDisplayName = String(((biqNameField || fallbackBiqNameField) && (biqNameField || fallbackBiqNameField).value) || '').trim();
         const pediaHeadingName = String((overviewLines && overviewLines[0]) || '').trim();
         let displayName = inferredDisplayName;
         if (tabSpec.key === 'improvements') {
@@ -3021,6 +3030,9 @@ function buildReferenceTabs(civ3Path, options = {}) {
           biqSectionCode,
           biqSectionTitle: biqSectionCode,
           biqFields,
+          improvementFlavorCount: tabSpec.key === 'improvements' ? flavorCount : 0,
+          civilizationFlavorCount: tabSpec.key === 'civilizations' ? flavorCount : 0,
+          technologyFlavorCount: tabSpec.key === 'technologies' ? flavorCount : 0,
           sourceMeta: {
             overview: { source: 'Civilopedia', readPath: overviewSourcePath, writePath: scenarioCivilopediaWritePath },
             description: { source: 'Civilopedia', readPath: descSourcePath, writePath: scenarioCivilopediaWritePath },
@@ -4744,6 +4756,63 @@ function collectBiqReferenceEdits(tabs) {
     tab.entries.forEach((entry) => {
       const civKey = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
       if (!civKey || !Array.isArray(entry.biqFields)) return;
+      if (spec.key === 'improvements') {
+        const flavorCount = Number.isFinite(Number(entry && entry.improvementFlavorCount))
+          ? Number(entry.improvementFlavorCount)
+          : 0;
+        const currentRaw = collapseImprovementBiqFields(entry.biqFields, flavorCount, 'value');
+        const originalRaw = collapseImprovementBiqFields(entry.biqFields, flavorCount, 'originalValue');
+        Object.keys(currentRaw).forEach((rawKey) => {
+          const value = cleanDisplayText(currentRaw[rawKey]);
+          const originalValue = cleanDisplayText(originalRaw[rawKey]);
+          if (value === originalValue) return;
+          edits.push({
+            sectionCode,
+            recordRef: civKey,
+            fieldKey: rawKey,
+            value
+          });
+        });
+        return;
+      }
+      if (spec.key === 'technologies') {
+        const flavorCount = Number.isFinite(Number(entry && entry.technologyFlavorCount))
+          ? Number(entry.technologyFlavorCount)
+          : 0;
+        const currentRaw = collapseTechnologyBiqFields(entry.biqFields, flavorCount, 'value');
+        const originalRaw = collapseTechnologyBiqFields(entry.biqFields, flavorCount, 'originalValue');
+        Object.keys(currentRaw).forEach((rawKey) => {
+          const value = cleanDisplayText(currentRaw[rawKey]);
+          const originalValue = cleanDisplayText(originalRaw[rawKey]);
+          if (value === originalValue) return;
+          edits.push({
+            sectionCode,
+            recordRef: civKey,
+            fieldKey: rawKey,
+            value
+          });
+        });
+        return;
+      }
+      if (spec.key === 'civilizations') {
+        const flavorCount = Number.isFinite(Number(entry && entry.civilizationFlavorCount))
+          ? Number(entry.civilizationFlavorCount)
+          : 0;
+        const currentRaw = collapseCivilizationBiqFields(entry.biqFields, flavorCount, 'value');
+        const originalRaw = collapseCivilizationBiqFields(entry.biqFields, flavorCount, 'originalValue');
+        Object.keys(currentRaw).forEach((rawKey) => {
+          const value = cleanDisplayText(currentRaw[rawKey]);
+          const originalValue = cleanDisplayText(originalRaw[rawKey]);
+          if (value === originalValue) return;
+          edits.push({
+            sectionCode,
+            recordRef: civKey,
+            fieldKey: rawKey,
+            value
+          });
+        });
+        return;
+      }
       entry.biqFields.forEach((field) => {
         if (!field) return;
         const key = String((field && (field.baseKey || field.key)) || '').trim();
