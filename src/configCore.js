@@ -7,7 +7,9 @@ const { decompress: biqDecompress } = require('./biq/decompress');
 const { parseBiqBuffer: jsParseBiqBuffer, applyBiqEdits: jsApplyBiqEdits } = require('./biq/biqBridgeJs');
 const { projectImprovementBiqFields, collapseImprovementBiqFields } = require('./biq/bldgCodec');
 const { projectCivilizationBiqFields, collapseCivilizationBiqFields } = require('./biq/civCodec');
+const { projectGovernmentBiqFields, collapseGovernmentBiqFields } = require('./biq/govtCodec');
 const { projectTechnologyBiqFields, collapseTechnologyBiqFields } = require('./biq/techCodec');
+const { projectUnitBiqFields, collapseUnitBiqFields } = require('./biq/unitCodec');
 
 const FILE_SPECS = {
   base: {
@@ -2898,6 +2900,10 @@ function buildReferenceTabs(civ3Path, options = {}) {
   const pediaBlocks = mergeByPrecedence(pediaBlocksByLayer, layerOrder);
   const flavorSection = (((options || {}).biqTab || {}).sections || []).find((section) => String(section && section.code || '').toUpperCase() === 'FLAV');
   const flavorCount = Array.isArray(flavorSection && flavorSection.records) ? flavorSection.records.length : 0;
+  const governmentSection = (((options || {}).biqTab || {}).sections || []).find((section) => String(section && section.code || '').toUpperCase() === 'GOVT');
+  const governmentNames = Array.isArray(governmentSection && governmentSection.records)
+    ? governmentSection.records.map((record, idx) => cleanDisplayText(record && record.name || `Government ${idx + 1}`))
+    : [];
 
   const tabs = {};
   for (const tabSpec of REFERENCE_TAB_SPECS) {
@@ -2975,25 +2981,37 @@ function buildReferenceTabs(civ3Path, options = {}) {
             expectedSetter: String(f.expectedSetter || '')
           }))
           : [];
-        const biqFields = tabSpec.key === 'improvements'
-          ? projectImprovementBiqFields({
+        let biqFields = rawBiqFields;
+        if (tabSpec.key === 'improvements') {
+          biqFields = projectImprovementBiqFields({
             rawFields: rawBiqFields,
             civilopediaEntry: entry.civilopediaKey,
             flavorCount
-          })
-          : (tabSpec.key === 'civilizations'
-            ? projectCivilizationBiqFields({
-              rawFields: rawBiqFields,
-              civilopediaEntry: entry.civilopediaKey,
-              flavorCount
-            })
-          : (tabSpec.key === 'technologies'
-            ? projectTechnologyBiqFields({
-              rawFields: rawBiqFields,
-              civilopediaEntry: entry.civilopediaKey,
-              flavorCount
-            })
-            : rawBiqFields));
+          });
+        } else if (tabSpec.key === 'civilizations') {
+          biqFields = projectCivilizationBiqFields({
+            rawFields: rawBiqFields,
+            civilopediaEntry: entry.civilopediaKey,
+            flavorCount
+          });
+        } else if (tabSpec.key === 'governments') {
+          biqFields = projectGovernmentBiqFields({
+            rawFields: rawBiqFields,
+            civilopediaEntry: entry.civilopediaKey,
+            governmentNames
+          });
+        } else if (tabSpec.key === 'technologies') {
+          biqFields = projectTechnologyBiqFields({
+            rawFields: rawBiqFields,
+            civilopediaEntry: entry.civilopediaKey,
+            flavorCount
+          });
+        } else if (tabSpec.key === 'units') {
+          biqFields = projectUnitBiqFields({
+            rawFields: rawBiqFields,
+            civilopediaEntry: entry.civilopediaKey
+          });
+        }
         const preferredNameBaseKey = tabSpec.key === 'civilizations' ? 'civilizationname' : 'name';
         const biqNameField = biqFields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === preferredNameBaseKey);
         const fallbackBiqNameField = preferredNameBaseKey === 'name'
@@ -4794,6 +4812,22 @@ function collectBiqReferenceEdits(tabs) {
         });
         return;
       }
+      if (spec.key === 'governments') {
+        const currentRaw = collapseGovernmentBiqFields(entry.biqFields, 'value');
+        const originalRaw = collapseGovernmentBiqFields(entry.biqFields, 'originalValue');
+        Object.keys(currentRaw).forEach((rawKey) => {
+          const value = cleanDisplayText(currentRaw[rawKey]);
+          const originalValue = cleanDisplayText(originalRaw[rawKey]);
+          if (value === originalValue) return;
+          edits.push({
+            sectionCode,
+            recordRef: civKey,
+            fieldKey: rawKey,
+            value
+          });
+        });
+        return;
+      }
       if (spec.key === 'civilizations') {
         const flavorCount = Number.isFinite(Number(entry && entry.civilizationFlavorCount))
           ? Number(entry.civilizationFlavorCount)
@@ -4809,6 +4843,24 @@ function collectBiqReferenceEdits(tabs) {
             recordRef: civKey,
             fieldKey: rawKey,
             value
+          });
+        });
+        return;
+      }
+      if (spec.key === 'units') {
+        const currentRaw = collapseUnitBiqFields(entry.biqFields, 'value');
+        const originalRaw = collapseUnitBiqFields(entry.biqFields, 'originalValue');
+        Object.keys(currentRaw).forEach((rawKey) => {
+          const value = currentRaw[rawKey];
+          const originalValue = originalRaw[rawKey];
+          const valueText = Array.isArray(value) ? value.join(',') : cleanDisplayText(value);
+          const originalText = Array.isArray(originalValue) ? originalValue.join(',') : cleanDisplayText(originalValue);
+          if (valueText === originalText) return;
+          edits.push({
+            sectionCode,
+            recordRef: civKey,
+            fieldKey: rawKey,
+            value: valueText
           });
         });
         return;

@@ -519,40 +519,176 @@ function toEnglishRACE(rec, io) {
 const WRITABLE_RACE = ['name', 'leader_title', 'adjective', 'civilization_name', 'noun', 'culture_group', 'leader_gender', 'civilization_gender', 'aggression_level', 'favorite_government', 'shunned_government', 'default_color', 'unique_color', 'unique_civ_counter', 'governor_settings', 'bonuses', 'build_never', 'build_often', 'plurality', 'free_tech1', 'free_tech2', 'free_tech3', 'free_tech4', 'king_unit'];
 
 // ---------------------------------------------------------------------------
-// PRTO (Unit Types) - partial: parse enough for name/civKey + basic fields
-// For complex Conquests arrays, store tail as raw bytes
+// PRTO (Unit Types)
 // ---------------------------------------------------------------------------
+
+const PRTO_PRIMARY_SCALAR_FIELDS = [
+  'bombardStrength', 'bombardRange', 'capacity', 'shieldCost', 'defence', 'iconIndex', 'attack',
+  'operationalRange', 'populationCost', 'rateOfFire', 'movement', 'requiredTech', 'upgradeTo',
+  'requiredResource1', 'requiredResource2', 'requiredResource3'
+];
+
+const PRTO_MID_SCALAR_FIELDS = [
+  'unitAbilities', 'AIStrategy', 'availableTo', 'standardOrdersSpecialActions', 'airMissions',
+  'unitClass', 'otherStrategy', 'hitPointBonus', 'PTWStandardOrders', 'PTWSpecialActions',
+  'PTWWorkerActions', 'PTWAirMissions', 'PTWActionsMix'
+];
+
+function readIntSafe(buf, offset, fallback = 0) {
+  if (offset + 4 > buf.length) return fallback;
+  return buf.readInt32LE(offset);
+}
+
+function readFloatSafe(buf, offset, fallback = 0) {
+  if (offset + 4 > buf.length) return fallback;
+  return buf.readFloatLE(offset);
+}
+
+function readByteSafe(buf, offset, fallback = 0) {
+  if (offset >= buf.length) return fallback;
+  return buf[offset];
+}
+
+function writeIntArray(writer, values, count, fallback = -1) {
+  const list = Array.isArray(values) ? values : [];
+  for (let i = 0; i < count; i += 1) {
+    const value = list[i];
+    writer.writeInt(Number.isFinite(value) ? value : fallback);
+  }
+}
+
+function cloneIntList(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => Number.parseInt(String(value), 10))
+    .filter((value) => Number.isFinite(value));
+}
 
 function parsePRTO(data, io) {
   let off = 0;
-  if (off + 4 > data.length) return { name: '', civilopediaEntry: '', _rawData: data };
-  const zoc = data.readInt32LE(off); off += 4;
-  const name = readStr(data, off, 32); off += 32;
-  const civilopediaEntry = readStr(data, off, 32); off += 32;
-  // Read 14 main scalars
-  const scalarNames = ['attack', 'defence', 'movement', 'bombardRange', 'bombard', 'navalBombard',
-    'range', 'transportCapacity', 'cost', 'nationalityMod', 'healthMod', 'visibilityRange',
-    'AIBombardRange', 'upgradesTo'];
-  const scalars = {};
-  for (const sn of scalarNames) {
-    if (off + 4 > data.length) { scalars[sn] = 0; continue; }
-    scalars[sn] = data.readInt32LE(off); off += 4;
+  if (data.length < 68) return { name: '', civilopediaEntry: '', _rawData: data };
+
+  const rec = {
+    zoneOfControl: readIntSafe(data, off, 0)
+  };
+  off += 4;
+  rec.name = readStr(data, off, 32); off += 32;
+  rec.civilopediaEntry = readStr(data, off, 32); off += 32;
+
+  PRTO_PRIMARY_SCALAR_FIELDS.forEach((key) => {
+    rec[key] = readIntSafe(data, off, key === 'upgradeTo' || key === 'requiredTech' || key.startsWith('requiredResource') ? -1 : 0);
+    off += 4;
+  });
+
+  PRTO_MID_SCALAR_FIELDS.forEach((key) => {
+    rec[key] = readIntSafe(data, off, 0);
+    off += 4;
+  });
+
+  const terrainCount = io && io.isConquests ? 14 : 12;
+  rec.PTWActionsMix = (rec.PTWActionsMix | 0) - 65536;
+  rec.bombardEffects = readIntSafe(data, off, 0); off += 4;
+  rec.ignoreMovementCost = [];
+  for (let i = 0; i < terrainCount; i += 1) {
+    rec.ignoreMovementCost.push(readByteSafe(data, off, 0));
+    off += 1;
   }
-  // The rest is complex variable-length data; store raw for faithful re-serialization
-  const _tail = off < data.length ? Buffer.from(data.subarray(off)) : Buffer.alloc(0);
-  return { zoc, name, civilopediaEntry, ...scalars, _tail };
+  rec.requiresSupport = readIntSafe(data, off, 0); off += 4;
+
+  if (io && io.isConquests) {
+    rec.useExactCost = readIntSafe(data, off, 7); off += 4;
+    rec.telepadRange = readIntSafe(data, off, 0); off += 4;
+    rec.questionMark3 = readIntSafe(data, off, 1); off += 4;
+
+    const numLegalUnitTelepads = Math.max(0, readIntSafe(data, off, 0)); off += 4;
+    rec.legalUnitTelepads = [];
+    for (let i = 0; i < numLegalUnitTelepads; i += 1) {
+      rec.legalUnitTelepads.push(readIntSafe(data, off, -1));
+      off += 4;
+    }
+
+    rec.enslaveResultsIn = readIntSafe(data, off, -1); off += 4;
+    rec.questionMark5 = readIntSafe(data, off, 1); off += 4;
+
+    const numStealthTargets = Math.max(0, readIntSafe(data, off, 0)); off += 4;
+    rec.stealthTargets = [];
+    for (let i = 0; i < numStealthTargets; i += 1) {
+      rec.stealthTargets.push(readIntSafe(data, off, -1));
+      off += 4;
+    }
+
+    rec.questionMark6 = readIntSafe(data, off, 1); off += 4;
+
+    const numLegalBuildingTelepads = Math.max(0, readIntSafe(data, off, 0)); off += 4;
+    rec.legalBuildingTelepads = [];
+    for (let i = 0; i < numLegalBuildingTelepads; i += 1) {
+      rec.legalBuildingTelepads.push(readIntSafe(data, off, -1));
+      off += 4;
+    }
+
+    rec.createsCraters = readByteSafe(data, off, 0); off += 1;
+    rec.workerStrengthFloat = readFloatSafe(data, off, 0); off += 4;
+    rec.questionMark8 = readIntSafe(data, off, 0); off += 4;
+    rec.airDefence = readIntSafe(data, off, 0); off += 4;
+  } else {
+    rec.useExactCost = 7;
+    rec.telepadRange = 0;
+    rec.questionMark3 = 1;
+    rec.legalUnitTelepads = [];
+    rec.enslaveResultsIn = -1;
+    rec.questionMark5 = 1;
+    rec.stealthTargets = [];
+    rec.questionMark6 = 1;
+    rec.legalBuildingTelepads = [];
+    rec.createsCraters = 0;
+    rec.workerStrengthFloat = 0;
+    rec.questionMark8 = 0;
+    rec.airDefence = 0;
+  }
+
+  rec._tail = off < data.length ? Buffer.from(data.subarray(off)) : Buffer.alloc(0);
+  return rec;
 }
 
 function serializePRTO(rec, io) {
   if (rec._rawData) return Buffer.from(rec._rawData);
   const w = new BiqWriter();
-  w.writeInt(rec.zoc | 0);
+  w.writeInt(rec.zoneOfControl | 0);
   writeStr(w, rec.name, 32);
   writeStr(w, rec.civilopediaEntry, 32);
-  const scalarNames = ['attack', 'defence', 'movement', 'bombardRange', 'bombard', 'navalBombard',
-    'range', 'transportCapacity', 'cost', 'nationalityMod', 'healthMod', 'visibilityRange',
-    'AIBombardRange', 'upgradesTo'];
-  for (const sn of scalarNames) w.writeInt((rec[sn] != null ? rec[sn] : 0) | 0);
+  PRTO_PRIMARY_SCALAR_FIELDS.forEach((key) => w.writeInt((rec[key] != null ? rec[key] : 0) | 0));
+  PRTO_MID_SCALAR_FIELDS.forEach((key) => w.writeInt((rec[key] != null ? rec[key] : 0) | 0));
+  w.writeInt(((rec.PTWActionsMix | 0) + 65536) | 0);
+  w.writeInt(rec.bombardEffects | 0);
+
+  const terrainCount = io && io.isConquests ? 14 : 12;
+  const ignoreMovementCost = Array.isArray(rec.ignoreMovementCost) ? rec.ignoreMovementCost : [];
+  for (let i = 0; i < terrainCount; i += 1) {
+    w.writeByte(Number(ignoreMovementCost[i] || 0) & 0xff);
+  }
+  w.writeInt(rec.requiresSupport | 0);
+
+  if (io && io.isConquests) {
+    w.writeInt(rec.useExactCost == null ? 7 : (rec.useExactCost | 0));
+    w.writeInt(rec.telepadRange | 0);
+    w.writeInt(rec.questionMark3 == null ? 1 : (rec.questionMark3 | 0));
+    const legalUnitTelepads = cloneIntList(rec.legalUnitTelepads);
+    w.writeInt(legalUnitTelepads.length);
+    writeIntArray(w, legalUnitTelepads, legalUnitTelepads.length, -1);
+    w.writeInt(rec.enslaveResultsIn == null ? -1 : (rec.enslaveResultsIn | 0));
+    w.writeInt(rec.questionMark5 == null ? 1 : (rec.questionMark5 | 0));
+    const stealthTargets = cloneIntList(rec.stealthTargets);
+    w.writeInt(stealthTargets.length);
+    writeIntArray(w, stealthTargets, stealthTargets.length, -1);
+    w.writeInt(rec.questionMark6 == null ? 1 : (rec.questionMark6 | 0));
+    const legalBuildingTelepads = cloneIntList(rec.legalBuildingTelepads);
+    w.writeInt(legalBuildingTelepads.length);
+    writeIntArray(w, legalBuildingTelepads, legalBuildingTelepads.length, -1);
+    w.writeByte(Number(rec.createsCraters || 0) & 0xff);
+    w.writeFloat(Number.isFinite(rec.workerStrengthFloat) ? rec.workerStrengthFloat : 0);
+    w.writeInt(rec.questionMark8 | 0);
+    w.writeInt(rec.airDefence | 0);
+  }
+
   if (rec._tail && rec._tail.length > 0) w.writeBytes(rec._tail);
   return w.toBuffer();
 }
@@ -560,33 +696,67 @@ function serializePRTO(rec, io) {
 function toEnglishPRTO(rec, io) {
   if (rec._rawData) {
     const data = rec._rawData;
-    let off = 4; // skip zoc
-    const name = readStr(data, off, 32); off += 32;
-    const civKey = readStr(data, off, 32);
+    const name = readStr(data, 4, 32);
+    const civKey = readStr(data, 36, 32);
     return lines([['name', name], ['civilopediaEntry', civKey]]);
   }
-  return lines([
+  const pairs = [
     ['name', rec.name || ''],
     ['civilopediaEntry', rec.civilopediaEntry || ''],
-    ['zoc', String(rec.zoc | 0)],
-    ['attack', String(rec.attack | 0)],
-    ['defence', String(rec.defence | 0)],
-    ['movement', String(rec.movement | 0)],
-    ['bombardRange', String(rec.bombardRange | 0)],
-    ['bombard', String(rec.bombard | 0)],
-    ['navalBombard', String(rec.navalBombard | 0)],
-    ['range', String(rec.range | 0)],
-    ['transportCapacity', String(rec.transportCapacity | 0)],
-    ['cost', String(rec.cost | 0)],
-    ['nationalityMod', String(rec.nationalityMod | 0)],
-    ['healthMod', String(rec.healthMod | 0)],
-    ['visibilityRange', String(rec.visibilityRange | 0)],
-    ['AIBombardRange', String(rec.AIBombardRange | 0)],
-    ['upgradesTo', String(rec.upgradesTo | 0)],
-  ]);
+    ['zoneOfControl', String(rec.zoneOfControl | 0)]
+  ];
+  PRTO_PRIMARY_SCALAR_FIELDS.forEach((key) => {
+    pairs.push([key, String(rec[key] != null ? rec[key] : 0)]);
+  });
+  PRTO_MID_SCALAR_FIELDS.forEach((key) => {
+    pairs.push([key, String(rec[key] != null ? rec[key] : 0)]);
+  });
+  pairs.push(['bombardEffects', String(rec.bombardEffects | 0)]);
+  (Array.isArray(rec.ignoreMovementCost) ? rec.ignoreMovementCost : []).forEach((value) => {
+    pairs.push(['ignoreMovementCost', String(value | 0)]);
+  });
+  pairs.push(['requiresSupport', String(rec.requiresSupport | 0)]);
+  if (io && io.isConquests) {
+    pairs.push(['useExactCost', String(rec.useExactCost == null ? 7 : (rec.useExactCost | 0))]);
+    pairs.push(['telepadRange', String(rec.telepadRange | 0)]);
+    pairs.push(['questionMark3', String(rec.questionMark3 == null ? 1 : (rec.questionMark3 | 0))]);
+    const legalUnitTelepads = cloneIntList(rec.legalUnitTelepads);
+    pairs.push(['numLegalUnitTelepads', String(legalUnitTelepads.length)]);
+    legalUnitTelepads.forEach((value) => pairs.push(['legalUnitTelepad', String(value)]));
+    pairs.push(['enslaveResultsIn', String(rec.enslaveResultsIn == null ? -1 : (rec.enslaveResultsIn | 0))]);
+    pairs.push(['questionMark5', String(rec.questionMark5 == null ? 1 : (rec.questionMark5 | 0))]);
+    const stealthTargets = cloneIntList(rec.stealthTargets);
+    pairs.push(['numStealthTargets', String(stealthTargets.length)]);
+    stealthTargets.forEach((value) => pairs.push(['stealthTarget', String(value)]));
+    pairs.push(['questionMark6', String(rec.questionMark6 == null ? 1 : (rec.questionMark6 | 0))]);
+    const legalBuildingTelepads = cloneIntList(rec.legalBuildingTelepads);
+    pairs.push(['numLegalBuildingTelepads', String(legalBuildingTelepads.length)]);
+    legalBuildingTelepads.forEach((value) => pairs.push(['legalBuildingTelepad', String(value)]));
+    pairs.push(['createsCraters', String(Number(rec.createsCraters || 0))]);
+    pairs.push(['workerStrengthFloat', String(Number.isFinite(rec.workerStrengthFloat) ? rec.workerStrengthFloat : 0)]);
+    pairs.push(['questionMark8', String(rec.questionMark8 | 0)]);
+    pairs.push(['airDefence', String(rec.airDefence | 0)]);
+  }
+  return lines(pairs);
 }
 
-const WRITABLE_PRTO = ['name', 'attack', 'defence', 'movement', 'bombard', 'naval_bombard', 'bombard_range', 'range', 'transport_capacity', 'cost', 'upgrades_to'];
+const WRITABLE_PRTO = [
+  'name', 'zone_of_control',
+  'bombard_strength', 'bombard_range', 'capacity', 'shield_cost', 'defence', 'icon_index', 'attack',
+  'operational_range', 'population_cost', 'rate_of_fire', 'movement', 'required_tech', 'upgrade_to',
+  'required_resource1', 'required_resource2', 'required_resource3',
+  'unit_abilities', 'ai_strategy', 'available_to', 'standard_orders_special_actions', 'air_missions',
+  'unit_class', 'other_strategy', 'hit_point_bonus', 'ptw_standard_orders', 'ptw_special_actions',
+  'ptw_worker_actions', 'ptw_air_missions', 'ptw_actions_mix',
+  'bombard_effects', 'ignore_movement_cost', 'requires_support',
+  'use_exact_cost', 'telepad_range', 'question_mark3',
+  'num_legal_unit_telepads', 'legal_unit_telepad',
+  'enslave_results_in', 'question_mark5',
+  'num_stealth_targets', 'stealth_target',
+  'question_mark6',
+  'num_legal_building_telepads', 'legal_building_telepad',
+  'creates_craters', 'worker_strength_float', 'question_mark8', 'air_defence'
+];
 
 // ---------------------------------------------------------------------------
 // CITY (scenario cities) - needed for ADD operations

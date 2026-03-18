@@ -7957,21 +7957,24 @@ const BIQ_FIELD_HIDDEN = {
 
 const QUINT_UNIT_RULE_VISIBLE_KEYS = new Set([
   'name',
+  'requiredtech',
   'requiredresource1', 'requiredresource2', 'requiredresource3',
   'upgradeto',
   'unitclass',
   'attack', 'defence', 'movement', 'bombardstrength', 'bombardrange', 'rateoffire', 'airdefence',
   'hitpointbonus', 'operationalrange', 'capacity', 'populationcost', 'shieldcost', 'workerstrengthfloat',
   'requiressupport', 'zoneofcontrol', 'bombardeffects', 'createscraters',
-  'offence', 'defencestrategy', 'explorestrategy', 'terraform', 'settle', 'king', 'artillery',
-  'cruisemissileunit', 'icbm', 'tacticalnuke', 'leaderunit', 'armyunit', 'flagunit',
+  'offence', 'defencestrategy', 'explorestrategy', 'terraform', 'settle', 'kingstrategy', 'artillery',
+  'cruisemissileunit', 'icbm', 'tacticalnuke', 'leaderunit', 'armyunit', 'flagstrategy',
   'navalpower', 'navaltransport', 'navalcarrier', 'navalmissiletransport',
   'airbombard', 'airdefencestrategy', 'airtransport',
   'buildcity', 'buildcolony', 'buildroad', 'buildrailroad', 'buildmine', 'irrigate', 'buildfort',
   'clearforest', 'clearjungle', 'plantforest', 'clearpollution', 'automate', 'joincity',
-  'ptwbuildairfield', 'ptwbuildradartower', 'ptwbuildoutpost',
-  'load', 'unload', 'airlift', 'airdrop', 'pillage', 'bombard', 'buildarmy', 'finishimprovement', 'upgrade', 'enslaveresultsin',
-  'skipturn', 'wait', 'goto', 'fortify', 'disband',
+  'ptwbuildairfield', 'ptwbuildradartower', 'ptwbuildoutpost', 'buildbarricade',
+  'load', 'unload', 'airlift', 'airdrop', 'pillage', 'bombard', 'buildarmy', 'finishimprovement', 'upgrade',
+  'capture', 'scienceage', 'enslave', 'sacrifice', 'teleportable', 'telepad', 'charm', 'stealthattack', 'collateraldamage',
+  'enslaveresultsin',
+  'skipturn', 'wait', 'goto', 'fortify', 'disband', 'exploreorder', 'sentry',
   'bomb', 'rebase', 'precisionbombing', 'recon', 'intercept',
   'allterrainasroads', 'amphibiousunit', 'army', 'blitz', 'cruisemissile', 'detectinvisible',
   'draftable', 'footsoldier', 'hiddennationality', 'immobile', 'infinitebombardrange', 'invisible',
@@ -9102,21 +9105,23 @@ const REFERENCE_RULE_SCHEMAS = {
   },
   units: {
     order: [
-      'name',
+      'name', 'requiredtech',
       'requiredresource1', 'requiredresource2', 'requiredresource3', 'upgradeto',
       'attack', 'defence', 'movement', 'bombardstrength', 'bombardrange', 'rateoffire', 'airdefence',
       'hitpointbonus', 'operationalrange', 'capacity', 'populationcost', 'shieldcost', 'workerstrengthfloat',
       'requiressupport', 'zoneofcontrol', 'bombardeffects', 'createscraters',
-      'offence', 'defencestrategy', 'explorestrategy', 'terraform', 'settle', 'king', 'artillery',
-      'cruisemissileunit', 'icbm', 'tacticalnuke', 'leaderunit', 'armyunit', 'flagunit',
+      'offence', 'defencestrategy', 'explorestrategy', 'terraform', 'settle', 'kingstrategy', 'artillery',
+      'cruisemissileunit', 'icbm', 'tacticalnuke', 'leaderunit', 'armyunit', 'flagstrategy',
       'navalpower', 'navaltransport', 'navalcarrier', 'navalmissiletransport',
       'airbombard', 'airdefencestrategy', 'airtransport',
       'unitclass',
       'buildcity', 'buildcolony', 'buildroad', 'buildrailroad', 'buildmine', 'irrigate', 'buildfort',
       'clearforest', 'clearjungle', 'plantforest', 'clearpollution', 'automate', 'joincity',
-      'ptwbuildairfield', 'ptwbuildradartower', 'ptwbuildoutpost',
-      'load', 'unload', 'airlift', 'airdrop', 'pillage', 'bombard', 'buildarmy', 'finishimprovement', 'upgrade', 'enslaveresultsin',
-      'skipturn', 'wait', 'goto', 'fortify', 'disband',
+      'ptwbuildairfield', 'ptwbuildradartower', 'ptwbuildoutpost', 'buildbarricade',
+      'load', 'unload', 'airlift', 'airdrop', 'pillage', 'bombard', 'buildarmy', 'finishimprovement', 'upgrade',
+      'capture', 'scienceage', 'enslave', 'sacrifice', 'teleportable', 'telepad', 'charm', 'stealthattack', 'collateraldamage',
+      'enslaveresultsin',
+      'skipturn', 'wait', 'goto', 'fortify', 'disband', 'exploreorder', 'sentry',
       'bomb', 'rebase', 'precisionbombing', 'recon', 'intercept',
       'allterrainasroads', 'amphibiousunit', 'army', 'blitz', 'cruisemissile', 'detectinvisible',
       'draftable', 'footsoldier', 'hiddennationality', 'immobile', 'infinitebombardrange', 'invisible',
@@ -9128,6 +9133,7 @@ const REFERENCE_RULE_SCHEMAS = {
     ],
     fields: {
       name: { group: 'Identity', control: 'text' },
+      requiredtech: { group: 'Prerequisites', control: 'reference', label: 'Prerequisite' },
       requiredresource1: { group: 'Prerequisites', control: 'reference' },
       requiredresource2: { group: 'Prerequisites', control: 'reference' },
       requiredresource3: { group: 'Prerequisites', control: 'reference' },
@@ -9140,7 +9146,7 @@ const REFERENCE_RULE_SCHEMAS = {
       bombardrange: { group: 'Unit Statistics', control: 'number', min: 0 },
       rateoffire: { group: 'Unit Statistics', control: 'number', min: 0 },
       airdefence: { group: 'Unit Statistics', control: 'number', min: 0 },
-      hitpointbonus: { group: 'Unit Statistics', control: 'bool' },
+      hitpointbonus: { group: 'Unit Statistics', control: 'number', min: 0 },
       operationalrange: { group: 'Unit Statistics', control: 'number', min: 0 },
       capacity: { group: 'Unit Statistics', control: 'number', min: 0 },
       populationcost: { group: 'Unit Statistics', control: 'number', min: 0 },
@@ -9155,14 +9161,14 @@ const REFERENCE_RULE_SCHEMAS = {
       explorestrategy: { group: 'AI Strategies: Land', control: 'bool' },
       terraform: { group: 'AI Strategies: Land', control: 'bool' },
       settle: { group: 'AI Strategies: Land', control: 'bool' },
-      king: { group: 'AI Strategies: Land', control: 'bool' },
+      kingstrategy: { group: 'AI Strategies: Land', control: 'bool', label: 'King Unit' },
       artillery: { group: 'AI Strategies: Land', control: 'bool' },
       cruisemissileunit: { group: 'AI Strategies: Land', control: 'bool' },
       icbm: { group: 'AI Strategies: Land', control: 'bool' },
       tacticalnuke: { group: 'AI Strategies: Land', control: 'bool' },
       leaderunit: { group: 'AI Strategies: Land', control: 'bool' },
       armyunit: { group: 'AI Strategies: Land', control: 'bool' },
-      flagunit: { group: 'AI Strategies: Land', control: 'bool' },
+      flagstrategy: { group: 'AI Strategies: Land', control: 'bool', label: 'Flag Unit' },
       navalpower: { group: 'AI Strategies: Sea', control: 'bool' },
       navaltransport: { group: 'AI Strategies: Sea', control: 'bool' },
       navalcarrier: { group: 'AI Strategies: Sea', control: 'bool' },
@@ -9186,6 +9192,7 @@ const REFERENCE_RULE_SCHEMAS = {
       ptwbuildairfield: { group: 'Worker Actions', control: 'bool', label: 'Build Airfield' },
       ptwbuildradartower: { group: 'Worker Actions', control: 'bool', label: 'Build Radar Tower' },
       ptwbuildoutpost: { group: 'Worker Actions', control: 'bool', label: 'Build Outpost' },
+      buildbarricade: { group: 'Worker Actions', control: 'bool', label: 'Build Barricade' },
       load: { group: 'Special Orders', control: 'bool' },
       unload: { group: 'Special Orders', control: 'bool' },
       airlift: { group: 'Special Orders', control: 'bool' },
@@ -9195,12 +9202,23 @@ const REFERENCE_RULE_SCHEMAS = {
       buildarmy: { group: 'Special Orders', control: 'bool' },
       finishimprovement: { group: 'Special Orders', control: 'bool' },
       upgrade: { group: 'Special Orders', control: 'bool' },
+      capture: { group: 'Special Orders', control: 'bool' },
+      scienceage: { group: 'Special Orders', control: 'bool', label: 'Science Age' },
+      enslave: { group: 'Special Orders', control: 'bool' },
+      sacrifice: { group: 'Special Orders', control: 'bool' },
+      teleportable: { group: 'Special Orders', control: 'bool' },
+      telepad: { group: 'Special Orders', control: 'bool' },
+      charm: { group: 'Special Orders', control: 'bool' },
+      stealthattack: { group: 'Special Orders', control: 'bool', label: 'Stealth Attack' },
+      collateraldamage: { group: 'Special Orders', control: 'bool', label: 'Collateral Damage' },
       enslaveresultsin: { group: 'Special Orders', control: 'reference' },
       skipturn: { group: 'Standard Orders', control: 'bool' },
       wait: { group: 'Standard Orders', control: 'bool' },
       goto: { group: 'Standard Orders', control: 'bool' },
       fortify: { group: 'Standard Orders', control: 'bool' },
       disband: { group: 'Standard Orders', control: 'bool' },
+      exploreorder: { group: 'Standard Orders', control: 'bool', label: 'Explore' },
+      sentry: { group: 'Standard Orders', control: 'bool' },
       bomb: { group: 'Air Missions', control: 'bool' },
       rebase: { group: 'Air Missions', control: 'bool' },
       precisionbombing: { group: 'Air Missions', control: 'bool' },
@@ -9250,6 +9268,7 @@ function shouldHideBiqField(tabKey, field) {
   if (tabKey === 'units' && !QUINT_UNIT_RULE_VISIBLE_KEYS.has(base) && !QUINT_UNIT_RULE_VISIBLE_KEYS.has(canon)) return true;
   if (tabKey === 'technologies' && !QUINT_TECH_RULE_VISIBLE_KEYS.has(base) && !QUINT_TECH_RULE_VISIBLE_KEYS.has(canon)) return true;
   if (tabKey === 'improvements' && !QUINT_IMPROVEMENT_RULE_VISIBLE_KEYS.has(base) && !QUINT_IMPROVEMENT_RULE_VISIBLE_KEYS.has(canon)) return true;
+  if (tabKey === 'governments' && isGovernmentRelationsField(field)) return false;
   if (tabKey === 'governments' && !QUINT_GOVERNMENT_RULE_VISIBLE_KEYS.has(base) && !QUINT_GOVERNMENT_RULE_VISIBLE_KEYS.has(canon)) return true;
   if (tabKey === 'civilizations' && !QUINT_CIV_RULE_VISIBLE_KEYS.has(base) && !QUINT_CIV_RULE_VISIBLE_KEYS.has(canon)) return true;
   const tabHidden = BIQ_FIELD_HIDDEN[tabKey];
@@ -9303,7 +9322,7 @@ function getRuleFieldDisplayLabel(tabKey, field, spec) {
 
 function isReadonlyRuleField(tabKey, field) {
   const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
-  return (tabKey === 'improvements' || tabKey === 'technologies' || tabKey === 'civilizations') && base === 'civilopediaentry';
+  return (tabKey === 'improvements' || tabKey === 'technologies' || tabKey === 'civilizations' || tabKey === 'governments' || tabKey === 'units') && base === 'civilopediaentry';
 }
 
 function getRuleFieldGroup(tabKey, field) {
@@ -10054,8 +10073,7 @@ function isGovernmentRelationsField(field) {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
   return /^performance_of_this_government_versus_government_\d+$/.test(base)
     || base === 'resistancemodifier'
-    || base === 'briberymodifier'
-    || base === 'canbribe';
+    || base === 'briberymodifier';
 }
 
 function buildGovernmentRelationsRows(entry) {

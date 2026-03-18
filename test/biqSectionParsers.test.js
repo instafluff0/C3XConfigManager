@@ -343,46 +343,78 @@ test('PRTO parser produces human-readable fields', () => {
   w.writeInt(1);  // zoc
   w.writeBytes(ws('Warrior', 32));
   w.writeBytes(ws('PRTO_WARRIOR', 32));
-  // 14 scalars: attack, defence, movement, bombardRange, bombard, navalBombard,
-  //             range, transportCapacity, cost, nationalityMod, healthMod, visibilityRange, AIBombardRange, upgradesTo
-  w.writeInt(1); // attack
-  w.writeInt(1); // defence
-  w.writeInt(1); // movement
+  w.writeInt(0); // bombardStrength
   w.writeInt(0); // bombardRange
-  w.writeInt(0); // bombard
-  w.writeInt(0); // navalBombard
-  w.writeInt(0); // range
-  w.writeInt(0); // transportCapacity
-  w.writeInt(10); // cost
-  w.writeInt(0); // nationalityMod
-  w.writeInt(0); // healthMod
-  w.writeInt(1); // visibilityRange
-  w.writeInt(0); // AIBombardRange
-  w.writeInt(-1); // upgradesTo
+  w.writeInt(0); // capacity
+  w.writeInt(10); // shieldCost
+  w.writeInt(1); // defence
+  w.writeInt(3); // iconIndex
+  w.writeInt(1); // attack
+  w.writeInt(0); // operationalRange
+  w.writeInt(0); // populationCost
+  w.writeInt(0); // rateOfFire
+  w.writeInt(1); // movement
+  w.writeInt(-1); // requiredTech
+  w.writeInt(-1); // upgradeTo
+  w.writeInt(-1); // requiredResource1
+  w.writeInt(-1); // requiredResource2
+  w.writeInt(-1); // requiredResource3
+  w.writeInt(0); // unitAbilities
+  w.writeInt(1); // AIStrategy
+  w.writeInt(0); // availableTo
+  w.writeInt(0); // standardOrdersSpecialActions
+  w.writeInt(0); // airMissions
+  w.writeInt(0); // unitClass
+  w.writeInt(-1); // otherStrategy
+  w.writeInt(0); // hitPointBonus
+  w.writeInt(0); // PTWStandardOrders
+  w.writeInt(0); // PTWSpecialActions
+  w.writeInt(0); // PTWWorkerActions
+  w.writeInt(0); // PTWAirMissions
+  w.writeInt(65536); // PTWActionsMix encoded with fixed high word
+  w.writeInt(0); // bombardEffects
+  for (let i = 0; i < 14; i += 1) w.writeByte(0); // ignoreMovementCost
+  w.writeInt(0); // requiresSupport
+  w.writeInt(7); // useExactCost
+  w.writeInt(0); // telepadRange
+  w.writeInt(1); // questionMark3
+  w.writeInt(0); // numLegalUnitTelepads
+  w.writeInt(-1); // enslaveResultsIn
+  w.writeInt(1); // questionMark5
+  w.writeInt(0); // numStealthTargets
+  w.writeInt(1); // questionMark6
+  w.writeInt(0); // numLegalBuildingTelepads
+  w.writeByte(0); // createsCraters
+  w.writeFloat(1); // workerStrengthFloat
+  w.writeInt(0); // questionMark8
+  w.writeInt(0); // airDefence
   const data = w.toBuffer();
 
   const rec = reg.parse(data, io);
   assert.equal(rec.name, 'Warrior');
   assert.equal(rec.civilopediaEntry, 'PRTO_WARRIOR');
   assert.equal(rec.attack, 1);
-  assert.equal(rec.cost, 10);
+  assert.equal(rec.shieldCost, 10);
 
   const english = sectionToEnglish({ index: 0, ...rec }, 'PRTO', io);
   assertNoGenericFields(english, 'PRTO');
   const map = parseEnglish(english);
   assert.equal(map.get('name'), 'Warrior');
   assert.equal(map.get('attack'), '1');
-  // All 14 scalars + zoc must be present (not just the original 7)
-  assert.equal(map.get('zoc'), '1', 'PRTO: expected zoc');
+  assert.equal(map.get('zoneOfControl'), '1', 'PRTO: expected zoneOfControl');
   assert.equal(map.get('defence'), '1', 'PRTO: expected defence');
   assert.equal(map.get('movement'), '1', 'PRTO: expected movement');
+  assert.equal(map.get('shieldCost'), '10', 'PRTO: expected shieldCost');
+  assert.equal(map.get('iconIndex'), '3', 'PRTO: expected iconIndex');
+  assert.equal(map.get('requiredTech'), '-1', 'PRTO: expected requiredTech');
+  assert.equal(map.get('requiredResource1'), '-1', 'PRTO: expected requiredResource1');
+  assert.equal(map.get('AIStrategy'), '1', 'PRTO: expected AIStrategy');
+  assert.equal(map.get('unitClass'), '0', 'PRTO: expected unitClass');
+  assert.equal(map.get('useExactCost'), '7', 'PRTO: expected useExactCost');
+  assert.equal(map.get('workerStrengthFloat'), '1', 'PRTO: expected workerStrengthFloat');
   assert.equal(map.get('bombardRange'), '0', 'PRTO: expected bombardRange');
-  assert.equal(map.get('bombard'), '0', 'PRTO: expected bombard');
-  assert.equal(map.get('navalBombard'), '0', 'PRTO: expected navalBombard');
-  assert.equal(map.get('visibilityRange'), '1', 'PRTO: expected visibilityRange');
-  assert.equal(map.get('AIBombardRange'), '0', 'PRTO: expected AIBombardRange');
-  assert.equal(map.get('nationalityMod'), '0', 'PRTO: expected nationalityMod');
-  assert.equal(map.get('healthMod'), '0', 'PRTO: expected healthMod');
+  assert.equal(map.get('bombardStrength'), '0', 'PRTO: expected bombardStrength');
+  assert.equal(map.get('airDefence'), '0', 'PRTO: expected airDefence');
 });
 
 // ---------------------------------------------------------------------------
