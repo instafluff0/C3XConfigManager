@@ -3354,7 +3354,7 @@ details > summary:focus-visible {
   display: grid;
   grid-template-columns: minmax(180px, 300px) 1fr;
   gap: 8px;
-  align-items: center;
+  align-items: start;
   padding: 4px 6px;
   border-radius: 8px;
   transition: background-color 0.14s ease;
@@ -3366,7 +3366,7 @@ details > summary:focus-visible {
 
 .rule-control {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   flex-wrap: wrap;
 }

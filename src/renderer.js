@@ -8393,6 +8393,12 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
   TERR: {
     order: [
       'civilopediaentry',
+      'landmarkcivilopediaentry',
+      'landmarkname', 'landmarkenabled',
+      'pollutioneffect', 'workerjob',
+      'diseasestrength',
+      '__terrain_possible_resources',
+      'questionmark', 'questionmark2', 'terrainflags',
       'food', 'landmarkfood',
       'shields', 'landmarkshields',
       'commerce', 'landmarkcommerce',
@@ -8401,15 +8407,21 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       'commercebonus', 'landmarkcommercebonus',
       'movementcost', 'landmarkmovementcost',
       'defencebonus', 'landmarkdefencebonus',
-      'landmarkname', 'landmarkenabled',
       'allowcities', 'allowcolonies', 'allowairfields', 'allowoutposts', 'allowradartowers', 'allowforts',
-      'impassable', 'impassablebywheeled',
-      'terrainflags', 'diseasestrength',
-      'pollutioneffect', 'workerjob',
-      '__terrain_possible_resources',
-      'questionmark', 'questionmark2'
+      'impassable', 'impassablebywheeled'
     ],
     fields: {
+      civilopediaentry: { group: 'General', control: 'text', label: 'Civilopedia Entry' },
+      landmarkcivilopediaentry: { group: 'General', control: 'text', label: 'Landmark Civilopedia Entry' },
+      landmarkname: { group: 'General', control: 'text', label: 'Landmark Terrain Name' },
+      landmarkenabled: { group: 'General', control: 'bool', label: 'Landmark Enabled' },
+      pollutioneffect: { group: 'General', control: 'reference', label: 'Pollution Yields' },
+      workerjob: { group: 'General', control: 'reference', label: 'Worker Terraform Action' },
+      diseasestrength: { group: 'General', control: 'number', min: 0, label: 'Strength' },
+      __terrain_possible_resources: { group: 'General', control: 'multi_ref', label: 'Possible Resources' },
+      questionmark: { group: 'Unknown Parameters', control: 'number', label: 'Unknown 1' },
+      questionmark2: { group: 'Unknown Parameters', control: 'number', label: 'Unknown 2' },
+      terrainflags: { group: 'Unknown Parameters', control: 'number', min: 0, label: 'Terrain Flags' },
       food: { group: 'Terrain Values', control: 'number', label: 'Food' },
       landmarkfood: { group: 'Terrain Values', control: 'number', label: 'Landmark Food' },
       shields: { group: 'Terrain Values', control: 'number', label: 'Shields' },
@@ -8426,8 +8438,6 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       landmarkmovementcost: { group: 'Terrain Values', control: 'number', min: 0, label: 'Landmark Movement Cost' },
       defencebonus: { group: 'Terrain Values', control: 'number', label: 'Defence Bonus' },
       landmarkdefencebonus: { group: 'Terrain Values', control: 'number', label: 'Landmark Defence Bonus' },
-      landmarkname: { group: 'Terrain Values', control: 'text', label: 'Landmark Terrain Name' },
-      landmarkenabled: { group: 'Terrain Values', control: 'bool', label: 'Landmark Enabled' },
       allowcities: { group: 'Flags', control: 'bool', label: 'Allow Cities' },
       allowcolonies: { group: 'Flags', control: 'bool', label: 'Allow Colonies' },
       allowairfields: { group: 'Flags', control: 'bool', label: 'Allow Airfields' },
@@ -8435,25 +8445,18 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       allowradartowers: { group: 'Flags', control: 'bool', label: 'Allow Radar Towers' },
       allowforts: { group: 'Flags', control: 'bool', label: 'Allow Forts' },
       impassable: { group: 'Flags', control: 'bool', label: 'Impassable' },
-      impassablebywheeled: { group: 'Flags', control: 'bool', label: 'Impassable by Wheeled Units' },
-      terrainflags: { group: 'Flags', control: 'number', min: 0, label: 'Terrain Flags' },
-      diseasestrength: { group: 'Flags', control: 'number', min: 0, label: 'Strength' },
-      pollutioneffect: { group: 'Pollution / Terraform', control: 'reference', label: 'Pollution Yields' },
-      workerjob: { group: 'Pollution / Terraform', control: 'reference', label: 'Worker Terraform Action' },
-      __terrain_possible_resources: { group: 'Possible Resources', control: 'multi_ref', label: 'Resource list' },
-      questionmark: { group: 'Unknown Parameters', control: 'number', label: 'Unknown 1' },
-      questionmark2: { group: 'Unknown Parameters', control: 'number', label: 'Unknown 2' }
+      impassablebywheeled: { group: 'Flags', control: 'bool', label: 'Impassable by Wheeled Units' }
     }
   },
   TFRM: {
-    order: ['civilopediaentry', 'turnstocomplete', 'requiredadvance', 'requiredresource1', 'requiredresource2', 'order'],
+    order: ['civilopediaentry', 'order', 'turnstocomplete', 'requiredadvance', 'requiredresource1', 'requiredresource2'],
     fields: {
       civilopediaentry: { group: 'General', control: 'text', label: 'Civilopedia Entry' },
+      order: { group: 'General', control: 'text', label: 'Worker Order' },
       turnstocomplete: { group: 'General', control: 'number', min: 0, label: 'Turns To Complete' },
-      requiredadvance: { group: 'Requirements', control: 'reference', label: 'Required Technology' },
-      requiredresource1: { group: 'Requirements', control: 'reference', label: 'Required Resource 1' },
-      requiredresource2: { group: 'Requirements', control: 'reference', label: 'Required Resource 2' },
-      order: { group: 'General', control: 'text', label: 'Worker Order' }
+      requiredadvance: { group: 'General', control: 'reference', label: 'Required Technology' },
+      requiredresource1: { group: 'Required Resources', control: 'reference', label: 'Required Resource 1' },
+      requiredresource2: { group: 'Required Resources', control: 'reference', label: 'Required Resource 2' }
     }
   },
   WSIZ: {
@@ -8555,6 +8558,8 @@ function getBiqStructureRefSpec(sectionCode, baseKey) {
   if (code === 'LEAD' && canon === 'initialera') return { section: 'ERAS', oneBased: false };
   if (code === 'LEAD' && /^startingtechnology\d+$/.test(canon)) return { section: 'TECH', oneBased: false };
   if (code === 'LEAD' && canon === 'difficulty') return { section: 'DIFF', oneBased: false };
+  if (code === 'TFRM' && canon === 'requiredadvance') return { section: 'TECH', oneBased: false };
+  if (code === 'TFRM' && (canon === 'requiredresource1' || canon === 'requiredresource2')) return { section: 'GOOD', oneBased: false };
   if (code === 'TERR' && canon === 'workerjob') return { section: 'TFRM', oneBased: false };
   if (code === 'TERR' && canon === 'pollutioneffect') return { section: 'TERR', oneBased: false };
   if (code === 'CTZN' && canon === 'prerequisite') return { section: 'TECH', oneBased: false };
@@ -8703,15 +8708,17 @@ function shouldHideBiqStructureField(sectionCode, field) {
 
 const REFERENCE_RULE_SCHEMAS = {
   resources: {
-    order: ['type', 'prerequisite', 'appearanceratio', 'disapperanceprobability', 'foodbonus', 'shieldsbonus', 'commercebonus'],
+    order: ['civilopediaentry', 'prerequisite', 'icon', 'appearanceratio', 'disapperanceprobability', 'type', 'foodbonus', 'shieldsbonus', 'commercebonus'],
     fields: {
-      type: { group: 'Identity', control: 'select' },
-      prerequisite: { group: 'Prerequisites', control: 'reference' },
-      appearanceratio: { group: 'Map Placement', control: 'number', min: 0 },
-      disapperanceprobability: { group: 'Map Placement', control: 'number', min: 0 },
-      foodbonus: { group: 'Tile Yields', control: 'number' },
-      shieldsbonus: { group: 'Tile Yields', control: 'number' },
-      commercebonus: { group: 'Tile Yields', control: 'number' }
+      civilopediaentry: { group: 'Identity', control: 'text', label: 'Civilopedia Entry' },
+      prerequisite: { group: 'Identity', control: 'reference', label: 'Prerequisite' },
+      icon: { group: 'Identity', control: 'number', min: 0 },
+      appearanceratio: { group: 'Map Placement', control: 'number', min: 0, label: 'Appearance Ratio' },
+      disapperanceprobability: { group: 'Map Placement', control: 'number', min: 0, label: 'Disappearance Ratio' },
+      type: { group: 'Type', control: 'select' },
+      foodbonus: { group: 'Bonuses', control: 'number', label: 'Food' },
+      shieldsbonus: { group: 'Bonuses', control: 'number', label: 'Shields' },
+      commercebonus: { group: 'Bonuses', control: 'number', label: 'Commerce' }
     }
   },
   technologies: {
@@ -9322,7 +9329,92 @@ function getRuleFieldDisplayLabel(tabKey, field, spec) {
 
 function isReadonlyRuleField(tabKey, field) {
   const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
-  return (tabKey === 'improvements' || tabKey === 'technologies' || tabKey === 'civilizations' || tabKey === 'governments' || tabKey === 'units') && base === 'civilopediaentry';
+  return (tabKey === 'improvements' || tabKey === 'technologies' || tabKey === 'civilizations' || tabKey === 'governments' || tabKey === 'units' || tabKey === 'resources') && base === 'civilopediaentry';
+}
+
+function isReadonlyBiqStructureField(sectionCode, field) {
+  const code = String(sectionCode || '').toUpperCase();
+  const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
+  return (code === 'TERR' && (base === 'civilopediaentry' || base === 'landmarkcivilopediaentry'))
+    || (code === 'TFRM' && base === 'civilopediaentry');
+}
+
+function renderTerrainValuesTable(groupCard, groupFields, tab) {
+  const pairDefs = [
+    ['food', 'landmarkfood', 'Food'],
+    ['shields', 'landmarkshields', 'Shields'],
+    ['commerce', 'landmarkcommerce', 'Commerce'],
+    ['foodbonus', 'landmarkfoodbonus', 'Irrigation Bonus'],
+    ['shieldsbonus', 'landmarkshieldsbonus', 'Mining Bonus'],
+    ['commercebonus', 'landmarkcommercebonus', 'Trade Bonus'],
+    ['movementcost', 'landmarkmovementcost', 'Movement Cost'],
+    ['defencebonus', 'landmarkdefencebonus', 'Defence Bonus']
+  ];
+  const editable = !tab.readOnly;
+  const byKey = new Map(groupFields.map((field) => [normalizeRuleLookupKey(field && (field.baseKey || field.key)), field]));
+  const tableRow = document.createElement('div');
+  tableRow.className = 'rule-row';
+  const label = document.createElement('label');
+  label.className = 'field-meta';
+  label.textContent = 'Terrain Values';
+  tableRow.appendChild(label);
+
+  const controlWrap = document.createElement('div');
+  controlWrap.className = 'rule-control';
+  const table = document.createElement('table');
+  table.className = 'time-progression-table';
+  table.style.tableLayout = 'fixed';
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  ['', 'Regular Terrain', 'Landmark Terrain'].forEach((title) => {
+    const th = document.createElement('th');
+    th.textContent = title;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+
+  const makeNumberCell = (field) => {
+    const td = document.createElement('td');
+    if (!field) {
+      td.textContent = '(n/a)';
+      return td;
+    }
+    const spec = getBiqStructureFieldSpec('TERR', field) || {};
+    if (editable) {
+      const input = document.createElement('input');
+      input.type = 'number';
+      if (Number.isFinite(spec.min)) input.min = String(spec.min);
+      if (Number.isFinite(spec.max)) input.max = String(spec.max);
+      input.value = String(parseIntFromDisplayValue(field.value) ?? '');
+      input.addEventListener('input', () => {
+        rememberUndoSnapshot();
+        field.value = input.value;
+        setDirty(true);
+      });
+      td.appendChild(input);
+      return td;
+    }
+    td.textContent = String(field.value || '0');
+    return td;
+  };
+
+  pairDefs.forEach(([regularKey, landmarkKey, rowLabel]) => {
+    const tr = document.createElement('tr');
+    const rowHead = document.createElement('td');
+    rowHead.textContent = rowLabel;
+    tr.appendChild(rowHead);
+    tr.appendChild(makeNumberCell(byKey.get(regularKey)));
+    tr.appendChild(makeNumberCell(byKey.get(landmarkKey)));
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  controlWrap.appendChild(table);
+  tableRow.appendChild(controlWrap);
+  groupCard.appendChild(tableRow);
+
+  return pairDefs.flatMap(([regularKey, landmarkKey]) => [byKey.get(regularKey), byKey.get(landmarkKey)]).filter(Boolean);
 }
 
 function getRuleFieldGroup(tabKey, field) {
@@ -11368,6 +11460,7 @@ function createReferencePicker(config) {
   const noneLabel = String(opts.noneLabel || '(none)');
   const searchPlaceholder = String(opts.searchPlaceholder || 'Search...');
   const showOptionThumbs = opts.showOptionThumbs !== false;
+  const renderOptionThumb = typeof opts.renderOptionThumb === 'function' ? opts.renderOptionThumb : null;
   const rawCurrentValue = String(opts.currentValue ?? '-1');
   const parsedCurrent = parseIntFromDisplayValue(rawCurrentValue);
   const currentValue = parsedCurrent == null ? rawCurrentValue : String(parsedCurrent);
@@ -11419,9 +11512,19 @@ function createReferencePicker(config) {
     buttonThumb.innerHTML = '';
     selectedJumpTarget = null;
     selectedJumpBtn.classList.add('hidden');
+    let paintedCustomThumb = false;
+    if (selected && renderOptionThumb) {
+      paintedCustomThumb = !!renderOptionThumb({
+        holder: buttonThumb,
+        option: selected,
+        value: normalizedValue,
+        targetTabKey,
+        selected: true
+      });
+    }
     if (selected && targetTabKey) {
       selectedJumpTarget = selected.entry || resolveReferenceEntryForPicker(targetTabKey, normalizedValue, normalizedOptions);
-      if (selectedJumpTarget) {
+      if (selectedJumpTarget && !paintedCustomThumb) {
         loadReferenceListThumbnail(targetTabKey, selectedJumpTarget, buttonThumb);
       }
       if (!readOnly) {
@@ -11530,7 +11633,17 @@ function createReferencePicker(config) {
     selectBtn.className = 'tech-picker-row-main';
     const thumb = document.createElement('span');
     thumb.className = 'entry-thumb';
-    if (showOptionThumbs && opt.entry && targetTabKey) {
+    let customThumbPainted = false;
+    if (showOptionThumbs && renderOptionThumb) {
+      customThumbPainted = !!renderOptionThumb({
+        holder: thumb,
+        option: opt,
+        value: opt.value,
+        targetTabKey,
+        selected: false
+      });
+    }
+    if (showOptionThumbs && !customThumbPainted && opt.entry && targetTabKey) {
       thumb.dataset.thumbPending = '1';
       thumb.__thumbEntry = opt.entry;
       pendingThumbNodes.push(thumb);
@@ -13856,7 +13969,7 @@ function getPlayableCivilizationIdSet() {
   const out = new Set();
   fields.forEach((field) => {
     const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
-    if (base !== 'playable_civ') return;
+    if (!/^playable_civ(?:_\d+)?$/.test(base)) return;
     const parsed = parseIntFromDisplayValue(field.value);
     if (Number.isFinite(parsed) && parsed >= 0) out.add(parsed);
   });
@@ -13865,12 +13978,15 @@ function getPlayableCivilizationIdSet() {
 
 function getGamePlayableCivFields(record) {
   const fields = Array.isArray(record && record.fields) ? record.fields : [];
-  return fields.filter((field) => String(field && (field.baseKey || field.key) || '').toLowerCase() === 'playable_civ');
+  return fields.filter((field) => /^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()));
 }
 
 function getGamePlayableCivCountField(record) {
   const fields = Array.isArray(record && record.fields) ? record.fields : [];
-  return fields.find((field) => String(field && (field.baseKey || field.key) || '').toLowerCase() === 'numberofplayablecivs') || null;
+  return fields.find((field) => {
+    const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
+    return base === 'numberofplayablecivs' || base === 'number_of_playable_civs';
+  }) || null;
 }
 
 function syncNumberOfPlayableCivsField(record) {
@@ -13878,6 +13994,36 @@ function syncNumberOfPlayableCivsField(record) {
   const countField = getGamePlayableCivCountField(record);
   const count = playable.length;
   if (countField) countField.value = String(count);
+  return count;
+}
+
+function setGamePlayableCivilizations(record, playableIds) {
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  const normalizedIds = Array.from(new Set((Array.isArray(playableIds) ? playableIds : [])
+    .map((value) => Number.parseInt(String(value), 10))
+    .filter((value) => Number.isFinite(value) && value >= 0)))
+    .sort((a, b) => a - b);
+  const countField = getGamePlayableCivCountField(record);
+  const useIndexedKeys = getGamePlayableCivFields(record).some((field) => /^playable_civ_\d+$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()))
+    || /^number_of_playable_civs$/i.test(String(countField && (countField.baseKey || countField.key) || ''));
+  const insertAt = (() => {
+    if (!countField) return fields.length;
+    const countIdx = fields.indexOf(countField);
+    return countIdx >= 0 ? countIdx + 1 : fields.length;
+  })();
+  const preserved = fields.filter((field) => !/^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()));
+  const newPlayableFields = normalizedIds.map((id, idx) => ({
+    key: useIndexedKeys ? `playable_civ_${idx}` : 'playable_civ',
+    baseKey: useIndexedKeys ? `playable_civ_${idx}` : 'playable_civ',
+    label: 'Playable Civilization',
+    value: String(id),
+    originalValue: '',
+    editable: true
+  }));
+  preserved.splice(insertAt, 0, ...newPlayableFields);
+  record.fields = preserved;
+  const count = syncNumberOfPlayableCivsField(record);
+  syncLeadRecordCountToTarget(count);
   return count;
 }
 
@@ -16593,62 +16739,83 @@ function renderBiqTab(tab) {
         }
 
         if (selected.code === 'GAME' && groupName === 'Player Options') {
-          const actionsRow = document.createElement('div');
-          actionsRow.className = 'rule-row';
-          const actionsLabel = document.createElement('label');
-          actionsLabel.className = 'field-meta';
-          actionsLabel.textContent = 'Playable Civilizations';
-          actionsRow.appendChild(actionsLabel);
-          const actionsWrap = document.createElement('div');
-          actionsWrap.className = 'rule-control';
           const playableFields = getGamePlayableCivFields(record);
+          const countField = getGamePlayableCivCountField(record);
+          if (countField) consumedSpecialFields.add(countField);
+          playableFields.forEach((field) => consumedSpecialFields.add(field));
+
+          const options = makeBiqSectionIndexOptions('RACE', false);
+          const selectedIds = new Set(playableFields
+            .map((field) => parseIntFromDisplayValue(field.value))
+            .filter((value) => Number.isFinite(value) && value >= 0));
+
+          const row = document.createElement('div');
+          row.className = 'rule-row';
+          const label = document.createElement('label');
+          label.className = 'field-meta';
+          label.textContent = 'Playable Civilizations';
+          row.appendChild(label);
+
+          const controlWrap = document.createElement('div');
+          controlWrap.className = 'rule-control';
           const countBadge = document.createElement('div');
           countBadge.className = 'field-meta';
-          countBadge.textContent = `${playableFields.length} slots`;
-          actionsWrap.appendChild(countBadge);
-          if (!tab.readOnly) {
-            const actionBtns = document.createElement('div');
-            actionBtns.className = 'reference-entity-actions';
-            const addBtn = document.createElement('button');
-            addBtn.type = 'button';
-            addBtn.className = 'ghost action-add';
-            addBtn.textContent = '＋ Add Slot';
-            addBtn.addEventListener('click', () => {
+          countBadge.style.marginBottom = '8px';
+          countBadge.textContent = `${selectedIds.size} playable`;
+          controlWrap.appendChild(countBadge);
+
+          const list = document.createElement('div');
+          list.style.display = 'grid';
+          list.style.gap = '8px';
+          options.forEach((opt) => {
+            const civId = Number.parseInt(String(opt.value || ''), 10);
+            if (!Number.isFinite(civId) || civId < 0) return;
+            const civKey = String(opt && opt.entry && opt.entry.civilopediaKey || '').trim().toUpperCase();
+            const optLabel = String(opt.label || '').trim();
+            if (civKey === 'RACE_BARBARIANS') return;
+            if (/^race_barbarians$/i.test(optLabel) || /^barbarians?$/i.test(optLabel)) return;
+            const item = document.createElement('label');
+            item.className = 'entry-list-item';
+            item.style.display = 'grid';
+            item.style.gridTemplateColumns = '28px 1fr auto';
+            item.style.alignItems = 'center';
+            item.style.gap = '10px';
+            item.style.cursor = tab.readOnly ? 'default' : 'pointer';
+
+            const thumb = document.createElement('span');
+            thumb.className = 'entry-thumb';
+            if (opt.entry) loadReferenceListThumbnail('civilizations', opt.entry, thumb);
+            item.appendChild(thumb);
+
+            const text = document.createElement('span');
+            text.textContent = String(opt.label || opt.value);
+            item.appendChild(text);
+
+            const toggle = document.createElement('label');
+            toggle.className = 'bool-toggle';
+            if (!tab.readOnly) toggle.classList.add('bool-row-toggle');
+            const check = document.createElement('input');
+            check.type = 'checkbox';
+            check.checked = selectedIds.has(civId);
+            check.disabled = !!tab.readOnly;
+            const checkText = document.createElement('span');
+            checkText.textContent = 'Playable';
+            check.addEventListener('change', () => {
               rememberUndoSnapshot();
-              const allFields = Array.isArray(record.fields) ? record.fields : [];
-              const currentPlayable = getGamePlayableCivFields(record);
-              const lastPlayable = currentPlayable[currentPlayable.length - 1] || null;
-              const newField = lastPlayable
-                ? { ...lastPlayable, value: String(lastPlayable.value || '0'), originalValue: String(lastPlayable.originalValue || '') }
-                : {
-                  key: 'playable_civ',
-                  baseKey: 'playable_civ',
-                  label: 'Playable Civ',
-                  value: '0',
-                  originalValue: ''
-                };
-              const raceOptions = makeBiqSectionIndexOptions('RACE', false);
-              const used = new Set(currentPlayable
-                .map((f) => parseIntFromDisplayValue(f.value))
-                .filter((n) => Number.isFinite(n)));
-              const nextOpt = raceOptions.find((opt) => {
-                const idx = Number.parseInt(String(opt && opt.value || ''), 10);
-                return Number.isFinite(idx) && !used.has(idx);
-              });
-              if (nextOpt) newField.value = String(nextOpt.value);
-              allFields.push(newField);
-              record.fields = allFields;
-              const count = syncNumberOfPlayableCivsField(record);
-              syncLeadRecordCountToTarget(count);
+              if (check.checked) selectedIds.add(civId);
+              else selectedIds.delete(civId);
+              const count = setGamePlayableCivilizations(record, Array.from(selectedIds));
+              countBadge.textContent = `${count} playable`;
               setDirty(true);
-              setStatus('Added playable civilization slot.');
-              renderActiveTab({ preserveTabScroll: true });
             });
-            actionBtns.appendChild(addBtn);
-            actionsWrap.appendChild(actionBtns);
-          }
-          actionsRow.appendChild(actionsWrap);
-          groupCard.appendChild(actionsRow);
+            toggle.appendChild(check);
+            toggle.appendChild(checkText);
+            item.appendChild(toggle);
+            list.appendChild(item);
+          });
+          controlWrap.appendChild(list);
+          row.appendChild(controlWrap);
+          groupCard.appendChild(row);
         }
 
         if (selected.code === 'GAME' && /^Alliance \d+$/.test(groupName)) {
@@ -16929,6 +17096,9 @@ function renderBiqTab(tab) {
           tableRow.appendChild(tableWrap);
           groupCard.appendChild(tableRow);
         }
+        if (selected.code === 'TERR' && groupName === 'Terrain Values') {
+          renderTerrainValuesTable(groupCard, groupFields, tab).forEach((terrainField) => consumedSpecialFields.add(terrainField));
+        }
         groupFields.forEach((field, fieldIdx) => {
           if (consumedRichFields.has(field)) return;
           if (consumedTimeFields.has(field)) return;
@@ -16971,7 +17141,7 @@ function renderBiqTab(tab) {
 
           const controlWrap = document.createElement('div');
           controlWrap.className = 'rule-control';
-          const editable = !tab.readOnly;
+          const editable = !tab.readOnly && !isReadonlyBiqStructureField(selected.code, field);
           const baseKey = String(field.baseKey || field.key || '').toLowerCase();
           if (selected.code === 'TERR' && baseKey === '__terrain_possible_resources') {
             const options = getTerrainResourceOptions();
@@ -17081,12 +17251,16 @@ function renderBiqTab(tab) {
               });
               controlWrap.appendChild(colorPicker);
             } else if (refOptions.length > 0) {
+              const useTerrainThumbFallback = selected.code === 'TERR' && baseKey === 'pollutioneffect';
               const picker = createReferencePicker({
                 options: refOptions,
                 targetTabKey: refTargetTabKey,
                 currentValue: parsed == null ? '-1' : String(parsed),
                 searchPlaceholder: `Search ${String(refSpec.section || '').toUpperCase()}...`,
                 noneLabel: '(none)',
+                renderOptionThumb: useTerrainThumbFallback
+                  ? ({ holder, option }) => renderTerrainReferenceThumb(holder, option && option.label)
+                  : null,
                 onSelect: (value) => {
                   rememberUndoSnapshot();
                   field.value = String(value);
@@ -21569,6 +21743,16 @@ function buildNaturalWonderChipButton(name, selected, onToggle) {
     thumb.appendChild(canvas);
   }).catch(() => {});
   return btn;
+}
+
+function renderTerrainReferenceThumb(holder, optionLabel) {
+  if (!holder) return false;
+  const icon = makeTerrainOptionPreviewIcon(optionLabel);
+  if (!icon) return false;
+  if (!icon.childNodes || icon.childNodes.length === 0) return false;
+  holder.innerHTML = '';
+  holder.appendChild(icon.firstChild.cloneNode(true));
+  return true;
 }
 
 function renderNaturalWonderPrereqEditor(options, values, onValuesChange) {

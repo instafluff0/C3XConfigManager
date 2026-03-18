@@ -6,7 +6,7 @@ const path = require('node:path');
 const { getPreview, decodePcx } = require('../src/artPreview');
 
 const CIV3_ROOT = process.env.C3X_CIV3_ROOT
-  || '/Users//fun/Civilization III Complete';
+  || '/Users/nicdobbins/fun/Civilization III Complete';
 
 // NTP palette files are in Art/Units/Palettes/ under the base game root.
 // Civ3 has exactly 32 color slots (00–31), one NTP file per slot.

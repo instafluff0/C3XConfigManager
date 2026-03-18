@@ -25,7 +25,7 @@ function findSampleBiqPath() {
   const candidates = [
     envPath,
     path.resolve(__dirname, '..', '..', 'conquests.biq'),
-    '/Users//fun/Civilization III Complete/Conquests/conquests.biq'
+    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/conquests.biq'
   ].filter(Boolean);
   return candidates.find((p) => fs.existsSync(p)) || '';
 }
@@ -34,10 +34,10 @@ function findSampleMapBiqPath() {
   const envPath = String(process.env.C3X_TEST_MAP_BIQ || '').trim();
   const candidates = [
     envPath,
-    '/Users//fun/Civilization III Complete/Conquests/Scenarios/2 MP Rise of Rome.biq',
-    '/Users//fun/Civilization III Complete/Conquests/Scenarios/3 MP Fall of Rome.biq',
-    '/Users//fun/Civilization III Complete/Conquests/Scenarios/8 MP Napoleonic Europe.biq',
-    '/Users//fun/Civilization III Complete/Conquests/Scenarios/9 MP WWII in the Pacific.biq'
+    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/2 MP Rise of Rome.biq',
+    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/3 MP Fall of Rome.biq',
+    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/8 MP Napoleonic Europe.biq',
+    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/9 MP WWII in the Pacific.biq'
   ].filter((p) => p && fs.existsSync(p));
   return candidates[0] || '';
 }
@@ -137,6 +137,12 @@ function getScenarioSettingsField(bundle, key) {
   return getRecordField(record, key);
 }
 
+function getScenarioSettingsRecord(bundle) {
+  const tab = bundle && bundle.tabs && bundle.tabs.scenarioSettings;
+  const section = getSection(tab, 'GAME');
+  return section && Array.isArray(section.records) ? section.records[0] : null;
+}
+
 test('BIQ round-trip persists tech tree coordinate edits on scenario copy', (t) => {
   const sampleBiq = findSampleBiqPath();
   if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
@@ -223,6 +229,80 @@ test('BIQ round-trip ignores Scenario Search Folders edits from UI payload', (t)
   const afterField = getScenarioSettingsField(reloaded, 'scenariosearchfolders');
   assert.ok(afterField, 'expected Scenario Search Folders field after reload');
   assert.equal(String(afterField.value || ''), originalValue);
+});
+
+test('BIQ round-trip persists deterministic playable civilization list rewrites', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const gameRecord = getScenarioSettingsRecord(bundle);
+  if (!gameRecord) {
+    t.skip('Sample BIQ has no GAME record.');
+    return;
+  }
+
+  const fields = Array.isArray(gameRecord.fields) ? gameRecord.fields : [];
+  const countField = getRecordField(gameRecord, 'numberofplayablecivs') || getRecordField(gameRecord, 'number_of_playable_civs');
+  assert.ok(countField, 'expected GAME numberofplayablecivs field');
+
+  const originalPlayable = fields
+    .filter((field) => /^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()))
+    .map((field) => Number.parseInt(String(field.value || ''), 10))
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .sort((a, b) => a - b);
+  if (originalPlayable.length < 2) {
+    t.skip('Sample BIQ does not have enough playable civilizations to rewrite deterministically.');
+    return;
+  }
+
+  const replacement = Array.from(new Set([originalPlayable[1], originalPlayable[0], 0])).sort((a, b) => a - b);
+  const preserved = fields.filter((field) => !/^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()));
+  const insertAt = Math.max(0, preserved.indexOf(countField) + 1);
+  const rewrittenPlayable = replacement.map((id, idx) => ({
+    key: `playable_civ_${idx}`,
+    baseKey: `playable_civ_${idx}`,
+    label: 'Playable Civilization',
+    value: String(id),
+    originalValue: '',
+    editable: true
+  }));
+  preserved.splice(insertAt, 0, ...rewrittenPlayable);
+  gameRecord.fields = preserved;
+  countField.value = String(replacement.length);
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reGameRecord = getScenarioSettingsRecord(reloaded);
+  assert.ok(reGameRecord, 'expected reloaded GAME record');
+  const reCountField = getRecordField(reGameRecord, 'numberofplayablecivs') || getRecordField(reGameRecord, 'number_of_playable_civs');
+  assert.ok(reCountField, 'expected reloaded count field');
+  assert.equal(String(reCountField.value || ''), String(replacement.length));
+
+  const rePlayable = (Array.isArray(reGameRecord.fields) ? reGameRecord.fields : [])
+    .filter((field) => /^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()))
+    .map((field) => Number.parseInt(String(field.value || ''), 10))
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .sort((a, b) => a - b);
+  assert.deepEqual(rePlayable, replacement);
 });
 
 test('BIQ round-trip supports add/copy/delete record ops for technology section', (t) => {

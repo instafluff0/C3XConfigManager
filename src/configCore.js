@@ -7,6 +7,7 @@ const { decompress: biqDecompress } = require('./biq/decompress');
 const { parseBiqBuffer: jsParseBiqBuffer, applyBiqEdits: jsApplyBiqEdits } = require('./biq/biqBridgeJs');
 const { projectImprovementBiqFields, collapseImprovementBiqFields } = require('./biq/bldgCodec');
 const { projectCivilizationBiqFields, collapseCivilizationBiqFields } = require('./biq/civCodec');
+const { projectResourceBiqFields, collapseResourceBiqFields } = require('./biq/goodCodec');
 const { projectGovernmentBiqFields, collapseGovernmentBiqFields } = require('./biq/govtCodec');
 const { projectTechnologyBiqFields, collapseTechnologyBiqFields } = require('./biq/techCodec');
 const { projectUnitBiqFields, collapseUnitBiqFields } = require('./biq/unitCodec');
@@ -2988,6 +2989,11 @@ function buildReferenceTabs(civ3Path, options = {}) {
             civilopediaEntry: entry.civilopediaKey,
             flavorCount
           });
+        } else if (tabSpec.key === 'resources') {
+          biqFields = projectResourceBiqFields({
+            rawFields: rawBiqFields,
+            civilopediaEntry: entry.civilopediaKey
+          });
         } else if (tabSpec.key === 'civilizations') {
           biqFields = projectCivilizationBiqFields({
             rawFields: rawBiqFields,
@@ -4799,6 +4805,22 @@ function collectBiqReferenceEdits(tabs) {
           : 0;
         const currentRaw = collapseTechnologyBiqFields(entry.biqFields, flavorCount, 'value');
         const originalRaw = collapseTechnologyBiqFields(entry.biqFields, flavorCount, 'originalValue');
+        Object.keys(currentRaw).forEach((rawKey) => {
+          const value = cleanDisplayText(currentRaw[rawKey]);
+          const originalValue = cleanDisplayText(originalRaw[rawKey]);
+          if (value === originalValue) return;
+          edits.push({
+            sectionCode,
+            recordRef: civKey,
+            fieldKey: rawKey,
+            value
+          });
+        });
+        return;
+      }
+      if (spec.key === 'resources') {
+        const currentRaw = collapseResourceBiqFields(entry.biqFields, 'value');
+        const originalRaw = collapseResourceBiqFields(entry.biqFields, 'originalValue');
         Object.keys(currentRaw).forEach((rawKey) => {
           const value = cleanDisplayText(currentRaw[rawKey]);
           const originalValue = cleanDisplayText(originalRaw[rawKey]);

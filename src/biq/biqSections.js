@@ -1817,7 +1817,7 @@ function parseTERR(data, io) {
   const allowOutposts = off < data.length ? data[off] : 0; off++;
   const allowRadarTowers = off < data.length ? data[off] : 0; off++;
 
-  let questionMark = 0, landmarkEnabled = 0, landmarkQm = 0, questionMark2 = 0, terrainFlags = 0, diseaseStrength = 0;
+  let questionMark = 0, landmarkEnabled = 0, questionMark2 = 0, terrainFlags = 0, diseaseStrength = 0;
   let landmarkName = '', landmarkCivilopediaEntry = '';
   const landmarkScalars = { landmarkFood: 0, landmarkShields: 0, landmarkCommerce: 0, landmarkFoodBonus: 0, landmarkShieldsBonus: 0, landmarkCommerceBonus: 0, landmarkMovementCost: 0, landmarkDefenceBonus: 0 };
 
@@ -1827,7 +1827,6 @@ function parseTERR(data, io) {
     for (const k of Object.keys(landmarkScalars)) {
       landmarkScalars[k] = off + 4 <= data.length ? data.readInt32LE(off) : 0; off += 4;
     }
-    landmarkQm = off + 4 <= data.length ? data.readInt32LE(off) : 0; off += 4;
     landmarkName = readStr(data, off, 32); off += 32;
     landmarkCivilopediaEntry = readStr(data, off, 32); off += 32;
     questionMark2 = off + 4 <= data.length ? data.readInt32LE(off) : 0; off += 4;
@@ -1842,7 +1841,7 @@ function parseTERR(data, io) {
     allowCities, allowColonies, impassable, impassableByWheeled,
     allowAirfields, allowForts, allowOutposts, allowRadarTowers,
     questionMark, landmarkEnabled, ...landmarkScalars,
-    landmarkQm, landmarkName, landmarkCivilopediaEntry,
+    landmarkName, landmarkCivilopediaEntry,
     questionMark2, terrainFlags, diseaseStrength, _tail
   };
 }
@@ -1875,7 +1874,6 @@ function serializeTERR(rec, io) {
     w.writeByte((rec.landmarkEnabled != null ? rec.landmarkEnabled : 0) & 0xff);
     const landmarkScalarNames = ['landmarkFood', 'landmarkShields', 'landmarkCommerce', 'landmarkFoodBonus', 'landmarkShieldsBonus', 'landmarkCommerceBonus', 'landmarkMovementCost', 'landmarkDefenceBonus'];
     for (const sn of landmarkScalarNames) w.writeInt((rec[sn] != null ? rec[sn] : 0) | 0);
-    w.writeInt(rec.landmarkQm | 0);
     writeStr(w, rec.landmarkName, 32);
     writeStr(w, rec.landmarkCivilopediaEntry, 32);
     w.writeInt(rec.questionMark2 | 0);

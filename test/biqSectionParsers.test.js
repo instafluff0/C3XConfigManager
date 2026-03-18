@@ -775,7 +775,6 @@ test('TERR parser produces human-readable fields (not "TERR 1" or "u32_N")', () 
   w.writeByte(0);  // landmarkEnabled
   // landmarkScalars: 8 × int32
   for (let i = 0; i < 8; i++) w.writeInt(0);
-  w.writeInt(0);   // landmarkQm
   w.writeBytes(ws('', 32));  // landmarkName
   w.writeBytes(ws('', 32));  // landmarkCivilopediaEntry
   w.writeInt(0);   // questionMark2
