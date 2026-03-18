@@ -25,7 +25,7 @@ function findSampleBiqPath() {
   const candidates = [
     envPath,
     path.resolve(__dirname, '..', '..', 'conquests.biq'),
-    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/conquests.biq'
+    '/Users//fun/Civilization III Complete/Conquests/conquests.biq'
   ].filter(Boolean);
   return candidates.find((p) => fs.existsSync(p)) || '';
 }
@@ -34,10 +34,10 @@ function findSampleMapBiqPath() {
   const envPath = String(process.env.C3X_TEST_MAP_BIQ || '').trim();
   const candidates = [
     envPath,
-    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/2 MP Rise of Rome.biq',
-    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/3 MP Fall of Rome.biq',
-    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/8 MP Napoleonic Europe.biq',
-    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/9 MP WWII in the Pacific.biq'
+    '/Users//fun/Civilization III Complete/Conquests/Scenarios/2 MP Rise of Rome.biq',
+    '/Users//fun/Civilization III Complete/Conquests/Scenarios/3 MP Fall of Rome.biq',
+    '/Users//fun/Civilization III Complete/Conquests/Scenarios/8 MP Napoleonic Europe.biq',
+    '/Users//fun/Civilization III Complete/Conquests/Scenarios/9 MP WWII in the Pacific.biq'
   ].filter((p) => p && fs.existsSync(p));
   return candidates[0] || '';
 }

@@ -7,8 +7,8 @@ const fs = require('node:fs');
 const { loadBundle } = require('../src/configCore');
 const { projectGovernmentBiqFields, collapseGovernmentBiqFields } = require('../src/biq/govtCodec');
 
-const CIV3_ROOT = '/Users/nicdobbins/fun/Civilization III Complete';
-const TIDES_BIQ = '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/TIDES OF CRIMSON.biq';
+const CIV3_ROOT = '/Users//fun/Civilization III Complete';
+const TIDES_BIQ = '/Users//fun/Civilization III Complete/Conquests/Scenarios/TIDES OF CRIMSON.biq';
 
 function getTidesBundle() {
   if (!fs.existsSync(TIDES_BIQ)) return null;

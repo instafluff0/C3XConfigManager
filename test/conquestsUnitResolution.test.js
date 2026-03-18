@@ -5,7 +5,7 @@ const path = require('node:path');
 
 const { getPreview } = require('../src/artPreview');
 
-const DEFAULT_CONQUESTS_ROOT = '/Users/nicdobbins/fun/Civilization III Complete/Conquests';
+const DEFAULT_CONQUESTS_ROOT = '/Users//fun/Civilization III Complete/Conquests';
 const CONQUESTS_ROOT = process.env.C3X_CONQUESTS_ROOT || DEFAULT_CONQUESTS_ROOT;
 const MOVEMENT_ACTION_KEYS = new Set(['DEFAULT', 'RUN', 'WALK']);
 const WALK_SKIP_DIR_NAMES = new Set(['Art', 'Text', '.git', 'node_modules']);
