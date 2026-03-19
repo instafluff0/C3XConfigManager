@@ -1988,6 +1988,27 @@ button.danger:hover {
   padding: 0;
 }
 
+.biq-map-minimap-panel {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  width: min(260px, calc(100% - 120px));
+  z-index: 3;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+}
+
+.biq-map-minimap-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(28, 34, 56, 0.18);
+  background: #113246;
+  cursor: pointer;
+  image-rendering: pixelated;
+}
+
 .base-table {
   display: grid;
   gap: 6px;
@@ -2195,6 +2216,7 @@ button.danger:hover {
   font-weight: 800;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+  white-space: nowrap;
   border: 1px solid rgba(73, 69, 98, 0.24);
 }
 

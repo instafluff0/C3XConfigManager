@@ -3842,7 +3842,10 @@ function serializeBaseConfig(baseRows, defaultMap, mode, commentsByKey = {}) {
     const key = row.key;
     const val = String(row.value ?? '').trim();
     const defaultVal = String(defaultMap[key] ?? '').trim();
-    if (val !== defaultVal && val !== '') {
+    const shouldWrite = mode === 'scenario'
+      ? val !== '' && val !== String(((row && row.hasCustomValue) ? row.customValue : defaultVal) ?? '').trim()
+      : val !== '' && val !== defaultVal;
+    if (shouldWrite) {
       const comments = commentsByKey[key];
       if (comments && comments.length > 0) {
         for (const c of comments) lines.push(c);

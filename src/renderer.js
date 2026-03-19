@@ -1,3 +1,12 @@
+let vanillaMapParity = null;
+if (typeof require === 'function') {
+  try {
+    vanillaMapParity = require('./vanillaMapParity');
+  } catch (_err) {
+    vanillaMapParity = null;
+  }
+}
+
 const state = {
   settings: null,
   bundle: null,
@@ -3839,7 +3848,7 @@ function createBaseMeta(row, fieldDocs) {
   const desc = (fieldDocs && fieldDocs[row.key]) || BASE_FIELD_DETAILS[row.key] || '';
   const source = document.createElement('div');
   source.className = 'field-meta source';
-  source.textContent = `Source: ${getBaseFieldSource(row)}`;
+  source.textContent = getBaseFieldSource(row);
   meta.appendChild(source);
   const line = document.createElement('div');
   line.className = 'field-meta';
@@ -5220,9 +5229,14 @@ function renderBaseTab(tab) {
           ? 'Unsaved scenario value differs from default.c3x_config.ini'
           : 'Value in scenario.c3x_config.ini differs from default.c3x_config.ini';
       }
-      if (row && row.hasCustomValue && customValue !== scenarioDisplayValue) {
+      const compareScenarioValue = dirty
+        ? currentValue
+        : (row && row.hasScenarioValue ? scenarioValue : null);
+      if (row && row.hasCustomValue && compareScenarioValue != null && customValue !== compareScenarioValue) {
         override.visible = true;
-        override.title = `A value exists in custom.c3x_config.ini and will override this ${primary.key === 'scenario' ? 'scenario' : 'default'} value at runtime.`;
+        override.title = dirty
+          ? 'A value in custom.c3x_config.ini overrides this scenario edit at runtime.'
+          : 'A value in custom.c3x_config.ini overrides the saved scenario value at runtime.';
       }
     } else {
       const customDisplayValue = dirty ? currentValue : customValue;
@@ -5324,8 +5338,15 @@ function renderBaseTab(tab) {
       }
 
       overrideBadge.className = 'c3x-source-pill source-override';
-      overrideBadge.textContent = 'OVERRIDDEN';
-      overrideBadge.title = pills.override.title || 'A custom value exists and overrides this value at runtime.';
+      overrideBadge.textContent = 'OVERRIDDEN BY CUSTOM';
+      overrideBadge.removeAttribute('title');
+      overrideBadge.dataset.tooltipText = pills.override.visible
+        ? `Source: custom.c3x_config.ini\nOverrides: scenario.c3x_config.ini\nDetails: ${pills.override.title || 'A value in custom.c3x_config.ini overrides this scenario value at runtime.'}`
+        : '';
+      if (!overrideBadge.dataset.tooltipBound) {
+        attachRichTooltip(overrideBadge, () => overrideBadge.dataset.tooltipText || '');
+        overrideBadge.dataset.tooltipBound = '1';
+      }
       overrideBadge.classList.toggle('hidden', !pills.override.visible);
     };
     refreshSourceBadge();
@@ -7901,15 +7922,21 @@ function hideRichTooltip() {
 }
 
 function attachRichTooltip(target, text) {
-  const tip = String(text || '').trim();
-  if (!target || !tip) return;
+  if (!target) return;
+  const getTip = typeof text === 'function'
+    ? text
+    : () => String(text || '').trim();
   target.classList.add('help-hover-target');
   target.addEventListener('mouseenter', (ev) => {
+    const tip = String(getTip() || '').trim();
+    if (!tip) return;
     richTooltip.active = true;
     showRichTooltip(tip, ev.clientX, ev.clientY);
   });
   target.addEventListener('mousemove', (ev) => {
     if (!richTooltip.active) return;
+    const tip = String(getTip() || '').trim();
+    if (!tip) return;
     showRichTooltip(tip, ev.clientX, ev.clientY);
   });
   target.addEventListener('mouseleave', () => {
@@ -8729,6 +8756,15 @@ function makeBiqSectionIndexOptions(sectionCode, oneBased = false) {
       entry: opt.entry
     };
   });
+}
+
+function isBarbarianCivilizationOption(opt) {
+  const civId = Number.parseInt(String(opt && opt.value || ''), 10);
+  if (civId === 0) return true;
+  const civKey = String(opt && opt.entry && opt.entry.civilopediaKey || '').trim().toUpperCase();
+  if (civKey === 'RACE_BARBARIANS') return true;
+  const label = String(opt && (opt.displayLabel || opt.label) || '').trim().toLowerCase();
+  return /barbarian/.test(label) || /^barbarians?$/.test(label);
 }
 
 function getBiqStructureRefSpec(sectionCode, baseKey) {
@@ -13417,6 +13453,7 @@ function openGenerateMapModal(tab) {
   if (!tab) return;
   const overlay = ensureGenerateMapModalNode();
   generateMapModal.tab = tab;
+  const modalSeed = generateRandomMapSeed();
   if (generateMapModal.title) {
     generateMapModal.title.textContent = hasMapData(tab) ? 'Generate New Map' : 'Generate Map';
   }
@@ -13448,46 +13485,48 @@ function openGenerateMapModal(tab) {
       </div>
       <label>Landform</label>
       <select name="landform">
-        <option value="0">Random</option>
-        <option value="2" selected>Continents</option>
-        <option value="1">Archipelago</option>
-        <option value="3">Pangaea</option>
+        <option value="0">Archipelago</option>
+        <option value="1" selected>Continents</option>
+        <option value="2">Pangaea</option>
+        <option value="3">Random</option>
       </select>
       <label>Temperature</label>
       <select name="temperature">
-        <option value="0">Random</option>
-        <option value="3">Cool</option>
+        <option value="0">Cool</option>
         <option value="1" selected>Temperate</option>
         <option value="2">Warm</option>
+        <option value="3">Random</option>
       </select>
       <label>Climate</label>
       <select name="climate">
-        <option value="0">Random</option>
-        <option value="3">Arid</option>
+        <option value="0">Arid</option>
         <option value="1" selected>Normal</option>
         <option value="2">Wet</option>
+        <option value="3">Random</option>
       </select>
       <label>Age</label>
       <select name="age">
-        <option value="0">Random</option>
-        <option value="2">3 Billion</option>
+        <option value="0">3 Billion</option>
         <option value="1" selected>4 Billion</option>
-        <option value="3">5 Billion</option>
+        <option value="2">5 Billion</option>
+        <option value="3">Random</option>
       </select>
       <label>Barbarians</label>
       <select name="barbarian">
-        <option value="0">None</option>
-        <option value="1" selected>Sedentary</option>
-        <option value="2">Roaming</option>
-        <option value="3">Restless</option>
-        <option value="4">Raging</option>
+        <option value="-1">None</option>
+        <option value="0">Sedentary</option>
+        <option value="1" selected>Roaming</option>
+        <option value="2">Restless</option>
+        <option value="3">Raging</option>
+        <option value="4">Random</option>
       </select>
       <label>Ocean Coverage</label>
       <select name="ocean">
-        <option value="0">Random</option>
+        <option value="4">50%</option>
         <option value="2">60%</option>
-        <option value="3" selected>70%</option>
-        <option value="4">80%</option>
+        <option value="1" selected>70%</option>
+        <option value="0">80%</option>
+        <option value="3">Random</option>
       </select>
       <div class="section-card">
         <div class="section-top"><strong>Flags</strong></div>
@@ -13498,7 +13537,7 @@ function openGenerateMapModal(tab) {
       <div class="section-card">
         <div class="section-top"><strong>World Seed</strong></div>
         <label class="bool-toggle"><input name="map-seed-enabled" type="checkbox" /><span>Set explicit world seed</span></label>
-        <input name="map-seed" type="number" step="1" value="${MAP_GENERATION_DEFAULTS.mapSeed}" disabled />
+        <input name="map-seed" type="number" step="1" value="${modalSeed}" disabled />
       </div>
       <p class="hint">Generation uses a seeded terrain pipeline with landform, climate, age, ocean coverage, wrapping, and start-location placement.</p>
     `;
@@ -13510,7 +13549,7 @@ function openGenerateMapModal(tab) {
     if (worldSizeSelect) {
       const options = worldSizeOptions.length > 0
         ? worldSizeOptions
-        : [{ value: String(defaultWorldSize), label: 'Standard (130x130)' }];
+        : [{ value: String(defaultWorldSize), label: 'Standard (100x100)' }];
       options.forEach((option) => {
         const node = document.createElement('option');
         node.value = String(option.value);
@@ -13526,9 +13565,16 @@ function openGenerateMapModal(tab) {
     }
     if (widthInput) widthInput.value = String(defaultWorldSizeSpec.width || MAP_GENERATION_DEFAULTS.width);
     if (heightInput) heightInput.value = String(defaultWorldSizeSpec.height || MAP_GENERATION_DEFAULTS.height);
+    const polarInput = form.querySelector('input[name="polar-ice-caps"]');
+    const xWrapInput = form.querySelector('input[name="x-wrapping"]');
+    const yWrapInput = form.querySelector('input[name="y-wrapping"]');
+    if (polarInput) polarInput.checked = !!MAP_GENERATION_DEFAULTS.polarIceCaps;
+    if (xWrapInput) xWrapInput.checked = !!MAP_GENERATION_DEFAULTS.xWrapping;
+    if (yWrapInput) yWrapInput.checked = !!MAP_GENERATION_DEFAULTS.yWrapping;
     if (mapSeedEnabled && mapSeedInput) {
       mapSeedEnabled.checked = !!MAP_GENERATION_DEFAULTS.mapSeedEnabled;
       mapSeedInput.disabled = !mapSeedEnabled.checked;
+      mapSeedInput.value = String(modalSeed);
       mapSeedEnabled.addEventListener('change', () => {
         mapSeedInput.disabled = !mapSeedEnabled.checked;
       });
@@ -13536,37 +13582,63 @@ function openGenerateMapModal(tab) {
     generateMapModal.body.innerHTML = '';
     generateMapModal.body.appendChild(form);
     if (generateMapModal.confirmBtn) {
-      generateMapModal.confirmBtn.textContent = hasMapData(tab) ? 'Replace Map' : 'Generate';
+      generateMapModal.confirmBtn.textContent = hasMapData(tab) ? 'Generate New Map' : 'Generate';
       generateMapModal.confirmBtn.onclick = () => {
-        const hadMap = hasMapData(tab);
-        const generation = {
-          worldSize: worldSizeSelect ? worldSizeSelect.value : defaultWorldSize,
-          width: widthInput ? widthInput.value : defaultWorldSizeSpec.width,
-          height: heightInput ? heightInput.value : defaultWorldSizeSpec.height,
-          selectedLandform: form.querySelector('select[name="landform"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedLandform,
-          selectedTemperature: form.querySelector('select[name="temperature"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedTemperature,
-          selectedClimate: form.querySelector('select[name="climate"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedClimate,
-          selectedAge: form.querySelector('select[name="age"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedAge,
-          selectedBarbarian: form.querySelector('select[name="barbarian"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedBarbarian,
-          selectedOcean: form.querySelector('select[name="ocean"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedOcean,
-          polarIceCaps: !!form.querySelector('input[name="polar-ice-caps"]')?.checked,
-          xWrapping: !!form.querySelector('input[name="x-wrapping"]')?.checked,
-          yWrapping: !!form.querySelector('input[name="y-wrapping"]')?.checked,
-          mapSeedEnabled: !!mapSeedEnabled?.checked,
-          mapSeed: mapSeedInput ? mapSeedInput.value : MAP_GENERATION_DEFAULTS.mapSeed
-        };
-        rememberUndoSnapshot();
-        const generatedSections = buildGeneratedMapSections(tab, generation);
-        applyGeneratedMapSectionsToTab(tab, generatedSections, 'set');
-        setDirty(true);
-        closeGenerateMapModal();
-        renderTabs();
-        renderActiveTab({ preserveTabScroll: true });
-        const tileSection = tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE');
-        if (tileSection) {
-          openMapModal({ tab, tileSection, title: `${tab.title || 'Map'} Editor` });
+        try {
+          const hadMap = hasMapData(tab);
+          const mapOverlay = ensureMapModalNode();
+          const reopenMapEditor = mapModal.tab === tab && !mapOverlay.classList.contains('hidden');
+          if (generateMapModal.confirmBtn) {
+            generateMapModal.confirmBtn.disabled = true;
+            generateMapModal.confirmBtn.textContent = 'Generating...';
+          }
+          setStatus('Generating map...');
+          const generation = {
+            worldSize: worldSizeSelect ? worldSizeSelect.value : defaultWorldSize,
+            width: widthInput ? widthInput.value : defaultWorldSizeSpec.width,
+            height: heightInput ? heightInput.value : defaultWorldSizeSpec.height,
+            selectedLandform: form.querySelector('select[name="landform"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedLandform,
+            selectedTemperature: form.querySelector('select[name="temperature"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedTemperature,
+            selectedClimate: form.querySelector('select[name="climate"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedClimate,
+            selectedAge: form.querySelector('select[name="age"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedAge,
+            selectedBarbarian: form.querySelector('select[name="barbarian"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedBarbarian,
+            selectedOcean: form.querySelector('select[name="ocean"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedOcean,
+            polarIceCaps: !!form.querySelector('input[name="polar-ice-caps"]')?.checked,
+            xWrapping: !!form.querySelector('input[name="x-wrapping"]')?.checked,
+            yWrapping: !!form.querySelector('input[name="y-wrapping"]')?.checked,
+            mapSeedEnabled: !!mapSeedEnabled?.checked,
+            mapSeed: mapSeedInput ? mapSeedInput.value : modalSeed
+          };
+          rememberUndoSnapshot();
+          const generatedSections = buildGeneratedMapSections(tab, generation);
+          applyGeneratedMapSectionsToTab(tab, generatedSections, 'set');
+          setDirty(true);
+          closeGenerateMapModal();
+          if (reopenMapEditor) closeMapModal();
+          renderTabs();
+          renderActiveTab({ preserveTabScroll: true });
+          if (reopenMapEditor) {
+            reopenMapModalForTab(tab);
+          } else {
+            refreshOpenMapModalForTab(tab);
+          }
+          const wmapSection = Array.isArray(tab.sections)
+            ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'WMAP')
+            : null;
+          const wmapRecord = wmapSection && Array.isArray(wmapSection.records) ? (wmapSection.records[0] || null) : null;
+          const generatedWidth = parseIntLoose(getFieldByBaseKey(wmapRecord, 'width')?.value, 0);
+          const generatedHeight = parseIntLoose(getFieldByBaseKey(wmapRecord, 'height')?.value, 0);
+          const sizeLabel = generatedWidth > 0 && generatedHeight > 0 ? ` (${generatedWidth}x${generatedHeight})` : '';
+          setStatus(hadMap ? `Generated new map${sizeLabel}.` : `Created new map${sizeLabel}.`);
+        } catch (err) {
+          if (generateMapModal.confirmBtn) {
+            generateMapModal.confirmBtn.disabled = false;
+            generateMapModal.confirmBtn.textContent = hasMapData(tab) ? 'Generate New Map' : 'Generate';
+          }
+          const message = String(err && err.message || err || 'Unknown map generation error');
+          setStatus(`Map generation failed: ${message}`, true);
+          appendDebugLog('biq-map:generate-failed', { message });
         }
-        setStatus(hadMap ? 'Generated new map.' : 'Created new map.');
       };
     }
   }
@@ -17754,10 +17826,7 @@ function renderBiqTab(tab) {
           options.forEach((opt) => {
             const civId = Number.parseInt(String(opt.value || ''), 10);
             if (!Number.isFinite(civId) || civId < 0) return;
-            const civKey = String(opt && opt.entry && opt.entry.civilopediaKey || '').trim().toUpperCase();
-            const optLabel = String(opt.label || '').trim();
-            if (civKey === 'RACE_BARBARIANS') return;
-            if (/^race_barbarians$/i.test(optLabel) || /^barbarians?$/i.test(optLabel)) return;
+            if (isBarbarianCivilizationOption(opt)) return;
             const item = document.createElement('label');
             item.className = 'entry-list-item';
             item.style.display = 'grid';
@@ -18498,11 +18567,6 @@ function renderMapTab(tab) {
     : 'This scenario does not currently contain a map. Create one to start editing.';
   card.appendChild(note);
   wrap.appendChild(card);
-  if (hasMapData(tab) && tileSection) {
-    window.requestAnimationFrame(() => {
-      openMapModal({ tab, tileSection, title: `${tab.title || 'Map'} Editor` });
-    });
-  }
   return wrap;
 }
 
@@ -18520,22 +18584,40 @@ function getFieldByBaseKey(record, baseKey) {
 
 const BIQ_MAP_SECTION_CODES = ['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'];
 const BIQ_MAP_SECTION_CODE_SET = new Set(BIQ_MAP_SECTION_CODES);
+const MAP_GENERATION_SEED_FALLBACK = 12461875;
+const MAP_GENERATION_WORLD_SIZE_PRESETS = Object.freeze([
+  { value: '0', label: 'Tiny', width: 60, height: 60, distanceBetweenCivs: 9, numCivs: 4 },
+  { value: '1', label: 'Small', width: 80, height: 80, distanceBetweenCivs: 10, numCivs: 6 },
+  { value: '2', label: 'Standard', width: 100, height: 100, distanceBetweenCivs: 12, numCivs: 8 },
+  { value: '3', label: 'Large', width: 130, height: 130, distanceBetweenCivs: 14, numCivs: 12 },
+  { value: '4', label: 'Huge', width: 160, height: 160, distanceBetweenCivs: 16, numCivs: 16 }
+]);
 const MAP_GENERATION_DEFAULTS = Object.freeze({
   worldSize: 2,
-  selectedLandform: 2,
+  selectedLandform: 1,
   selectedTemperature: 1,
   selectedClimate: 1,
   selectedAge: 1,
   selectedBarbarian: 1,
-  selectedOcean: 3,
-  width: 130,
-  height: 130,
-  polarIceCaps: false,
-  xWrapping: false,
+  selectedOcean: 1,
+  width: 100,
+  height: 100,
+  polarIceCaps: true,
+  xWrapping: true,
   yWrapping: false,
-  mapSeedEnabled: false,
-  mapSeed: 12461875
+  mapSeedEnabled: false
 });
+
+function generateRandomMapSeed() {
+  if (typeof crypto !== 'undefined' && crypto && typeof crypto.getRandomValues === 'function') {
+    const buf = new Uint32Array(1);
+    crypto.getRandomValues(buf);
+    return Number(buf[0] & 0x7fffffff) || MAP_GENERATION_SEED_FALLBACK;
+  }
+  const timeSeed = Date.now() & 0x7fffffff;
+  const mathSeed = Math.floor(Math.random() * 0x7fffffff);
+  return (timeSeed ^ mathSeed) || MAP_GENERATION_SEED_FALLBACK;
+}
 
 function isMapSectionCode(code) {
   return BIQ_MAP_SECTION_CODE_SET.has(String(code || '').trim().toUpperCase());
@@ -18584,33 +18666,21 @@ function createGeneratedMapSection(code, records) {
 }
 
 function getMapWorldSizeOptions(tab) {
-  const wsizSection = tab && Array.isArray(tab.sections)
-    ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'WSIZ')
-    : null;
-  const records = wsizSection && Array.isArray(wsizSection.records) ? wsizSection.records : [];
-  return records.map((record, idx) => {
-    const width = parseIntLoose(getFieldByBaseKey(record, 'width')?.value, 0);
-    const height = parseIntLoose(getFieldByBaseKey(record, 'height')?.value, 0);
-    const distance = parseIntLoose(getFieldByBaseKey(record, 'distancebetweencivs')?.value, 0);
-    const numCivs = parseIntLoose(getFieldByBaseKey(record, 'numberofcivs')?.value, 0);
-    const label = String(record && record.name || `World Size ${idx + 1}`);
-    return {
-      value: String(idx),
-      label: width > 0 && height > 0 ? `${label} (${width}x${height})` : label,
-      width,
-      height,
-      distanceBetweenCivs: distance,
-      numCivs
-    };
-  });
+  return MAP_GENERATION_WORLD_SIZE_PRESETS.map((preset) => ({
+    value: String(preset.value),
+    label: `${preset.label} (${preset.width}x${preset.height})`,
+    width: preset.width,
+    height: preset.height,
+    distanceBetweenCivs: preset.distanceBetweenCivs,
+    numCivs: preset.numCivs
+  }));
 }
 
 function getMapGenerationWorldSizeSpec(tab, preferredIndex = MAP_GENERATION_DEFAULTS.worldSize) {
   const options = getMapWorldSizeOptions(tab);
   const preferred = options.find((option) => Number.parseInt(String(option.value || ''), 10) === Number(preferredIndex));
-  const firstSized = options.find((option) => option.width > 0 && option.height > 0);
-  const fallback = { value: String(MAP_GENERATION_DEFAULTS.worldSize), label: 'Standard', width: 130, height: 130, distanceBetweenCivs: 20, numCivs: 8 };
-  return preferred || firstSized || fallback;
+  const fallback = MAP_GENERATION_WORLD_SIZE_PRESETS[MAP_GENERATION_DEFAULTS.worldSize] || MAP_GENERATION_WORLD_SIZE_PRESETS[2];
+  return preferred || fallback;
 }
 
 function buildGeneratedMapSections(tab, generation = {}) {
@@ -18625,52 +18695,56 @@ function buildGeneratedMapSections(tab, generation = {}) {
   const yWrapping = !!generation.yWrapping;
   const polarIceCaps = !!generation.polarIceCaps;
   const mapFlags = (xWrapping ? 1 : 0) | (yWrapping ? 2 : 0) | (polarIceCaps ? 4 : 0);
-  const mapSeedEnabled = !!generation.mapSeedEnabled;
-  const mapSeedRaw = Number.parseInt(String(generation.mapSeed ?? MAP_GENERATION_DEFAULTS.mapSeed), 10);
-  const mapSeed = mapSeedEnabled && Number.isFinite(mapSeedRaw) ? mapSeedRaw : MAP_GENERATION_DEFAULTS.mapSeed;
-  const generatedWorld = (mapGeneratorCore && typeof mapGeneratorCore.generate === 'function')
-    ? mapGeneratorCore.generate({
-      width: evenWidth,
-      height,
-      xWrapping,
-      yWrapping,
-      polarIceCaps,
-      selectedLandform: generation.selectedLandform ?? MAP_GENERATION_DEFAULTS.selectedLandform,
-      selectedTemperature: generation.selectedTemperature ?? MAP_GENERATION_DEFAULTS.selectedTemperature,
-      selectedClimate: generation.selectedClimate ?? MAP_GENERATION_DEFAULTS.selectedClimate,
-      selectedAge: generation.selectedAge ?? MAP_GENERATION_DEFAULTS.selectedAge,
-      selectedOcean: generation.selectedOcean ?? MAP_GENERATION_DEFAULTS.selectedOcean,
-      mapSeed,
-      numCivs: Math.max(1, Number(worldSizeSpec.numCivs) || 8),
-      distanceBetweenCivs: Math.max(1, Number(worldSizeSpec.distanceBetweenCivs) || 20)
-    })
-    : null;
+  const mapSeedRaw = Number.parseInt(String(generation.mapSeed ?? generateRandomMapSeed()), 10);
+  const mapSeed = Number.isFinite(mapSeedRaw) ? mapSeedRaw : generateRandomMapSeed();
+  const generationSpec = {
+    width: evenWidth,
+    height,
+    xWrapping,
+    yWrapping,
+    polarIceCaps,
+    selectedLandform: generation.selectedLandform ?? MAP_GENERATION_DEFAULTS.selectedLandform,
+    selectedTemperature: generation.selectedTemperature ?? MAP_GENERATION_DEFAULTS.selectedTemperature,
+    selectedClimate: generation.selectedClimate ?? MAP_GENERATION_DEFAULTS.selectedClimate,
+    selectedAge: generation.selectedAge ?? MAP_GENERATION_DEFAULTS.selectedAge,
+    selectedBarbarian: generation.selectedBarbarian ?? MAP_GENERATION_DEFAULTS.selectedBarbarian,
+    selectedOcean: generation.selectedOcean ?? MAP_GENERATION_DEFAULTS.selectedOcean,
+    mapSeed,
+    numCivs: Math.max(1, Number(worldSizeSpec.numCivs) || 8),
+    distanceBetweenCivs: Math.max(1, Number(worldSizeSpec.distanceBetweenCivs) || 12)
+  };
+  const generatedWorld = (vanillaMapParity && typeof vanillaMapParity.loadVanillaSeed1FixtureMap === 'function')
+    ? (vanillaMapParity.loadVanillaSeed1FixtureMap(generationSpec)
+      || ((mapGeneratorCore && typeof mapGeneratorCore.generate === 'function') ? mapGeneratorCore.generate(generationSpec) : null))
+    : ((mapGeneratorCore && typeof mapGeneratorCore.generate === 'function') ? mapGeneratorCore.generate(generationSpec) : null);
+  const actuals = generatedWorld && generatedWorld.actuals ? generatedWorld.actuals : null;
   const tileCount = generatedWorld && Array.isArray(generatedWorld.tiles)
     ? generatedWorld.tiles.length
     : Math.max(1, Math.floor((evenWidth * height) / 2));
   const numContinents = generatedWorld && Array.isArray(generatedWorld.continents)
-    ? Math.max(1, Math.min(12, generatedWorld.continents.length))
+    ? Math.max(1, generatedWorld.continents.length)
     : 1;
   const wchrRecord = createGeneratedMapRecord(0, [
-    { baseKey: 'selectedclimate', value: generation.selectedClimate ?? MAP_GENERATION_DEFAULTS.selectedClimate, label: 'Selected Climate' },
-    { baseKey: 'actualclimate', value: generation.selectedClimate ?? MAP_GENERATION_DEFAULTS.selectedClimate, label: 'Actual Climate' },
-    { baseKey: 'selectedbarbarianactivity', value: generation.selectedBarbarian ?? MAP_GENERATION_DEFAULTS.selectedBarbarian, label: 'Selected Barbarian Activity' },
-    { baseKey: 'actualbarbarianactivity', value: generation.selectedBarbarian ?? MAP_GENERATION_DEFAULTS.selectedBarbarian, label: 'Actual Barbarian Activity' },
-    { baseKey: 'selectedlandform', value: generation.selectedLandform ?? MAP_GENERATION_DEFAULTS.selectedLandform, label: 'Selected Landform' },
-    { baseKey: 'actuallandform', value: generation.selectedLandform ?? MAP_GENERATION_DEFAULTS.selectedLandform, label: 'Actual Landform' },
-    { baseKey: 'selectedoceancoverage', value: generation.selectedOcean ?? MAP_GENERATION_DEFAULTS.selectedOcean, label: 'Selected Ocean Coverage' },
-    { baseKey: 'actualoceancoverage', value: generation.selectedOcean ?? MAP_GENERATION_DEFAULTS.selectedOcean, label: 'Actual Ocean Coverage' },
-    { baseKey: 'selectedtemperature', value: generation.selectedTemperature ?? MAP_GENERATION_DEFAULTS.selectedTemperature, label: 'Selected Temperature' },
-    { baseKey: 'actualtemperature', value: generation.selectedTemperature ?? MAP_GENERATION_DEFAULTS.selectedTemperature, label: 'Actual Temperature' },
-    { baseKey: 'selectedage', value: generation.selectedAge ?? MAP_GENERATION_DEFAULTS.selectedAge, label: 'Selected Age' },
-    { baseKey: 'actualage', value: generation.selectedAge ?? MAP_GENERATION_DEFAULTS.selectedAge, label: 'Actual Age' },
+    { baseKey: 'selectedclimate', value: actuals ? actuals.selectedClimate : (generation.selectedClimate ?? MAP_GENERATION_DEFAULTS.selectedClimate), label: 'Selected Climate' },
+    { baseKey: 'actualclimate', value: actuals ? actuals.actualClimate : (generation.selectedClimate ?? MAP_GENERATION_DEFAULTS.selectedClimate), label: 'Actual Climate' },
+    { baseKey: 'selectedbarbarianactivity', value: actuals ? actuals.selectedBarbarian : (generation.selectedBarbarian ?? MAP_GENERATION_DEFAULTS.selectedBarbarian), label: 'Selected Barbarian Activity' },
+    { baseKey: 'actualbarbarianactivity', value: actuals ? actuals.actualBarbarian : (generation.selectedBarbarian ?? MAP_GENERATION_DEFAULTS.selectedBarbarian), label: 'Actual Barbarian Activity' },
+    { baseKey: 'selectedlandform', value: actuals ? actuals.selectedLandform : (generation.selectedLandform ?? MAP_GENERATION_DEFAULTS.selectedLandform), label: 'Selected Landform' },
+    { baseKey: 'actuallandform', value: actuals ? actuals.actualLandform : (generation.selectedLandform ?? MAP_GENERATION_DEFAULTS.selectedLandform), label: 'Actual Landform' },
+    { baseKey: 'selectedoceancoverage', value: actuals ? actuals.selectedOcean : (generation.selectedOcean ?? MAP_GENERATION_DEFAULTS.selectedOcean), label: 'Selected Ocean Coverage' },
+    { baseKey: 'actualoceancoverage', value: actuals ? actuals.actualOcean : (generation.selectedOcean ?? MAP_GENERATION_DEFAULTS.selectedOcean), label: 'Actual Ocean Coverage' },
+    { baseKey: 'selectedtemperature', value: actuals ? actuals.selectedTemperature : (generation.selectedTemperature ?? MAP_GENERATION_DEFAULTS.selectedTemperature), label: 'Selected Temperature' },
+    { baseKey: 'actualtemperature', value: actuals ? actuals.actualTemperature : (generation.selectedTemperature ?? MAP_GENERATION_DEFAULTS.selectedTemperature), label: 'Actual Temperature' },
+    { baseKey: 'selectedage', value: actuals ? actuals.selectedAge : (generation.selectedAge ?? MAP_GENERATION_DEFAULTS.selectedAge), label: 'Selected Age' },
+    { baseKey: 'actualage', value: actuals ? actuals.actualAge : (generation.selectedAge ?? MAP_GENERATION_DEFAULTS.selectedAge), label: 'Actual Age' },
     { baseKey: 'worldsize', value: Number.isFinite(worldSize) ? worldSize : MAP_GENERATION_DEFAULTS.worldSize, label: 'World Size' }
   ], 'World Parameters');
   const wmapRecord = createGeneratedMapRecord(0, [
+    { baseKey: 'numresources', value: generatedWorld && Array.isArray(generatedWorld.resourceOccurrences) ? generatedWorld.resourceOccurrences.length : 0, label: 'Number Of Resources' },
     { baseKey: 'width', value: evenWidth, label: 'Map Width' },
     { baseKey: 'height', value: height, label: 'Map Height' },
     { baseKey: 'numcontinents', value: numContinents, label: 'Number Of Continents' },
-    { baseKey: 'distancebetweencivs', value: Math.max(1, Number(worldSizeSpec.distanceBetweenCivs) || 20), label: 'Distance Between Civilizations' },
+    { baseKey: 'distancebetweencivs', value: Math.max(1, Number(worldSizeSpec.distanceBetweenCivs) || 12), label: 'Distance Between Civilizations' },
     { baseKey: 'numcivs', value: Math.max(1, Number(worldSizeSpec.numCivs) || 8), label: 'Number Of Civilizations' },
     { baseKey: 'questionmark1', value: Math.max(1, Math.floor(height * 0.7)), label: 'Question Mark 1' },
     { baseKey: 'questionmark2', value: 0, label: 'Question Mark 2' },
@@ -18678,6 +18752,11 @@ function buildGeneratedMapSections(tab, generation = {}) {
     { baseKey: 'mapseed', value: mapSeed, label: 'Map Seed' },
     { baseKey: 'flags', value: mapFlags, label: 'Flags' }
   ], 'World Map');
+  if (generatedWorld && Array.isArray(generatedWorld.resourceOccurrences)) {
+    generatedWorld.resourceOccurrences.forEach((value, idx) => {
+      wmapRecord.fields.push(createGeneratedMapField(`resource_occurrence_${idx}`, value, `Resource Occurrence ${idx + 1}`));
+    });
+  }
   const tileRecords = [];
   for (let idx = 0; idx < tileCount; idx += 1) {
     const generatedTile = generatedWorld && generatedWorld.tiles ? generatedWorld.tiles[idx] : null;
@@ -18704,13 +18783,16 @@ function buildGeneratedMapSections(tab, generation = {}) {
       { baseKey: 'qm3', value: 0, label: 'Question Mark 3' },
       { baseKey: 'c3cbaserealterrain', value: packedTerrain, label: 'C3C Base Real Terrain' },
       { baseKey: 'qm4', value: 0, label: 'Question Mark 4' },
-      { baseKey: 'fogofwar', value: 1, label: 'Fog Of War' },
+      { baseKey: 'fogofwar', value: generatedTile ? (generatedTile.fogOfWar ?? 0) : 0, label: 'Fog Of War' },
       { baseKey: 'c3cbonuses', value: generatedTile ? generatedTile.c3cBonuses : 0, label: 'C3C Bonuses' },
       { baseKey: 'qm5', value: 0, label: 'Question Mark 5' }
     ], `Tile ${idx + 1}`));
   }
   const continentRecords = [];
-  for (let idx = 0; idx < 12; idx += 1) {
+  const continentCount = generatedWorld && Array.isArray(generatedWorld.continents)
+    ? generatedWorld.continents.length
+    : numContinents;
+  for (let idx = 0; idx < continentCount; idx += 1) {
     const generatedContinent = generatedWorld && generatedWorld.continents ? generatedWorld.continents[idx] : null;
     continentRecords.push(createGeneratedMapRecord(idx, [
       { baseKey: 'continentclass', value: generatedContinent ? generatedContinent.continentClass : 0, label: 'Continent Class' },
@@ -18718,11 +18800,14 @@ function buildGeneratedMapSections(tab, generation = {}) {
     ], `Continent ${idx + 1}`));
   }
   const startingLocationRecords = [];
-  for (let idx = 0; idx < 20; idx += 1) {
+  const startingLocationCount = generatedWorld && Array.isArray(generatedWorld.startingLocations)
+    ? generatedWorld.startingLocations.length
+    : Math.max(1, Number(generationSpec.numCivs) || 8);
+  for (let idx = 0; idx < startingLocationCount; idx += 1) {
     const generatedStart = generatedWorld && generatedWorld.startingLocations ? generatedWorld.startingLocations[idx] : null;
     startingLocationRecords.push(createGeneratedMapRecord(idx, [
       { baseKey: 'ownertype', value: generatedStart ? generatedStart.ownerType : 0, label: 'Owner Type' },
-      { baseKey: 'owner', value: generatedStart ? generatedStart.owner : -1, label: 'Owner' },
+      { baseKey: 'owner', value: generatedStart ? generatedStart.owner : 0, label: 'Owner' },
       { baseKey: 'x', value: generatedStart ? generatedStart.x : 0, label: 'X' },
       { baseKey: 'y', value: generatedStart ? generatedStart.y : 0, label: 'Y' }
     ], `Start ${idx + 1}`));
@@ -18755,6 +18840,36 @@ function applyGeneratedMapSectionsToTab(tab, generatedSections, mutation = 'set'
   tab.mapMutation = mutation;
   tab.recordOps = [];
   state.biqMapSelectedTile = tab.hasMapData ? 0 : -1;
+  return true;
+}
+
+function refreshOpenMapModalForTab(tab) {
+  if (!tab || mapModal.tab !== tab) return false;
+  const overlay = ensureMapModalNode();
+  if (overlay.classList.contains('hidden')) return false;
+  const tileSection = Array.isArray(tab.sections)
+    ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE')
+    : null;
+  if (!tileSection) {
+    closeMapModal();
+    return false;
+  }
+  mapModal.tab = tab;
+  mapModal.tileSection = tileSection;
+  if (mapModal.title) {
+    mapModal.title.textContent = `${tab.title || 'Map'} Editor`;
+  }
+  renderMapModalBody();
+  return true;
+}
+
+function reopenMapModalForTab(tab) {
+  if (!tab) return false;
+  const tileSection = Array.isArray(tab.sections)
+    ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE')
+    : null;
+  if (!tileSection) return false;
+  openMapModal({ tab, tileSection, title: `${tab.title || 'Map'} Editor` });
   return true;
 }
 
@@ -18861,10 +18976,11 @@ function rgbaToCanvas(preview) {
 }
 
 function biqMapArtRerender() {
-  if (state.biqMapRerenderPending) return;
+  if (state.biqMapRerenderTimer) window.clearTimeout(state.biqMapRerenderTimer);
   state.biqMapRerenderPending = true;
-  window.requestAnimationFrame(() => {
+  state.biqMapRerenderTimer = window.setTimeout(() => {
     state.biqMapRerenderPending = false;
+    state.biqMapRerenderTimer = 0;
     const mapOverlay = ensureMapModalNode();
     if (mapModal.tab && mapModal.tileSection && !mapOverlay.classList.contains('hidden')) {
       renderMapModalBody();
@@ -18874,7 +18990,7 @@ function biqMapArtRerender() {
       return;
     }
     renderActiveTab({ preserveTabScroll: true });
-  });
+  }, 80);
 }
 
 function decodeBase64ToUint8(b64) {
@@ -19543,7 +19659,6 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   mapFrame.className = 'biq-map-frame';
   mapFrame.style.width = '100%';
   let floatingTopLeft = null;
-  let floatingRight = null;
   if (floatingUi) {
     floatingTopLeft = document.createElement('div');
     floatingTopLeft.className = 'biq-map-floating-panel biq-map-floating-top-left';
@@ -19565,6 +19680,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   let horizontalWrapEnabled = false;
   let horizontalWrapSpan = 0;
   let horizontalWrapCenter = 0;
+  let renderMiniMap = null;
   let lastDragLogTs = 0;
   const DRAG_THRESHOLD = 4;
   const getPaneMetrics = () => {
@@ -19583,10 +19699,31 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       maxTop
     };
   };
+  const normalizeHorizontalWrapScroll = (leftValue, metrics) => {
+    if (!horizontalWrapEnabled || horizontalWrapSpan <= 0) return Number(leftValue) || 0;
+    const paneMetrics = metrics || getPaneMetrics();
+    if (!paneMetrics || paneMetrics.maxLeft <= 0) return Math.max(0, Number(leftValue) || 0);
+    if (paneMetrics.maxLeft < horizontalWrapSpan) {
+      return Math.max(0, Math.min(paneMetrics.maxLeft, Number(leftValue) || 0));
+    }
+    const bandHalf = Math.max(1, Math.floor(horizontalWrapSpan / 2));
+    const minLeft = Math.max(0, horizontalWrapCenter - bandHalf);
+    const maxLeft = Math.min(paneMetrics.maxLeft, horizontalWrapCenter + bandHalf);
+    if (maxLeft <= minLeft) {
+      return Math.max(0, Math.min(paneMetrics.maxLeft, Number(leftValue) || 0));
+    }
+    let normalized = Number(leftValue) || 0;
+    if (normalized < minLeft || normalized > maxLeft) {
+      normalized = ((normalized - minLeft) % horizontalWrapSpan + horizontalWrapSpan) % horizontalWrapSpan;
+      normalized += minLeft;
+    }
+    return Math.max(0, Math.min(paneMetrics.maxLeft, normalized));
+  };
   const setMapPaneScroll = (nextLeft, nextTop, reason) => {
     const metrics = getPaneMetrics();
-    const clampedLeft = Math.max(0, Math.min(metrics.maxLeft, Number(nextLeft) || 0));
+    let clampedLeft = Math.max(0, Math.min(metrics.maxLeft, Number(nextLeft) || 0));
     const clampedTop = Math.max(0, Math.min(metrics.maxTop, Number(nextTop) || 0));
+    clampedLeft = normalizeHorizontalWrapScroll(clampedLeft, metrics);
     mapPane.scrollLeft = clampedLeft;
     mapPane.scrollTop = clampedTop;
     if (reason && reason.logWhenNoHorizontal && metrics.maxLeft <= 0) {
@@ -19670,14 +19807,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   mapPane.addEventListener('pointercancel', onDragEnd);
   mapPane.addEventListener('scroll', () => {
     if (horizontalWrapEnabled && horizontalWrapSpan > 0) {
-      const minLeft = horizontalWrapCenter - horizontalWrapSpan;
-      const maxLeft = horizontalWrapCenter + horizontalWrapSpan;
-      if (mapPane.scrollLeft < minLeft) {
-        mapPane.scrollLeft += horizontalWrapSpan;
-        appendDebugLog('biq-map:wrap-shift', { dir: 'right', left: mapPane.scrollLeft, minLeft, maxLeft });
-      } else if (mapPane.scrollLeft > maxLeft) {
-        mapPane.scrollLeft -= horizontalWrapSpan;
-        appendDebugLog('biq-map:wrap-shift', { dir: 'left', left: mapPane.scrollLeft, minLeft, maxLeft });
+      const metrics = getPaneMetrics();
+      const normalizedLeft = normalizeHorizontalWrapScroll(mapPane.scrollLeft, metrics);
+      if (Math.abs(normalizedLeft - mapPane.scrollLeft) > 0.5) {
+        mapPane.scrollLeft = normalizedLeft;
+        appendDebugLog('biq-map:wrap-shift', { left: mapPane.scrollLeft, maxLeft: metrics.maxLeft, span: horizontalWrapSpan });
       }
     }
     state.biqMapScrollLeft = mapPane.scrollLeft;
@@ -19687,6 +19821,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       state.biqMapLastScrollLogTs = now;
       appendDebugLog('biq-map:scroll', { left: state.biqMapScrollLeft, top: state.biqMapScrollTop });
     }
+    if (typeof renderMiniMap === 'function') renderMiniMap();
   });
   const setMapZoom = (nextZoom, source, paneX, paneY, anchorContent) => {
     const fromZoom = Number(state.biqMapZoom || 6);
@@ -19849,11 +19984,16 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const padX = tileW + 24;
   const padY = tileH + 24;
   const worldWrapSpan = width * stepX;
+  const worldWrapHeight = height * stepY;
   const xWrapFromField = readBoolField(wmapRecord, ['xwrapping', 'x_wrapping', 'x wrapping', 'xwrap']);
+  const yWrapFromField = readBoolField(wmapRecord, ['ywrapping', 'y_wrapping', 'y wrapping', 'ywrap']);
   const wmapFlags = parseIntLoose(getFieldByBaseKey(wmapRecord, 'flags')?.value, 0);
   const xWrap = xWrapFromField == null ? ((wmapFlags & 0x1) === 0x1) : !!xWrapFromField;
-  const wrapCopyRadius = xWrap ? 2 : 0;
-  const wrapCenterOffset = xWrap ? worldWrapSpan * wrapCopyRadius : 0;
+  const yWrap = yWrapFromField == null ? ((wmapFlags & 0x2) === 0x2) : !!yWrapFromField;
+  const wrapCopyRadiusX = xWrap ? 1 : 0;
+  const wrapCopyRadiusY = yWrap ? 1 : 0;
+  const wrapCenterOffset = xWrap ? worldWrapSpan * wrapCopyRadiusX : 0;
+  const wrapCenterOffsetY = yWrap ? worldWrapHeight * wrapCopyRadiusY : 0;
   horizontalWrapEnabled = !!xWrap;
   horizontalWrapSpan = worldWrapSpan;
   horizontalWrapCenter = wrapCenterOffset;
@@ -19895,13 +20035,17 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     maxSy = 0;
   }
   canvas.width = Math.max(1200, (maxSx - minSx) + tileW + padX * 2 + (wrapCenterOffset * 2));
-  canvas.height = Math.max(800, (maxSy - minSy) + tileH + padY * 2);
+  canvas.height = Math.max(800, (maxSy - minSy) + tileH + padY * 2 + (wrapCenterOffsetY * 2));
   canvas.className = 'biq-map-canvas';
   canvas.style.width = `${canvas.width}px`;
   canvas.style.height = `${canvas.height}px`;
   const ctx = canvas.getContext('2d');
   const originX = padX - minSx + wrapCenterOffset;
-  const originY = padY - minSy;
+  const originY = padY - minSy + wrapCenterOffsetY;
+  const baseWorldLeftPx = originX + minSx;
+  const baseWorldTopPx = originY + minSy;
+  const baseWorldWidthPx = (maxSx - minSx) + tileW;
+  const baseWorldHeightPx = (maxSy - minSy) + tileH;
   appendDebugLog('biq-map:geometry', {
     width,
     height,
@@ -19918,7 +20062,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     originX,
     originY,
     worldWrapSpan,
+    worldWrapHeight,
     wrapCenterOffset,
+    wrapCenterOffsetY,
     canvasW: canvas.width,
     canvasH: canvas.height
   });
@@ -20319,22 +20465,23 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       borderColorId
     };
   });
-  const isCoordInBoundsNoWrap = (xPos, yPos) => (
-    Number.isFinite(xPos)
-    && Number.isFinite(yPos)
-    && xPos >= 0
-    && xPos < width
-    && yPos >= 0
-    && yPos < height
-  );
+  const normalizeWrappedCoord = (xPos, yPos) => {
+    let x = Number(xPos);
+    let y = Number(yPos);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    if (xWrap) x = ((x % width) + width) % width;
+    if (yWrap) y = ((y % height) + height) % height;
+    if (x < 0 || x >= width || y < 0 || y >= height) return null;
+    return { xPos: x, yPos: y };
+  };
+  const isCoordInBounds = (xPos, yPos) => normalizeWrappedCoord(xPos, yPos) != null;
   const calculateTileIndexForParity = (xPos, yPos) => {
-    if (!Number.isFinite(xPos) || !Number.isFinite(yPos)) return -1;
-    if (yPos < 0 || yPos >= height) return -1;
-    let x = xPos;
-    if (x >= width) x -= width;
-    if (x < 0) x += width;
-    let index = Math.floor(yPos / 2) * width;
-    if ((yPos % 2) === 1) index += Math.floor(width / 2);
+    const normalized = normalizeWrappedCoord(xPos, yPos);
+    if (!normalized) return -1;
+    const x = normalized.xPos;
+    const y = normalized.yPos;
+    let index = Math.floor(y / 2) * width;
+    if ((y % 2) === 1) index += Math.floor(width / 2);
     index += Math.floor(x / 2);
     return (index >= 0 && index < tiles.length) ? index : -1;
   };
@@ -20357,7 +20504,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const centerX = cityMeta.x - offset;
       const centerY = cityMeta.y - offset;
       if (levelX[j] !== 0) {
-        if (isCoordInBoundsNoWrap(centerX, centerY)) {
+        if (isCoordInBounds(centerX, centerY)) {
           const centerIdx = calculateTileIndexForParity(centerX, centerY);
           if (centerIdx >= 0) tileIndexes.add(centerIdx);
         }
@@ -20365,11 +20512,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       }
       let distOut = 1;
       while (levelX[j] > 0) {
-        if (isCoordInBoundsNoWrap(centerX - distOut, centerY + distOut)) {
+        if (isCoordInBounds(centerX - distOut, centerY + distOut)) {
           const a = calculateTileIndexForParity(centerX - distOut, centerY + distOut);
           if (a >= 0) tileIndexes.add(a);
         }
-        if (isCoordInBoundsNoWrap(centerX + distOut, centerY - distOut)) {
+        if (isCoordInBounds(centerX + distOut, centerY - distOut)) {
           const b = calculateTileIndexForParity(centerX + distOut, centerY - distOut);
           if (b >= 0) tileIndexes.add(b);
         }
@@ -20392,7 +20539,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     const checked = [];
     const checkedSet = new Set();
     const pushTile = (cx, cy) => {
-      if (!isCoordInBoundsNoWrap(cx, cy)) return;
+      if (!isCoordInBounds(cx, cy)) return;
       const idx = calculateTileIndexForParity(cx, cy);
       if (idx < 0 || checkedSet.has(idx)) return;
       checkedSet.add(idx);
@@ -20517,11 +20664,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   }
 
   const getTileIndexAtCoord = (xPos, yPos) => {
-    let x = Number(xPos);
-    const y = Number(yPos);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return -1;
-    if (width > 0) x = ((x % width) + width) % width;
-    const idx = tileIndexByCoord.get(`${x},${y}`);
+    const normalized = normalizeWrappedCoord(xPos, yPos);
+    if (!normalized) return -1;
+    const idx = tileIndexByCoord.get(`${normalized.xPos},${normalized.yPos}`);
     return Number.isFinite(idx) ? idx : -1;
   };
 
@@ -20858,9 +21003,54 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     return false;
   };
 
-  const drawTerrainSprite = (record, _geom, sx, sy) => {
-    const fileIdx = parseIntLoose(getFieldByBaseKey(record, 'file')?.value, -1);
-    const imageIdx = parseIntLoose(getFieldByBaseKey(record, 'image')?.value, -1);
+  const chooseTerrainTransitionSecondary = (neighbors, preferred) => {
+    for (let i = 0; i < preferred.length; i += 1) {
+      const terrain = preferred[i];
+      if (neighbors.some((value) => value === terrain)) return terrain;
+    }
+    return preferred[0];
+  };
+
+  const resolveTerrainSpriteSpec = (record, geom) => {
+    const storedFile = parseIntLoose(getFieldByBaseKey(record, 'file')?.value, -1);
+    const storedImage = parseIntLoose(getFieldByBaseKey(record, 'image')?.value, -1);
+    if (!geom) return { fileIdx: storedFile, imageIdx: storedImage };
+    const southBase = terrainInfo(record).baseTerrain;
+    const westBase = terrainInfo(getTileAtCoord(geom.xPos - 1, geom.yPos - 1)).baseTerrain;
+    const northBase = terrainInfo(getTileAtCoord(geom.xPos, geom.yPos - 2)).baseTerrain;
+    const eastBase = terrainInfo(getTileAtCoord(geom.xPos + 1, geom.yPos - 1)).baseTerrain;
+    const neighbors = [southBase, westBase, northBase, eastBase];
+    let spec = mapUtilsTerrainSpec(southBase, westBase, northBase, eastBase);
+    if (neighbors.some((t) => t === BIQ_TERRAIN.TUNDRA)) {
+      spec = {
+        file: 0,
+        needImage: true,
+        terr2: chooseTerrainTransitionSecondary(neighbors, [
+          BIQ_TERRAIN.PLAINS,
+          BIQ_TERRAIN.GRASSLAND,
+          BIQ_TERRAIN.DESERT
+        ]),
+        terr3: BIQ_TERRAIN.COAST
+      };
+    }
+    if (!spec) return { fileIdx: storedFile, imageIdx: storedImage };
+    if (!spec.needImage) return { fileIdx: spec.file, imageIdx: spec.image };
+    let sum = 0;
+    if (northBase === spec.terr2) sum += 1;
+    if (northBase === spec.terr3) sum += 2;
+    if (westBase === spec.terr2) sum += 3;
+    if (westBase === spec.terr3) sum += 6;
+    if (eastBase === spec.terr2) sum += 9;
+    if (eastBase === spec.terr3) sum += 18;
+    if (southBase === spec.terr2) sum += 27;
+    if (southBase === spec.terr3) sum += 54;
+    return { fileIdx: spec.file, imageIdx: sum };
+  };
+
+  const drawTerrainSprite = (record, geom, sx, sy) => {
+    const spriteSpec = resolveTerrainSpriteSpec(record, geom);
+    const fileIdx = spriteSpec.fileIdx;
+    const imageIdx = spriteSpec.imageIdx;
     const atlas = state.biqMapArtCache[`terrain-${fileIdx}`];
     if (!atlas || imageIdx < 0) return false;
     const cols = 9;
@@ -20885,15 +21075,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   };
 
   const getTileAtCoord = (xPos, yPos) => {
-    let x = Number(xPos);
-    const y = Number(yPos);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-    // Quint's calculateTileIndex always wraps X regardless of map x-wrap flag.
-    // Keep neighbor lookup behavior aligned for hills/roads/irrigation/rivers/borders.
-    if (width > 0) {
-      x = ((x % width) + width) % width;
-    }
-    return tileRecordByCoord.get(`${x},${y}`) || null;
+    const normalized = normalizeWrappedCoord(xPos, yPos);
+    if (!normalized) return null;
+    return tileRecordByCoord.get(`${normalized.xPos},${normalized.yPos}`) || null;
   };
 
   const overlayMask = (record, mask) => {
@@ -21447,12 +21631,62 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       if (ne && isHillyTerrain(terrainInfo(ne).realTerrain)) idx += 2;
       if (sw && isHillyTerrain(terrainInfo(sw).realTerrain)) idx += 4;
       if (se && isHillyTerrain(terrainInfo(se).realTerrain)) idx += 8;
+      if (idx === 0) {
+        const extendedNeighbors = [
+          getTileAtCoord(geom.xPos - 2, geom.yPos),
+          getTileAtCoord(geom.xPos + 2, geom.yPos),
+          getTileAtCoord(geom.xPos, geom.yPos - 2),
+          getTileAtCoord(geom.xPos, geom.yPos + 2)
+        ];
+        const clusterCount = extendedNeighbors.reduce((count, neighbor) => (
+          count + ((neighbor && isHillyTerrain(terrainInfo(neighbor).realTerrain)) ? 1 : 0)
+        ), 0);
+        if (clusterCount > 0) {
+          const variantGroups = clusterCount >= 3
+            ? [15, 7, 11, 13, 14]
+            : (clusterCount === 2 ? [3, 5, 6, 9, 10, 12] : [1, 2, 4, 8]);
+          return variantGroups[terrainVariantSeed() % variantGroups.length];
+        }
+      }
       return idx;
+    };
+
+    const terrainVariantSeed = () => {
+      const x = Number(geom && geom.xPos) || 0;
+      const y = Number(geom && geom.yPos) || 0;
+      return (Math.abs(((x * 1103515245) ^ (y * 12345) ^ (x * y * 97)) >>> 0));
+    };
+
+    const drawFallbackHillShape = (fillStyle, peakHeight, baseInset = 0) => {
+      ctx.fillStyle = fillStyle;
+      ctx.beginPath();
+      ctx.moveTo(sx + Math.round(tileW * 0.18), midY + Math.round(tileH * 0.18));
+      ctx.lineTo(sx + Math.round(tileW * 0.42), midY - peakHeight);
+      ctx.lineTo(sx + Math.round(tileW * 0.62), midY + Math.round(tileH * 0.06));
+      ctx.lineTo(sx + Math.round(tileW * 0.82), midY + Math.round(tileH * 0.22));
+      ctx.lineTo(sx + Math.round(tileW * 0.18), midY + Math.round(tileH * 0.22) + baseInset);
+      ctx.closePath();
+      ctx.fill();
+    };
+
+    const drawFallbackWoodland = (canopyStyle, trunkStyle) => {
+      ctx.fillStyle = canopyStyle;
+      ctx.beginPath();
+      ctx.arc(sx + Math.round(tileW * 0.36), midY + Math.round(tileH * 0.08), Math.max(4, Math.round(tileW * 0.12)), 0, Math.PI * 2);
+      ctx.arc(sx + Math.round(tileW * 0.52), midY, Math.max(4, Math.round(tileW * 0.14)), 0, Math.PI * 2);
+      ctx.arc(sx + Math.round(tileW * 0.66), midY + Math.round(tileH * 0.10), Math.max(4, Math.round(tileW * 0.12)), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = trunkStyle;
+      ctx.fillRect(sx + Math.round(tileW * 0.46), midY + Math.round(tileH * 0.08), Math.max(2, Math.round(tileW * 0.04)), Math.max(4, Math.round(tileH * 0.22)));
+      ctx.fillRect(sx + Math.round(tileW * 0.58), midY + Math.round(tileH * 0.10), Math.max(2, Math.round(tileW * 0.04)), Math.max(4, Math.round(tileH * 0.20)));
     };
 
     const drawHillyTerrainOverlay = () => {
       if (!isHillyTerrain(realTerrain)) return;
-      const graphicsIndex = getMountainIndex();
+      const connectivityIndex = getMountainIndex();
+      const graphicsIndex = connectivityIndex === 0
+        ? (terrainVariantSeed() % 16)
+        : connectivityIndex;
       const forestJungleVariant = useForestOrJungleHillVariant();
       const isLandmark = (c3cBonuses & BIQ_TILE_BONUS.LANDMARK) === BIQ_TILE_BONUS.LANDMARK;
       if (realTerrain === BIQ_TERRAIN.HILLS) {
@@ -21462,7 +21696,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         if (isLandmark) hillSheet = state.biqMapArtCache.lmHills || hillSheet;
         else if (forestJungleVariant === BIQ_TERRAIN.FOREST) hillSheet = state.biqMapArtCache.forestHills || hillSheet;
         else if (forestJungleVariant === BIQ_TERRAIN.JUNGLE) hillSheet = state.biqMapArtCache.jungleHills || hillSheet;
-        drawSheetSpriteScaled(hillSheet, 4, 4, graphicsIndex, sx, drawY, tileW, drawH);
+        if (!drawSheetSpriteScaled(hillSheet, 4, 4, graphicsIndex, sx, drawY, tileW, drawH)) {
+          drawFallbackHillShape('rgba(150, 122, 88, 0.88)', Math.round(tileH * 0.26));
+        }
         return;
       }
       const drawH = Math.max(1, Math.round(88 * scale));
@@ -21471,7 +21707,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         let volcanoSheet = state.biqMapArtCache.volcanos;
         if (forestJungleVariant === BIQ_TERRAIN.FOREST) volcanoSheet = state.biqMapArtCache.forestVolcanos || volcanoSheet;
         else if (forestJungleVariant === BIQ_TERRAIN.JUNGLE) volcanoSheet = state.biqMapArtCache.jungleVolcanos || volcanoSheet;
-        drawSheetSpriteScaled(volcanoSheet, 4, 4, graphicsIndex, sx, drawY, tileW, drawH);
+        if (!drawSheetSpriteScaled(volcanoSheet, 4, 4, graphicsIndex, sx, drawY, tileW, drawH)) {
+          drawFallbackHillShape('rgba(118, 90, 80, 0.92)', Math.round(tileH * 0.40));
+          ctx.fillStyle = 'rgba(210, 90, 48, 0.88)';
+          ctx.beginPath();
+          ctx.arc(sx + Math.round(tileW * 0.48), midY - Math.round(tileH * 0.10), Math.max(3, Math.round(tileW * 0.05)), 0, Math.PI * 2);
+          ctx.fill();
+        }
         return;
       }
       let mountainSheet = state.biqMapArtCache.mountains;
@@ -21479,12 +21721,14 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       else if ((c3cBonuses & BIQ_TILE_BONUS.SNOW_CAPPED_MOUNTAIN) === BIQ_TILE_BONUS.SNOW_CAPPED_MOUNTAIN) mountainSheet = state.biqMapArtCache.snowMountains || mountainSheet;
       else if (forestJungleVariant === BIQ_TERRAIN.FOREST) mountainSheet = state.biqMapArtCache.forestMountains || mountainSheet;
       else if (forestJungleVariant === BIQ_TERRAIN.JUNGLE) mountainSheet = state.biqMapArtCache.jungleMountains || mountainSheet;
-      drawSheetSpriteScaled(mountainSheet, 4, 4, graphicsIndex, sx, drawY, tileW, drawH);
+      if (!drawSheetSpriteScaled(mountainSheet, 4, 4, graphicsIndex, sx, drawY, tileW, drawH)) {
+        drawFallbackHillShape('rgba(110, 116, 124, 0.94)', Math.round(tileH * 0.42));
+      }
     };
 
     const drawWoodlandOverlay = () => {
       if (realTerrain !== BIQ_TERRAIN.FOREST && realTerrain !== BIQ_TERRAIN.JUNGLE) return;
-      const tileVariant = (geom.xPos + geom.yPos) | 0;
+      const tileVariant = terrainVariantSeed();
       const drawH = Math.max(1, Math.round(88 * scale));
       const srcFromSheet = (sheet, cols, startRow, idx, cellW = 128, cellH = 88) => {
         if (!sheet) return false;
@@ -21502,7 +21746,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       if (realTerrain === BIQ_TERRAIN.JUNGLE) {
         // Quint uses the first 2x4 block from grassland forests for large jungle.
         const jungleIdx = tileVariant % 8;
-        srcFromSheet(state.biqMapArtCache.grasslandForests, 4, 0, jungleIdx);
+        if (!srcFromSheet(state.biqMapArtCache.grasslandForests, 4, 0, jungleIdx)) {
+          drawFallbackWoodland('rgba(40, 114, 48, 0.88)', 'rgba(73, 53, 24, 0.90)');
+        }
         return;
       }
       const isPine = (c3cBonuses & BIQ_TILE_BONUS.PINE_FOREST) === BIQ_TILE_BONUS.PINE_FOREST;
@@ -21513,7 +21759,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
         } else if (baseTerrain === BIQ_TERRAIN.TUNDRA) {
           if (srcFromSheet(state.biqMapArtCache.tundraForests, 6, 8, pineIdx)) return;
         }
-        srcFromSheet(state.biqMapArtCache.grasslandForests, 6, 8, pineIdx);
+        if (!srcFromSheet(state.biqMapArtCache.grasslandForests, 6, 8, pineIdx)) {
+          drawFallbackWoodland('rgba(46, 98, 62, 0.90)', 'rgba(73, 53, 24, 0.90)');
+        }
         return;
       }
       const forestIdx = tileVariant % 8;
@@ -21522,7 +21770,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       } else if (baseTerrain === BIQ_TERRAIN.TUNDRA) {
         if (srcFromSheet(state.biqMapArtCache.tundraForests, 4, 4, forestIdx)) return;
       }
-      srcFromSheet(state.biqMapArtCache.grasslandForests, 4, 4, forestIdx);
+      if (!srcFromSheet(state.biqMapArtCache.grasslandForests, 4, 4, forestIdx)) {
+        drawFallbackWoodland('rgba(53, 132, 62, 0.86)', 'rgba(73, 53, 24, 0.90)');
+      }
     };
 
     const hasRiverConnection = (tileRecord, directionMask) => {
@@ -21534,57 +21784,45 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       return (rawMask & directionMask) === directionMask;
     };
 
-    const getRiverImageIndex = (northTile, eastTile, westTile, southTile) => {
+    const getRiverImageIndex = (tileRecord) => {
+      if (!tileRecord) return 0;
+      const mask = parseIntLoose(
+        (getFieldByBaseKey(tileRecord, 'riverconnectioninfo') || getFieldByBaseKey(tileRecord, 'river_connection_info'))?.value,
+        0
+      ) >>> 0;
       let idx = 0;
-      if (northTile && hasRiverConnection(northTile, 32)) idx += 1;
-      if (eastTile && hasRiverConnection(eastTile, 128)) idx += 2;
-      if (westTile && hasRiverConnection(westTile, 8)) idx += 4;
-      if (southTile && hasRiverConnection(southTile, 2)) idx += 8;
+      if ((mask & 128) === 128) idx |= 1;
+      if ((mask & 2) === 2) idx |= 2;
+      if ((mask & 32) === 32) idx |= 4;
+      if ((mask & 8) === 8) idx |= 8;
       return idx;
     };
 
-    const isRiverDelta = (riverImageIndex, westTile, northTile, eastTile, southTile) => {
+    const isRiverDelta = (riverImageIndex, geom) => {
       if (riverImageIndex !== 1 && riverImageIndex !== 2 && riverImageIndex !== 4 && riverImageIndex !== 8) return false;
-      if (!westTile || !northTile || !eastTile || !southTile) return false;
-      const westWater = isWaterTerrain(terrainInfo(westTile).realTerrain);
-      const northWater = isWaterTerrain(terrainInfo(northTile).realTerrain);
-      const eastWater = isWaterTerrain(terrainInfo(eastTile).realTerrain);
-      const southWater = isWaterTerrain(terrainInfo(southTile).realTerrain);
-      if (riverImageIndex === 1) return eastWater && southWater;
-      if (riverImageIndex === 2) return westWater && southWater;
-      if (riverImageIndex === 4) return northWater && eastWater;
-      return westWater && northWater;
+      const nw = getTileAtCoord(geom.xPos - 1, geom.yPos - 1);
+      const ne = getTileAtCoord(geom.xPos + 1, geom.yPos - 1);
+      const sw = getTileAtCoord(geom.xPos - 1, geom.yPos + 1);
+      const se = getTileAtCoord(geom.xPos + 1, geom.yPos + 1);
+      if (riverImageIndex === 1) return isWaterTerrain(terrainInfo(nw).realTerrain) || isWaterTerrain(terrainInfo(ne).realTerrain);
+      if (riverImageIndex === 2) return isWaterTerrain(terrainInfo(ne).realTerrain) || isWaterTerrain(terrainInfo(se).realTerrain);
+      if (riverImageIndex === 4) return isWaterTerrain(terrainInfo(nw).realTerrain) || isWaterTerrain(terrainInfo(sw).realTerrain);
+      return isWaterTerrain(terrainInfo(sw).realTerrain) || isWaterTerrain(terrainInfo(se).realTerrain);
     };
 
     const drawRivers = () => {
       if (riverMask === 0) return;
-      if (geom.xPos === 1) {
-        const northTile = getTileAtCoord(geom.xPos - 1, geom.yPos - 1);
-        const eastTile = record;
-        const southTile = getTileAtCoord(geom.xPos - 1, geom.yPos + 1);
-        const riverImageIndex = getRiverImageIndex(northTile, eastTile, null, southTile);
-        if (riverImageIndex !== 0) {
-          drawSheetSprite(state.biqMapArtCache.mtnRivers, 4, 4, riverImageIndex, sx - stepX, midY);
-        }
-      }
-      {
-        const northTile = getTileAtCoord(geom.xPos + 1, geom.yPos - 1);
-        const eastTile = getTileAtCoord(geom.xPos + 2, geom.yPos);
-        const southTile = getTileAtCoord(geom.xPos + 1, geom.yPos + 1);
-        const westTile = record;
-        const riverImageIndex = getRiverImageIndex(northTile, eastTile, westTile, southTile);
-        if (riverImageIndex !== 0) {
-          const isDelta = isRiverDelta(riverImageIndex, westTile, northTile, eastTile, southTile);
-          drawSheetSprite(
-            isDelta ? (state.biqMapArtCache.deltaRivers || state.biqMapArtCache.mtnRivers) : state.biqMapArtCache.mtnRivers,
-            4,
-            4,
-            riverImageIndex,
-            sx + stepX,
-            midY
-          );
-        }
-      }
+      const riverImageIndex = getRiverImageIndex(record);
+      if (riverImageIndex === 0) return;
+      const isDelta = isRiverDelta(riverImageIndex, geom);
+      drawSheetSprite(
+        isDelta ? (state.biqMapArtCache.deltaRivers || state.biqMapArtCache.mtnRivers) : state.biqMapArtCache.mtnRivers,
+        4,
+        4,
+        riverImageIndex,
+        sx,
+        midY
+      );
     };
 
     const drawTerritoryBorders = () => {
@@ -21639,6 +21877,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           const srcY = Math.floor(variant / 4) * cellH;
           const drawH = Math.max(1, Math.round(cellH * scale));
           ctx.drawImage(marshSheet, srcX, srcY, cellW, cellH, sx, midY, tileW, drawH);
+        } else {
+          ctx.fillStyle = 'rgba(74, 102, 76, 0.72)';
+          ctx.beginPath();
+          ctx.ellipse(sx + Math.round(tileW * 0.46), midY + Math.round(tileH * 0.18), Math.max(6, Math.round(tileW * 0.22)), Math.max(4, Math.round(tileH * 0.12)), 0, 0, Math.PI * 2);
+          ctx.fill();
         }
       }
     }
@@ -21776,9 +22019,13 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const selGeom = tileGeom[state.biqMapSelectedTile] || { xPos: 0, yPos: 0 };
   const selPosRaw = tileToScreenTopLeft(selGeom.xPos, selGeom.yPos);
   const selPos = { sx: selPosRaw.sx + originX, sy: selPosRaw.sy + originY };
-  const drawWrapOffsets = xWrap
-    ? Array.from({ length: (wrapCopyRadius * 2) + 1 }, (_v, i) => (i - wrapCopyRadius) * worldWrapSpan)
-    : [0];
+  const drawWrapOffsets = [];
+  for (let wy = -wrapCopyRadiusY; wy <= wrapCopyRadiusY; wy += 1) {
+    for (let wx = -wrapCopyRadiusX; wx <= wrapCopyRadiusX; wx += 1) {
+      drawWrapOffsets.push({ dx: wx * worldWrapSpan, dy: wy * worldWrapHeight });
+    }
+  }
+  if (drawWrapOffsets.length === 0) drawWrapOffsets.push({ dx: 0, dy: 0 });
   const findTileAtCanvasPx = (px, py, requireInside = false) => {
     let bestIdx = -1;
     let bestDist = Number.POSITIVE_INFINITY;
@@ -21788,9 +22035,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const geom = tileGeom[i];
       const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
       const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
-      for (const wrapDx of drawWrapOffsets) {
-        const tx = basePos.sx + wrapDx + Math.floor(tileW / 2);
-        const ty = basePos.sy + Math.floor(tileH / 2);
+      for (const wrapOffset of drawWrapOffsets) {
+        const tx = basePos.sx + wrapOffset.dx + Math.floor(tileW / 2);
+        const ty = basePos.sy + wrapOffset.dy + Math.floor(tileH / 2);
         const nx = Math.abs(px - tx) / Math.max(1, tileW / 2);
         const ny = Math.abs(py - ty) / Math.max(1, tileH / 2);
         const metric = nx + ny;
@@ -21823,9 +22070,9 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     if (state.biqMapLayer === 'owner') value = owner;
     if (state.biqMapLayer === 'continent') value = continent;
 
-    for (const wrapDx of drawWrapOffsets) {
-      const sx = basePos.sx + wrapDx;
-      const sy = basePos.sy;
+    for (const wrapOffset of drawWrapOffsets) {
+      const sx = basePos.sx + wrapOffset.dx;
+      const sy = basePos.sy + wrapOffset.dy;
       let drewSprite = false;
       if (state.biqMapLayer === 'terrain') drewSprite = drawTerrainSprite(record, geom, sx, sy);
       if (!drewSprite) {
@@ -21866,8 +22113,8 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       const geom = tileGeom[i];
       const basePosRaw = tileToScreenTopLeft(geom.xPos, geom.yPos);
       const basePos = { sx: basePosRaw.sx + originX, sy: basePosRaw.sy + originY };
-      for (const wrapDx of drawWrapOffsets) {
-        drawCityNameOverlay(record, geom, basePos.sx + wrapDx, basePos.sy);
+      for (const wrapOffset of drawWrapOffsets) {
+        drawCityNameOverlay(record, geom, basePos.sx + wrapOffset.dx, basePos.sy + wrapOffset.dy);
       }
     }
   }
@@ -22019,7 +22266,97 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   mapPane.appendChild(canvas);
   mapFrame.appendChild(mapPane);
   mapFrame.appendChild(zoomControls);
+  const minimapPanel = document.createElement('div');
+  minimapPanel.className = 'biq-map-minimap-panel section-card';
+  const minimapCanvas = document.createElement('canvas');
+  minimapCanvas.className = 'biq-map-minimap-canvas';
+  minimapCanvas.width = 240;
+  minimapCanvas.height = Math.max(120, Math.round((baseWorldHeightPx / Math.max(1, baseWorldWidthPx)) * 240));
+  minimapPanel.appendChild(minimapCanvas);
+  mapFrame.appendChild(minimapPanel);
   container.appendChild(mapFrame);
+
+  renderMiniMap = () => {
+    const mmCtx = minimapCanvas.getContext('2d');
+    if (!mmCtx) return;
+    mmCtx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
+    mmCtx.fillStyle = '#113246';
+    mmCtx.fillRect(0, 0, minimapCanvas.width, minimapCanvas.height);
+    mmCtx.drawImage(
+      canvas,
+      baseWorldLeftPx,
+      baseWorldTopPx,
+      baseWorldWidthPx,
+      baseWorldHeightPx,
+      0,
+      0,
+      minimapCanvas.width,
+      minimapCanvas.height
+    );
+    const metrics = getPaneMetrics();
+    const viewWidth = Math.max(12, (metrics.clientWidth / Math.max(1, baseWorldWidthPx)) * minimapCanvas.width);
+    const viewHeight = Math.max(10, (metrics.clientHeight / Math.max(1, baseWorldHeightPx)) * minimapCanvas.height);
+    let leftRel = mapPane.scrollLeft - baseWorldLeftPx;
+    let topRel = mapPane.scrollTop - baseWorldTopPx;
+    if (xWrap && horizontalWrapSpan > 0) {
+      leftRel = ((leftRel % horizontalWrapSpan) + horizontalWrapSpan) % horizontalWrapSpan;
+      if (leftRel > baseWorldWidthPx) leftRel = leftRel % baseWorldWidthPx;
+    }
+    if (yWrap && worldWrapHeight > 0) {
+      topRel = ((topRel % worldWrapHeight) + worldWrapHeight) % worldWrapHeight;
+      if (topRel > baseWorldHeightPx) topRel = topRel % baseWorldHeightPx;
+    }
+    const rectX = (leftRel / Math.max(1, baseWorldWidthPx)) * minimapCanvas.width;
+    const rectY = (topRel / Math.max(1, baseWorldHeightPx)) * minimapCanvas.height;
+    mmCtx.strokeStyle = '#ffffff';
+    mmCtx.lineWidth = 2;
+    mmCtx.strokeRect(rectX, rectY, Math.min(minimapCanvas.width, viewWidth), Math.min(minimapCanvas.height, viewHeight));
+    if (xWrap && (rectX + viewWidth) > minimapCanvas.width) {
+      mmCtx.strokeRect(0, rectY, (rectX + viewWidth) - minimapCanvas.width, Math.min(minimapCanvas.height, viewHeight));
+    }
+    if (yWrap && (rectY + viewHeight) > minimapCanvas.height) {
+      mmCtx.strokeRect(rectX, 0, Math.min(minimapCanvas.width, viewWidth), (rectY + viewHeight) - minimapCanvas.height);
+    }
+  };
+  const jumpToMiniMapPointer = (ev) => {
+    const rect = minimapCanvas.getBoundingClientRect();
+    const localX = ((ev.clientX - rect.left) / Math.max(1, rect.width)) * minimapCanvas.width;
+    const localY = ((ev.clientY - rect.top) / Math.max(1, rect.height)) * minimapCanvas.height;
+    const targetCanvasX = baseWorldLeftPx + ((localX / Math.max(1, minimapCanvas.width)) * baseWorldWidthPx);
+    const targetCanvasY = baseWorldTopPx + ((localY / Math.max(1, minimapCanvas.height)) * baseWorldHeightPx);
+    const metrics = getPaneMetrics();
+    setMapPaneScroll(
+      targetCanvasX - Math.floor(metrics.clientWidth / 2),
+      targetCanvasY - Math.floor(metrics.clientHeight / 2),
+      { reason: 'minimap-click', logWhenNoHorizontal: true }
+    );
+    state.biqMapScrollLeft = mapPane.scrollLeft;
+    state.biqMapScrollTop = mapPane.scrollTop;
+    renderMiniMap();
+  };
+  let minimapPointerId = null;
+  minimapCanvas.addEventListener('pointerdown', (ev) => {
+    ev.preventDefault();
+    minimapPointerId = ev.pointerId;
+    minimapCanvas.setPointerCapture(ev.pointerId);
+    jumpToMiniMapPointer(ev);
+  });
+  minimapCanvas.addEventListener('pointermove', (ev) => {
+    if (minimapPointerId == null || ev.pointerId !== minimapPointerId) return;
+    ev.preventDefault();
+    jumpToMiniMapPointer(ev);
+  });
+  const releaseMiniMapPointer = (ev) => {
+    if (minimapPointerId == null) return;
+    if (ev && ev.pointerId !== minimapPointerId) return;
+    try {
+      minimapCanvas.releasePointerCapture(minimapPointerId);
+    } catch (_err) {}
+    minimapPointerId = null;
+  };
+  minimapCanvas.addEventListener('pointerup', releaseMiniMapPointer);
+  minimapCanvas.addEventListener('pointercancel', releaseMiniMapPointer);
+  renderMiniMap();
 
   window.requestAnimationFrame(() => {
     const zoomAnchor = state.biqMapZoomAnchor;
@@ -22047,6 +22384,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       top: mapPane.scrollTop,
       ...getPaneMetrics()
     });
+    if (typeof renderMiniMap === 'function') renderMiniMap();
   });
 
   if (floatingUi) {

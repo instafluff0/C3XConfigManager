@@ -355,6 +355,71 @@ test('C3X scenario mode writes scenario-scoped files (not global user files)', (
   assert.equal(sectionField(scenarioDistricts.sections[0], 'name').value, 'Scenario Encampment');
 });
 
+test('C3X scenario mode writes edited scenario base values even when custom overrides them at runtime', () => {
+  const c3xRoot = mkTmpDir();
+  const scenarioDir = mkTmpDir();
+  writeDefaults(c3xRoot);
+  fs.appendFileSync(path.join(c3xRoot, 'default.c3x_config.ini'), [
+    'enable_stack_bombard = true',
+    'enable_stack_unit_commands = true',
+    ''
+  ].join('\n'), 'utf8');
+
+  fs.writeFileSync(path.join(c3xRoot, 'custom.c3x_config.ini'), [
+    '; custom override',
+    'flag = false',
+    'limit = 25',
+    'enable_stack_bombard = false',
+    'enable_stack_unit_commands = false',
+    ''
+  ].join('\n'), 'utf8');
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3xRoot, scenarioPath: scenarioDir });
+  const flagRow = bundle.tabs.base.rows.find((r) => r.key === 'flag');
+  const limitRow = bundle.tabs.base.rows.find((r) => r.key === 'limit');
+  const bombardRow = bundle.tabs.base.rows.find((r) => r.key === 'enable_stack_bombard');
+  const commandsRow = bundle.tabs.base.rows.find((r) => r.key === 'enable_stack_unit_commands');
+  assert.ok(flagRow && limitRow && bombardRow && commandsRow);
+
+  // These values match defaults, but should still be written to scenario.c3x_config.ini
+  // because the current effective values came from custom.c3x_config.ini.
+  flagRow.value = 'true';
+  limitRow.value = '10';
+  bombardRow.value = 'true';
+
+  const scenarioBasePath = path.join(scenarioDir, 'scenario.c3x_config.ini');
+  const preview = previewFileDiff({
+    mode: 'scenario',
+    c3xPath: c3xRoot,
+    scenarioPath: scenarioDir,
+    tabs: bundle.tabs,
+    dirtyTabs: ['base'],
+    targetPath: scenarioBasePath
+  });
+  assert.equal(preview.ok, true, String(preview.error || 'preview failed'));
+  assert.equal(preview.found, true, 'Expected pending write for scenario.c3x_config.ini');
+  const newText = String(preview.newText || '');
+  assert.match(newText, /flag = true/);
+  assert.match(newText, /limit = 10/);
+  assert.match(newText, /enable_stack_bombard = true/);
+  assert.doesNotMatch(newText, /enable_stack_unit_commands = false/);
+
+  const saved = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xRoot,
+    scenarioPath: scenarioDir,
+    dirtyTabs: ['base'],
+    tabs: bundle.tabs
+  });
+  assert.equal(saved.ok, true, String(saved.error || 'save failed'));
+
+  const scenarioBase = parseIniLines(fs.readFileSync(scenarioBasePath, 'utf8'));
+  assert.equal(scenarioBase.map.flag, 'true');
+  assert.equal(scenarioBase.map.limit, '10');
+  assert.equal(scenarioBase.map.enable_stack_bombard, 'true');
+  assert.equal(Object.prototype.hasOwnProperty.call(scenarioBase.map, 'enable_stack_unit_commands'), false);
+});
+
 test('C3X-only transaction rollback restores earlier files when later commit fails', () => {
   const c3xRoot = mkTmpDir();
   writeDefaults(c3xRoot);
