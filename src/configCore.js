@@ -349,7 +349,7 @@ function applyFieldLabelOverrides(sectionCode, field) {
       foodbonus: 'Food Bonus',
       shieldsbonus: 'Shields Bonus',
       commercebonus: 'Commerce Bonus',
-      type: 'Resource Type',
+      type: 'Type',
       prerequisite: 'Required Technology',
       icon: 'Civilopedia Icon Index'
     },

@@ -8,8 +8,8 @@ const path = require('node:path');
 
 const { loadBundle, saveBundle } = require('../src/configCore');
 
-const CIV3_ROOT = '/Users/nicdobbins/fun/Civilization III Complete';
-const TIDES_BIQ = '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/TIDES OF CRIMSON.biq';
+const CIV3_ROOT = process.env.C3X_CIV3_ROOT || path.resolve(__dirname, '..', '..', '..');
+const TIDES_BIQ = path.join(CIV3_ROOT, 'Conquests', 'Scenarios', 'TIDES OF CRIMSON.biq');
 
 function loadScenarioBundle(scenarioPath = TIDES_BIQ) {
   if (!fs.existsSync(scenarioPath)) return null;

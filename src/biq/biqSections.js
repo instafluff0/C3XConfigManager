@@ -2605,6 +2605,35 @@ function findRecordByRef(records, recordRef) {
 function applySetToRecord(rec, fieldKey, value, code, io) {
   const ck = canonicalKey(fieldKey);
 
+  if (code === 'RACE') {
+    const listSpecs = [
+      { prefix: 'cityname', arrayKey: 'cityNames', countKey: 'numCities' },
+      { prefix: 'milleader', arrayKey: 'milLeaderNames', countKey: 'numMilLeaders' },
+      { prefix: 'scientificleader', arrayKey: 'scientificLeaderNames', countKey: 'numScientificLeaders' }
+    ];
+    for (const spec of listSpecs) {
+      if (ck === canonicalKey(spec.countKey)) {
+        const n = Math.max(0, Number.parseInt(String(value), 10) || 0);
+        if (!Array.isArray(rec[spec.arrayKey])) rec[spec.arrayKey] = [];
+        const next = rec[spec.arrayKey].slice(0, n);
+        while (next.length < n) next.push('');
+        rec[spec.arrayKey] = next;
+        rec[spec.countKey] = n;
+        return true;
+      }
+      const match = ck.match(new RegExp(`^${spec.prefix}(\\d+)$`));
+      if (match) {
+        const idx = Number.parseInt(match[1], 10);
+        if (!Number.isFinite(idx) || idx < 0) return false;
+        if (!Array.isArray(rec[spec.arrayKey])) rec[spec.arrayKey] = [];
+        while (rec[spec.arrayKey].length <= idx) rec[spec.arrayKey].push('');
+        rec[spec.arrayKey][idx] = String(value);
+        rec[spec.countKey] = rec[spec.arrayKey].length;
+        return true;
+      }
+    }
+  }
+
   // TILE: surgical raw edit
   if (code === 'TILE') {
     const fd = [...TILE_FIELDS].find((f) => canonicalKey(f.name) === ck);
@@ -2911,6 +2940,7 @@ function sectionWritableKeys(code) {
 }
 
 function sectionRecordName(rec, code) {
+  if (code === 'RACE' && rec && rec.civilizationName) return String(rec.civilizationName);
   if (rec.name) return String(rec.name);
   if (rec.civilopediaEntry) return String(rec.civilopediaEntry);
   return `${code} ${(rec.index || 0) + 1}`;

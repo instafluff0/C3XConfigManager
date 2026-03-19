@@ -24,20 +24,20 @@ function findSampleBiqPath() {
   const envPath = String(process.env.C3X_TEST_BIQ || '').trim();
   const candidates = [
     envPath,
-    path.resolve(__dirname, '..', '..', 'conquests.biq'),
-    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/conquests.biq'
+    path.resolve(__dirname, '..', '..', 'conquests.biq')
   ].filter(Boolean);
   return candidates.find((p) => fs.existsSync(p)) || '';
 }
 
 function findSampleMapBiqPath() {
   const envPath = String(process.env.C3X_TEST_MAP_BIQ || '').trim();
+  const civ3Root = path.resolve(__dirname, '..', '..', '..');
   const candidates = [
     envPath,
-    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/2 MP Rise of Rome.biq',
-    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/3 MP Fall of Rome.biq',
-    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/8 MP Napoleonic Europe.biq',
-    '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/9 MP WWII in the Pacific.biq'
+    path.join(civ3Root, 'Conquests', 'Scenarios', '2 MP Rise of Rome.biq'),
+    path.join(civ3Root, 'Conquests', 'Scenarios', '3 MP Fall of Rome.biq'),
+    path.join(civ3Root, 'Conquests', 'Scenarios', '8 MP Napoleonic Europe.biq'),
+    path.join(civ3Root, 'Conquests', 'Scenarios', '9 MP WWII in the Pacific.biq')
   ].filter((p) => p && fs.existsSync(p));
   return candidates[0] || '';
 }

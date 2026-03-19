@@ -3,12 +3,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 
 const { loadBundle } = require('../src/configCore');
 const { projectGovernmentBiqFields, collapseGovernmentBiqFields } = require('../src/biq/govtCodec');
 
-const CIV3_ROOT = '/Users/nicdobbins/fun/Civilization III Complete';
-const TIDES_BIQ = '/Users/nicdobbins/fun/Civilization III Complete/Conquests/Scenarios/TIDES OF CRIMSON.biq';
+const CIV3_ROOT = process.env.C3X_CIV3_ROOT || path.resolve(__dirname, '..', '..', '..');
+const TIDES_BIQ = path.join(CIV3_ROOT, 'Conquests', 'Scenarios', 'TIDES OF CRIMSON.biq');
 
 function getTidesBundle() {
   if (!fs.existsSync(TIDES_BIQ)) return null;

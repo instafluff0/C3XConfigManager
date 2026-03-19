@@ -25,3 +25,20 @@ test('base field renderers do not mutate rows during initial render', () => {
     'buildings_generating_resources renderer should not normalize row.value during initial render'
   );
 });
+
+test('tech era dropdown uses BIQ era names when available', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /makeBiqSectionIndexOptions\('ERAS', false\)/,
+    'Tech reference resolver should read era labels from the ERAS section'
+  );
+
+  assert.match(
+    text,
+    /if \(eraOptions\.length > 0\) return eraOptions;/,
+    'Tech reference resolver should prefer BIQ era labels before falling back'
+  );
+});

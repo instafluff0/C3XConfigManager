@@ -30,6 +30,7 @@ function toSignedIntString(value) {
 
 const DIRECT_FIELD_SPECS = [
   { uiKey: 'leadername', rawKey: 'name', defaultValue: '' },
+  { uiKey: 'civilizationname', rawKey: 'civilizationname', defaultValue: '' },
   { uiKey: 'leadertitle', rawKey: 'leadertitle', defaultValue: '' },
   { uiKey: 'noun', rawKey: 'noun', defaultValue: '' },
   { uiKey: 'adjective', rawKey: 'adjective', defaultValue: '' },
@@ -114,7 +115,9 @@ function buildFieldLookup(rawFields) {
 function projectCivilizationBiqFields({ rawFields, civilopediaEntry, flavorCount = 0 }) {
   const lookup = buildFieldLookup(rawFields);
   const projected = [];
+  const consumed = new Set();
   const pushField = (baseKey, value, originalValue, editable = true) => {
+    consumed.add(normalizeKey(baseKey));
     projected.push({
       key: baseKey,
       baseKey,
@@ -144,6 +147,7 @@ function projectCivilizationBiqFields({ rawFields, civilopediaEntry, flavorCount
 
   DIRECT_FIELD_SPECS.forEach((spec) => {
     const raw = readRawField(spec.rawKey, spec.defaultValue);
+    consumed.add(normalizeKey(spec.rawKey));
     pushField(spec.uiKey, raw.value || spec.defaultValue, raw.originalValue || spec.defaultValue, raw.editable);
   });
 
@@ -176,6 +180,25 @@ function projectCivilizationBiqFields({ rawFields, civilopediaEntry, flavorCount
   for (let idx = 0; idx < flavorCount; idx += 1) {
     pushField(`flavor_${idx + 1}`, boolString(readBit(flavorsValue, idx)), boolString(readBit(flavorsOriginal, idx)));
   }
+
+  ['bonuses', 'governorsettings', 'buildnever', 'buildoften', 'flavors', 'diplomacytextindex', 'questionmark'].forEach((key) => {
+    consumed.add(normalizeKey(key));
+  });
+
+  (Array.isArray(rawFields) ? rawFields : []).forEach((field) => {
+    const rawKey = String(field && (field.baseKey || field.key) || '').trim();
+    if (!rawKey) return;
+    const norm = normalizeKey(rawKey);
+    if (consumed.has(norm)) return;
+    projected.push({
+      key: String(field.key || rawKey),
+      baseKey: String(field.baseKey || rawKey),
+      label: String(field.label || rawKey),
+      value: String(field.value == null ? '' : field.value),
+      originalValue: String(field.originalValue == null ? field.value : field.originalValue),
+      editable: !!field.editable
+    });
+  });
 
   return projected;
 }
@@ -211,9 +234,46 @@ function collapseCivilizationBiqFields(fields, flavorCount = 0, valueKey = 'valu
   }
   raw.flavors = toSignedIntString(flavors);
   raw.name = readText('leadername', '');
+  raw.civilizationName = readText('civilizationname', raw.name);
   raw.leadertitle = readText('leadertitle', '');
   raw.nummilleaders = readText('numgreatleaders', '0');
   raw.numcities = readText('numcitynames', '0');
+
+  const readRepeatedValues = (prefix) => {
+    const target = normalizeKey(prefix);
+    return (Array.isArray(fields) ? fields : [])
+      .filter((field) => {
+        const key = normalizeKey(field && (field.baseKey || field.key));
+        return key === target || new RegExp(`^${target}\\d+$`).test(key);
+      })
+      .map((field) => String(field ? (field[valueKey] == null ? '' : field[valueKey]) : ''))
+      .filter((value) => String(value || '').trim().length > 0);
+  };
+
+  const cityNames = readRepeatedValues('cityname');
+  cityNames.forEach((name, idx) => {
+    raw[`cityName_${idx}`] = name;
+  });
+
+  const militaryLeaders = readRepeatedValues('milleader');
+  militaryLeaders.forEach((name, idx) => {
+    raw[`milLeader_${idx}`] = name;
+  });
+
+  const scientificLeaders = readRepeatedValues('scientificleader');
+  scientificLeaders.forEach((name, idx) => {
+    raw[`scientificLeader_${idx}`] = name;
+  });
+
+  raw.numcities = cityNames.length > 0
+    ? toSignedIntString(cityNames.length)
+    : readText('numcitynames', '0');
+  raw.nummilleaders = militaryLeaders.length > 0
+    ? toSignedIntString(militaryLeaders.length)
+    : readText('numgreatleaders', '0');
+  raw.numscientificleaders = scientificLeaders.length > 0
+    ? toSignedIntString(scientificLeaders.length)
+    : readText('numscientificleaders', '0');
   return raw;
 }
 

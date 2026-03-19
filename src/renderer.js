@@ -8715,7 +8715,7 @@ const REFERENCE_RULE_SCHEMAS = {
       icon: { group: 'Identity', control: 'number', min: 0 },
       appearanceratio: { group: 'Map Placement', control: 'number', min: 0, label: 'Appearance Ratio' },
       disapperanceprobability: { group: 'Map Placement', control: 'number', min: 0, label: 'Disappearance Ratio' },
-      type: { group: 'Type', control: 'select' },
+      type: { group: 'Type', control: 'select', label: 'Type' },
       foodbonus: { group: 'Bonuses', control: 'number', label: 'Food' },
       shieldsbonus: { group: 'Bonuses', control: 'number', label: 'Shields' },
       commercebonus: { group: 'Bonuses', control: 'number', label: 'Commerce' }
@@ -8946,7 +8946,7 @@ const REFERENCE_RULE_SCHEMAS = {
     fields: {
       civilopediaentry: { group: 'General', control: 'text', label: 'Civilopedia Entry' },
       prerequisitetechnology: { group: 'General', control: 'reference', label: 'Prerequisite' },
-      corruption: { group: 'Corruption/Waste', control: 'select' },
+      corruption: { group: 'Corruption/Waste', control: 'select', label: 'Corruption / Waste' },
       sciencecap: { group: 'Government Parameters', control: 'number', min: 0, label: 'Sci/Tax/Ent Cap' },
       workerrate: { group: 'Government Parameters', control: 'number', min: 0, label: 'Worker Rate' },
       assimilationchance: { group: 'Government Parameters', control: 'number', min: 0, label: 'Assimilation %' },
@@ -8967,8 +8967,8 @@ const REFERENCE_RULE_SCHEMAS = {
       freeunitspertown: { group: 'Unit Support', control: 'number', label: 'Free units per: Town' },
       freeunitspercity: { group: 'Unit Support', control: 'number', label: 'Free units per: City' },
       freeunitspermetropolis: { group: 'Unit Support', control: 'number', label: 'Free units per: Metropolis' },
-      hurrying: { group: 'Hurrying Labor', control: 'select' },
-      warweariness: { group: 'War Weariness', control: 'select' },
+      hurrying: { group: 'Hurrying Labor', control: 'select', label: 'Hurrying Labor' },
+      warweariness: { group: 'War Weariness', control: 'select', label: 'War Weariness' },
       performance_of_this_government_versus_government_0: { group: 'Government Relations Table', control: 'text' },
       performance_of_this_government_versus_government_1: { group: 'Government Relations Table', control: 'text' },
       performance_of_this_government_versus_government_2: { group: 'Government Relations Table', control: 'text' },
@@ -8983,7 +8983,6 @@ const REFERENCE_RULE_SCHEMAS = {
       questionmarktwo: { group: 'Unknown Parameters', control: 'number', label: 'Unknown 2' },
       questionmarkthree: { group: 'Unknown Parameters', control: 'number', label: 'Unknown 3' },
       questionmarkfour: { group: 'Unknown Parameters', control: 'number', label: 'Unknown 4' },
-      rulertitlepairsused: { group: 'Ruler Titles', control: 'number', min: 0, max: 4, label: 'Enabled Rows' },
       malerulertitle1: { group: 'Ruler Titles', control: 'text', label: 'Masculine 1' },
       femalerulertitle1: { group: 'Ruler Titles', control: 'text', label: 'Feminine 1' },
       malerulertitle2: { group: 'Ruler Titles', control: 'text', label: 'Masculine 2' },
@@ -8996,7 +8995,7 @@ const REFERENCE_RULE_SCHEMAS = {
   },
   civilizations: {
     order: [
-      'civilopediaentry', 'noun', 'adjective', 'civilizationgender', 'plurality', 'culturegroup',
+      'civilopediaentry', 'civilizationname', 'noun', 'adjective', 'civilizationgender', 'plurality', 'culturegroup',
       'militaristic', 'religious', 'expansionist', 'agricultural', 'commercial', 'industrious', 'scientific', 'seafaring',
       'manyoffensivelandunits', 'nooffensivelandunits',
       'manydefensivelandunits', 'nodefensivelandunits',
@@ -9027,6 +9026,7 @@ const REFERENCE_RULE_SCHEMAS = {
     ],
     fields: {
       civilopediaentry: { group: 'Civilization Identity', control: 'text', label: 'Civilopedia Entry' },
+      civilizationname: { group: 'Civilization Identity', control: 'text', label: 'Civilization Name' },
       noun: { group: 'Civilization Identity', control: 'text', label: 'Noun' },
       adjective: { group: 'Civilization Identity', control: 'text', label: 'Adjective' },
       civilizationgender: { group: 'Civilization Identity', control: 'select', label: 'Gender' },
@@ -9271,12 +9271,15 @@ function shouldHideBiqField(tabKey, field) {
   const canon = base.replace(/[^a-z0-9]/g, '');
   if (!base) return true;
   if ((BIQ_FIELD_HIDDEN.all && (BIQ_FIELD_HIDDEN.all.has(base) || BIQ_FIELD_HIDDEN.all.has(canon)))) return true;
+  if (tabKey === 'civilizations' && (/^freetech\d+index$/.test(canon) || isCivilizationNameListItemField(field))) return true;
   if (tabKey === 'units' && (UNIT_BOTTOM_LIST_HIDDEN_KEYS.has(base) || UNIT_BOTTOM_LIST_HIDDEN_KEYS.has(canon))) return true;
   if (tabKey === 'units' && !QUINT_UNIT_RULE_VISIBLE_KEYS.has(base) && !QUINT_UNIT_RULE_VISIBLE_KEYS.has(canon)) return true;
   if (tabKey === 'technologies' && !QUINT_TECH_RULE_VISIBLE_KEYS.has(base) && !QUINT_TECH_RULE_VISIBLE_KEYS.has(canon)) return true;
   if (tabKey === 'improvements' && !QUINT_IMPROVEMENT_RULE_VISIBLE_KEYS.has(base) && !QUINT_IMPROVEMENT_RULE_VISIBLE_KEYS.has(canon)) return true;
   if (tabKey === 'governments' && isGovernmentRelationsField(field)) return false;
+  if (tabKey === 'governments' && canon === 'rulertitlepairsused') return true;
   if (tabKey === 'governments' && !QUINT_GOVERNMENT_RULE_VISIBLE_KEYS.has(base) && !QUINT_GOVERNMENT_RULE_VISIBLE_KEYS.has(canon)) return true;
+  if (tabKey === 'civilizations' && canon === 'civilizationname') return false;
   if (tabKey === 'civilizations' && !QUINT_CIV_RULE_VISIBLE_KEYS.has(base) && !QUINT_CIV_RULE_VISIBLE_KEYS.has(canon)) return true;
   const tabHidden = BIQ_FIELD_HIDDEN[tabKey];
   return !!(tabHidden && (tabHidden.has(base) || tabHidden.has(canon)));
@@ -9316,6 +9319,11 @@ function getBiqFlavorNames() {
 
 function getRuleFieldDisplayLabel(tabKey, field, spec) {
   const fallback = String((spec && spec.label) || field.label || field.key || '');
+  if (tabKey === 'units') {
+    const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
+    const unitLabel = UNIT_RULE_FRIENDLY_LABELS[base];
+    return unitLabel || fallback;
+  }
   if (tabKey !== 'civilizations' && tabKey !== 'technologies' && tabKey !== 'improvements') return fallback;
   const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
   const m = base.match(/^flavor(\d+)$/);
@@ -9326,6 +9334,129 @@ function getRuleFieldDisplayLabel(tabKey, field, spec) {
   const name = String(names[idx - 1] || '').trim();
   return name || fallback;
 }
+
+const UNIT_RULE_FRIENDLY_LABELS = Object.freeze({
+  requiredtech: 'Prerequisite',
+  requiredresource1: 'Required Resource 1',
+  requiredresource2: 'Required Resource 2',
+  requiredresource3: 'Required Resource 3',
+  upgradeto: 'Upgrade To',
+  unitclass: 'Unit Class',
+  attack: 'Attack',
+  defence: 'Defence',
+  movement: 'Movement',
+  bombardstrength: 'Bombard Strength',
+  bombardrange: 'Bombard Range',
+  rateoffire: 'Rate Of Fire',
+  airdefence: 'Air Defence',
+  hitpointbonus: 'Hit Point Bonus',
+  operationalrange: 'Operational Range',
+  capacity: 'Capacity',
+  populationcost: 'Population Cost',
+  shieldcost: 'Shield Cost',
+  workerstrengthfloat: 'Worker Strength',
+  requiressupport: 'Requires Support',
+  zoneofcontrol: 'Zone Of Control',
+  bombardeffects: 'Bombard Effects',
+  createscraters: 'Creates Craters',
+  offence: 'Offence',
+  defencestrategy: 'Defence',
+  explorestrategy: 'Exploration',
+  terraform: 'Terraform',
+  settle: 'Settle',
+  kingstrategy: 'King Unit',
+  artillery: 'Artillery',
+  cruisemissileunit: 'Cruise Missile',
+  icbm: 'ICBM',
+  tacticalnuke: 'Tactical Nuke',
+  leaderunit: 'Leader',
+  armyunit: 'Army',
+  flagstrategy: 'Flag Unit',
+  navalpower: 'Naval Power',
+  navaltransport: 'Naval Transport',
+  navalcarrier: 'Naval Carrier',
+  navalmissiletransport: 'Naval Missile Transport',
+  airbombard: 'Air Bombard',
+  airdefencestrategy: 'Air Defence',
+  airtransport: 'Air Transport',
+  buildcity: 'Build City',
+  buildcolony: 'Build Colony',
+  buildroad: 'Build Road',
+  buildrailroad: 'Build Railroad',
+  buildmine: 'Build Mine',
+  irrigate: 'Irrigate',
+  buildfort: 'Build Fort',
+  clearforest: 'Clear Forest',
+  clearjungle: 'Clear Jungle',
+  plantforest: 'Plant Forest',
+  clearpollution: 'Clear Pollution',
+  automate: 'Automate',
+  joincity: 'Join City',
+  ptwbuildairfield: 'Build Airfield',
+  ptwbuildradartower: 'Build Radar Tower',
+  ptwbuildoutpost: 'Build Outpost',
+  buildbarricade: 'Build Barricade',
+  load: 'Load',
+  unload: 'Unload',
+  airlift: 'Airlift',
+  airdrop: 'Air Drop',
+  pillage: 'Pillage',
+  bombard: 'Bombard',
+  buildarmy: 'Build Army',
+  finishimprovement: 'Finish Improvement',
+  upgrade: 'Upgrade',
+  capture: 'Capture',
+  scienceage: 'Science Age',
+  enslave: 'Enslave',
+  sacrifice: 'Sacrifice',
+  teleportable: 'Teleportable',
+  telepad: 'Telepad',
+  charm: 'Charm',
+  stealthattack: 'Stealth Attack',
+  collateraldamage: 'Collateral Damage',
+  enslaveresultsin: 'Enslave Results In',
+  skipturn: 'Skip Turn',
+  wait: 'Wait',
+  goto: 'Go To',
+  fortify: 'Fortify',
+  disband: 'Disband',
+  exploreorder: 'Explore',
+  sentry: 'Sentry',
+  bomb: 'Bomb',
+  rebase: 'Rebase',
+  precisionbombing: 'Precision Bombing',
+  recon: 'Recon',
+  intercept: 'Intercept',
+  allterrainasroads: 'All Terrain As Roads',
+  amphibiousunit: 'Amphibious Unit',
+  army: 'Army',
+  blitz: 'Blitz',
+  cruisemissile: 'Cruise Missile',
+  detectinvisible: 'Detect Invisible',
+  draftable: 'Draftable',
+  footsoldier: 'Foot Soldier',
+  hiddennationality: 'Hidden Nationality',
+  immobile: 'Immobile',
+  infinitebombardrange: 'Infinite Bombard Range',
+  invisible: 'Invisible',
+  leader: 'Leader',
+  lethallandbombardment: 'Lethal Land Bombardment',
+  lethalseabombardment: 'Lethal Sea Bombardment',
+  nuclearweapon: 'Nuclear Weapon',
+  radar: 'Radar',
+  rangedattackanimations: 'Ranged Attack Animations',
+  requiresescort: 'Requires Escort',
+  rotatebeforeattack: 'Rotate Before Attack',
+  sinksinocean: 'Sinks In Ocean',
+  sinksinsea: 'Sinks In Sea',
+  startsgoldenage: 'Starts Golden Age',
+  stealth: 'Stealth',
+  tacticalmissile: 'Tactical Missile',
+  transportsonlyairunits: 'Transports Only Air Units',
+  transportsonlyfootunits: 'Transports Only Foot Units',
+  transportsonlytacticalmissiles: 'Transports Only Tactical Missiles',
+  wheeled: 'Wheeled'
+});
 
 function isReadonlyRuleField(tabKey, field) {
   const base = normalizeRuleLookupKey(field && (field.baseKey || field.key));
@@ -9871,9 +10002,74 @@ function getUnitListFieldState(entry, candidateKeys, fallbackKey) {
   };
 }
 
-function getCivilizationNoteListState(entry, countKey) {
+function getTerrainFlagRowsForUnits() {
+  const terrainTab = state.bundle && state.bundle.tabs && state.bundle.tabs.terrain;
+  const terrainSection = terrainTab && Array.isArray(terrainTab.sections)
+    ? terrainTab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TERR')
+    : null;
+  const records = terrainSection && Array.isArray(terrainSection.records) ? terrainSection.records : [];
+  return records.map((record, idx) => {
+    const pediaEntry = getTerrainCivilopediaEntryForRecord(terrainTab, 'TERR', record);
+    const label = String(record && record.name || (pediaEntry && pediaEntry.name) || `Terrain ${idx + 1}`).trim();
+    return {
+      index: idx,
+      label: label || `Terrain ${idx + 1}`,
+      entry: pediaEntry || null
+    };
+  });
+}
+
+function renderTerrainFlagEditor(entry, values, onValuesChange) {
+  const wrap = document.createElement('div');
+  wrap.className = 'terrain-flag-editor';
+  const rows = getTerrainFlagRowsForUnits();
+  if (rows.length === 0) {
+    const hint = document.createElement('div');
+    hint.className = 'field-meta';
+    hint.textContent = '(No terrain data found)';
+    wrap.appendChild(hint);
+    return wrap;
+  }
+  const initialValues = Array.from({ length: Math.max(rows.length, Array.isArray(values) ? values.length : 0) }, (_, idx) => String((Array.isArray(values) && values[idx] != null) ? values[idx] : '0'));
+  rows.forEach((row, idx) => {
+    const line = document.createElement('label');
+    line.className = 'terrain-flag-row';
+    line.style.display = 'grid';
+    line.style.gridTemplateColumns = '28px 1fr auto';
+    line.style.alignItems = 'center';
+    line.style.gap = '10px';
+    line.style.cursor = 'pointer';
+
+    const thumb = document.createElement('span');
+    thumb.className = 'entry-thumb terrain-flag-thumb';
+    if (row.entry) loadReferenceListThumbnail('terrainPedia', row.entry, thumb);
+    line.appendChild(thumb);
+
+    const text = document.createElement('span');
+    text.textContent = row.label;
+    line.appendChild(text);
+
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.checked = String(initialValues[idx] || '').trim() === '1' || String(initialValues[idx] || '').trim().toLowerCase() === 'true';
+    check.style.accentColor = '#1aa79c';
+    check.style.cursor = 'pointer';
+    check.addEventListener('change', () => {
+      const currentState = getUnitListFieldState(entry, ['ignore_movement_cost', 'ignoremovementcost'], 'ignore_movement_cost');
+      const updated = Array.from({ length: Math.max(rows.length, Array.isArray(currentState.values) ? currentState.values.length : 0) }, (_, valueIdx) => String((Array.isArray(currentState.values) && currentState.values[valueIdx] != null) ? currentState.values[valueIdx] : '0'));
+      updated[idx] = check.checked ? '1' : '0';
+      if (typeof onValuesChange === 'function') onValuesChange(updated);
+    });
+    line.appendChild(check);
+    wrap.appendChild(line);
+  });
+  return wrap;
+}
+
+function getCivilizationNoteListState(entry, countKey, itemPrefix = 'note') {
   const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
   const targetCount = String(countKey || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const targetItem = String(itemPrefix || 'note').toLowerCase().replace(/[^a-z0-9]/g, '');
   let countIndex = -1;
   for (let i = 0; i < fields.length; i += 1) {
     if (canonicalBiqFieldKey(fields[i]) === targetCount) {
@@ -9889,8 +10085,13 @@ function getCivilizationNoteListState(entry, countKey) {
       values: []
     };
   }
-  const notesStart = countIndex + 1;
-  if (notesStart >= fields.length || canonicalBiqFieldKey(fields[notesStart]) !== 'note') {
+  const isItemField = (field) => {
+    const canon = canonicalBiqFieldKey(field);
+    return canon === targetItem || new RegExp(`^${targetItem}\\d+$`).test(canon);
+  };
+  let notesStart = countIndex + 1;
+  while (notesStart < fields.length && !isItemField(fields[notesStart])) notesStart += 1;
+  if (notesStart >= fields.length) {
     return {
       countIndex,
       notesStart,
@@ -9899,23 +10100,24 @@ function getCivilizationNoteListState(entry, countKey) {
     };
   }
   let notesEnd = notesStart;
-  while (notesEnd < fields.length && canonicalBiqFieldKey(fields[notesEnd]) === 'note') notesEnd += 1;
+  while (notesEnd < fields.length && isItemField(fields[notesEnd])) notesEnd += 1;
   const values = fields.slice(notesStart, notesEnd)
     .map((field) => String(field && field.value || '').trim())
     .filter(Boolean);
   return { countIndex, notesStart, notesEnd, values };
 }
 
-function setCivilizationNoteListValues(entry, countKey, values) {
+function setCivilizationNoteListValues(entry, countKey, values, itemPrefix = 'note') {
   if (!entry) return;
   if (!Array.isArray(entry.biqFields)) entry.biqFields = [];
   const fields = entry.biqFields;
   const targetCount = String(countKey || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const targetItem = String(itemPrefix || 'note').toLowerCase().replace(/[^a-z0-9]/g, '');
   let countField = fields.find((field) => canonicalBiqFieldKey(field) === targetCount);
   if (!countField) {
     countField = ensureBiqFieldByBaseKey(entry, countKey, toFriendlyKey(countKey), '0');
   }
-  const state = getCivilizationNoteListState(entry, countKey);
+  const state = getCivilizationNoteListState(entry, countKey, itemPrefix);
   const cleaned = (Array.isArray(values) ? values : [])
     .map((value) => String(value || '').trim())
     .filter(Boolean);
@@ -9923,12 +10125,18 @@ function setCivilizationNoteListValues(entry, countKey, values) {
   const end = state.notesEnd < 0 ? start : state.notesEnd;
   const existingNotes = (start >= 0 && end > start) ? fields.slice(start, end) : [];
   const template = existingNotes[0] || {
-    key: 'note',
-    baseKey: 'note',
-    label: 'Note',
+    key: targetItem,
+    baseKey: targetItem,
+    label: cfgLabelFromPrefix(targetItem),
     editable: true
   };
-  const nextNotes = cleaned.map((value) => ({ ...template, value }));
+  const nextNotes = cleaned.map((value, idx) => ({
+    ...template,
+    key: itemPrefix === 'note' ? 'note' : `${targetItem}_${idx}`,
+    baseKey: itemPrefix === 'note' ? 'note' : `${targetItem}_${idx}`,
+    label: existingNotes[idx] ? String(existingNotes[idx].label || existingNotes[idx].key || template.label) : template.label,
+    value
+  }));
   fields.splice(start, Math.max(0, end - start), ...nextNotes);
   countField.value = String(cleaned.length);
 }
@@ -10003,10 +10211,20 @@ function ensureTerrainResourceMaskField(record) {
   return created;
 }
 
+function cfgLabelFromPrefix(prefix) {
+  const normalized = String(prefix || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (normalized === 'note') return 'Note';
+  if (normalized === 'cityname') return 'City Name';
+  if (normalized === 'milleader') return 'Military Leader';
+  if (normalized === 'scientificleader') return 'Scientific Leader';
+  return toFriendlyKey(prefix);
+}
+
 function renderCivilizationNoteListEditor(entry, cfg, referenceEditable) {
   const wrap = document.createElement('div');
   wrap.className = 'structured-list';
-  const state = getCivilizationNoteListState(entry, cfg.countKey);
+  const itemPrefix = String(cfg && cfg.itemPrefix || 'note');
+  const state = getCivilizationNoteListState(entry, cfg.countKey, itemPrefix);
   if (!referenceEditable) {
     const text = document.createElement('div');
     text.className = 'field-meta';
@@ -10023,7 +10241,7 @@ function renderCivilizationNoteListEditor(entry, cfg, referenceEditable) {
   list.style.paddingRight = '2px';
 
   const commit = () => {
-    setCivilizationNoteListValues(entry, cfg.countKey, items);
+    setCivilizationNoteListValues(entry, cfg.countKey, items, itemPrefix);
     setDirty(true);
   };
 
@@ -10352,24 +10570,22 @@ function renderCivilizationBuildPriorityCard(entry, referenceEditable) {
     tdNever.style.padding = '6px 4px';
     tdNever.style.textAlign = 'center';
     if (referenceEditable) {
-      const oftenChk = document.createElement('input');
-      oftenChk.type = 'checkbox';
-      oftenChk.checked = String(oftenField && oftenField.value || '').toLowerCase() === 'true';
-      oftenChk.addEventListener('change', () => {
-        rememberUndoSnapshot();
-        if (oftenField) oftenField.value = oftenChk.checked ? 'true' : 'false';
-        setDirty(true);
-      });
-      tdOften.appendChild(oftenChk);
-      const neverChk = document.createElement('input');
-      neverChk.type = 'checkbox';
-      neverChk.checked = String(neverField && neverField.value || '').toLowerCase() === 'true';
-      neverChk.addEventListener('change', () => {
-        rememberUndoSnapshot();
-        if (neverField) neverField.value = neverChk.checked ? 'true' : 'false';
-        setDirty(true);
-      });
-      tdNever.appendChild(neverChk);
+      const makeToggle = (field, checked) => {
+        const wrap = document.createElement('label');
+        wrap.className = 'bool-toggle bool-row-toggle';
+        const check = document.createElement('input');
+        check.type = 'checkbox';
+        check.checked = checked;
+        check.addEventListener('change', () => {
+          rememberUndoSnapshot();
+          if (field) field.value = check.checked ? 'true' : 'false';
+          setDirty(true);
+        });
+        wrap.appendChild(check);
+        return wrap;
+      };
+      tdOften.appendChild(makeToggle(oftenField, String(oftenField && oftenField.value || '').toLowerCase() === 'true'));
+      tdNever.appendChild(makeToggle(neverField, String(neverField && neverField.value || '').toLowerCase() === 'true'));
     } else {
       tdOften.textContent = String(oftenField && oftenField.value || '').toLowerCase() === 'true' ? 'Yes' : 'No';
       tdNever.textContent = String(neverField && neverField.value || '').toLowerCase() === 'true' ? 'Yes' : 'No';
@@ -10389,9 +10605,14 @@ function isCivilizationNoteListCountField(field) {
   return CIV_NOTE_LIST_COUNT_KEYS.has(base);
 }
 
+function isCivilizationNameListItemField(field) {
+  const base = String(field && (field.baseKey || field.key) || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return /^cityname\d*$/.test(base) || /^milleader\d*$/.test(base) || /^scientificleader\d*$/.test(base);
+}
+
 function renderCivilizationNameListsCard(entry, referenceEditable) {
   const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
-  const hasAny = fields.some((field) => isCivilizationNoteListCountField(field));
+  const hasAny = fields.some((field) => isCivilizationNoteListCountField(field) || isCivilizationNameListItemField(field));
   if (!hasAny) return null;
   const card = document.createElement('div');
   card.className = 'rule-group-card';
@@ -10400,9 +10621,9 @@ function renderCivilizationNameListsCard(entry, referenceEditable) {
   title.textContent = 'Name Lists';
   card.appendChild(title);
   const rows = [
-    { label: 'City Names', countKey: 'numcitynames', placeholder: 'City name' },
-    { label: 'Military Leaders', countKey: 'numgreatleaders', placeholder: 'Military leader name' },
-    { label: 'Scientific Leaders', countKey: 'numscientificleaders', placeholder: 'Scientific leader name' }
+    { label: 'City Names', countKey: 'numcitynames', itemPrefix: 'cityname', placeholder: 'City name' },
+    { label: 'Military Leaders', countKey: 'numgreatleaders', itemPrefix: 'milleader', placeholder: 'Military leader name' },
+    { label: 'Scientific Leaders', countKey: 'numscientificleaders', itemPrefix: 'scientificleader', placeholder: 'Scientific leader name' }
   ];
   rows.forEach((cfg) => {
     const row = document.createElement('div');
@@ -11187,7 +11408,12 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
       } else if (cfg.kind === 'stealthTargets') {
         text.textContent = stealthState.values.length ? stealthState.values.join(', ') : '(none)';
       } else if (cfg.kind === 'ignoreMovement') {
-        text.textContent = ignoreMoveState.values.length ? ignoreMoveState.values.join(', ') : '(none)';
+        const terrainRows = getTerrainFlagRowsForUnits();
+        const labels = terrainRows
+          .filter((row, idx) => String(ignoreMoveState.values[idx] || '').trim() === '1')
+          .map((row) => row.label)
+          .filter(Boolean);
+        text.textContent = labels.length ? labels.join(', ') : '(none)';
       } else if (cfg.kind === 'legalUnitTelepads') {
         text.textContent = legalUnitTelepadState.values.length ? legalUnitTelepadState.values.join(', ') : '(none)';
       } else if (cfg.kind === 'legalBuildingTelepads') {
@@ -11244,14 +11470,10 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
       });
       controlWrap.appendChild(editor);
     } else if (cfg.kind === 'ignoreMovement') {
-      const editor = makeNamedListTokenEditor({
-        tabKey: 'terrain',
-        values: ignoreMoveState.values,
-        onValuesChange: (values) => {
-          rememberUndoSnapshot();
-          setUnitListFieldValues(entry, ignoreMoveState.key, values);
-          setDirty(true);
-        }
+      const editor = renderTerrainFlagEditor(entry, ignoreMoveState.values, (values) => {
+        rememberUndoSnapshot();
+        setUnitListFieldValues(entry, ignoreMoveState.key, values);
+        setDirty(true);
       });
       controlWrap.appendChild(editor);
     } else if (cfg.kind === 'legalUnitTelepads') {
@@ -11318,6 +11540,8 @@ function getReferenceOptionsForField(tabKey, field) {
   const target = map[base];
   if (!target) return [];
   if (target === 'eras') {
+    const eraOptions = makeBiqSectionIndexOptions('ERAS', false);
+    if (eraOptions.length > 0) return eraOptions;
     const names = ['Ancient', 'Middle Ages', 'Industrial', 'Modern'];
     return names.map((name, idx) => ({ value: String(idx), label: `${name} (${idx})` }));
   }
@@ -13862,6 +14086,10 @@ function getDisplayBiqRecordName(sectionCode, record, idxFallback = 0) {
   const code = String(sectionCode || '').toUpperCase();
   const idx = Number.isFinite(record && record.index) ? Number(record.index) : Number(idxFallback) || 0;
   const raw = String(record && record.name || '').trim();
+  if (code === 'RACE') {
+    const civName = String(record && record.civilizationName || '').trim();
+    return civName || raw || `${code} ${idx + 1}`;
+  }
   if (code === 'LEAD') {
     if (!raw) return `Player ${idx + 1}`;
     if (/^lead\b/i.test(raw) || /^lead\s*\d+$/i.test(raw)) return `Player ${idx + 1}`;
