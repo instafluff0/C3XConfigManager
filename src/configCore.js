@@ -371,53 +371,49 @@ function applyFieldLabelOverrides(sectionCode, field) {
       construction: 'Construction Output'
     },
     RULE: {
-      townname: 'Town Name',
-      cityname: 'City Name',
-      metropolisname: 'Metropolis Name',
-      numspaceshipparts: 'Number of Spaceship Parts',
-      advancedbarbarian: 'Advanced Barbarian Unit',
-      basicbarbarian: 'Basic Barbarian Unit',
-      barbarianseaunit: 'Barbarian Sea Unit',
-      citiesforarmy: 'Cities Required For Army',
-      chanceofrioting: 'Chance Of Rioting (%)',
-      draftturnpenalty: 'Draft Turn Penalty',
-      shieldcostingold: 'Shield Cost In Gold',
-      fortressdefencebonus: 'Fortress Defense Bonus (%)',
-      citizensaffectedbyhappyface: 'Citizens Affected By Happy Face',
-      forestvalueinshields: 'Forest Value In Shields',
-      shieldvalueingold: 'Shield Value In Gold',
-      citizenvalueinshields: 'Citizen Value In Shields',
-      battlecreatedunit: 'Battle-Created Unit',
-      buildarmyunit: 'Build Army Unit',
-      buildingdefensivebonus: 'Building Defense Bonus (%)',
-      citizendefensivebonus: 'Citizen Defense Bonus (%)',
-      defaultmoneyresource: 'Default Currency Resource',
-      chancetointerceptairmissions: 'Chance To Intercept Air Missions (%)',
-      chancetointerceptstealthmissions: 'Chance To Intercept Stealth Missions (%)',
+      townname: 'Level One',
+      cityname: 'Level Two',
+      metropolisname: 'Level Three',
+      numspaceshipparts: 'Number of Parts',
+      advancedbarbarian: 'Adv. Barbarian',
+      basicbarbarian: 'Basic Barbarian',
+      barbarianseaunit: 'Barbarian Ship',
+      citiesforarmy: 'Cities Needed to Support an Army',
+      chanceofrioting: 'Chance of Rioting with Unhappiness',
+      draftturnpenalty: 'Turn Penalty for Each Drafted Citizen',
+      shieldcostingold: 'Shield Cost in Gold',
+      fortressdefencebonus: 'Fortress',
+      citizensaffectedbyhappyface: 'Citizens affected by each Happy Face',
+      forestvalueinshields: 'Forest Value in Shields',
+      shieldvalueingold: 'Shield Value in Gold',
+      citizenvalueinshields: 'Citizen Value in Shields',
+      battlecreatedunit: 'Battle-Created',
+      buildarmyunit: 'Build-Army',
+      buildingdefensivebonus: 'Building',
+      citizendefensivebonus: 'Citizen',
+      defaultmoneyresource: 'Default Money Resource',
+      chancetointerceptairmissions: 'Chance of Intercepting Air Missions',
+      chancetointerceptstealthmissions: 'Chance of Intercepting Stealth Missions',
       startingtreasury: 'Starting Treasury',
       questionmark1: 'Unknown 1',
       questionmark2: 'Unknown 2',
       questionmark3: 'Unknown 3',
       questionmark4: 'Unknown 4',
-      questionmarkone: 'Unknown 1',
-      questionmarktwo: 'Unknown 2',
-      questionmarkthree: 'Unknown 3',
-      questionmarkfour: 'Unknown 4',
       foodconsumptionpercitizen: 'Food Consumption Per Citizen',
-      riverdefensivebonus: 'River Defense Bonus (%)',
-      turnpenaltyforwhip: 'Whip Turn Penalty',
-      scout: 'Scout Unit',
+      riverdefensivebonus: 'River',
+      turnpenaltyforwhip: 'Turn Penalty for Each Hurry Sacrifice',
+      scout: 'Scout',
       slave: 'Captured Unit',
-      roadmovementrate: 'Road Movement Rate',
+      roadmovementrate: 'Road movement rate',
       startunit1: 'Start Unit 1',
       startunit2: 'Start Unit 2',
-      wltkdminimumpop: 'WLTKD Minimum Population',
-      towndefencebonus: 'Town Defense Bonus (%)',
-      citydefencebonus: 'City Defense Bonus (%)',
-      metropolisdefencebonus: 'Metropolis Defense Bonus (%)',
-      maxcity1size: 'Max Town Size',
-      maxcity2size: 'Max City Size',
-      fortificationsdefencebonus: 'Fortification Defense Bonus (%)',
+      wltkdminimumpop: 'Minimum Population for We Love the King',
+      towndefencebonus: 'Town',
+      citydefencebonus: 'City',
+      metropolisdefencebonus: 'Metropolis',
+      maxcity1size: 'Maximum Size',
+      maxcity2size: 'Maximum Size',
+      fortificationsdefencebonus: 'Fortification',
       numculturallevels: 'Number Of Cultural Levels',
       borderexpansionmultiplier: 'Border Expansion Multiplier',
       borderfactor: 'Border Factor',
@@ -427,7 +423,7 @@ function applyFieldLabelOverrides(sectionCode, field) {
       minimumresearchtime: 'Minimum Research Time',
       flagunit: 'Flag Unit',
       upgradecost: 'Upgrade Cost',
-      defaultdifficultylevel: 'Default Difficulty'
+      defaultdifficultylevel: 'Default AI Difficulty'
     },
     BLDG: {
       gainineverycity: 'Gain In Every City',
@@ -742,8 +738,9 @@ function enrichBridgeSections(sections) {
   const makeIndex = (code) => {
     const section = byCode.get(code);
     const map = {};
-    if (!section || !Array.isArray(section.records)) return map;
-    section.records.forEach((r, idx) => {
+    const records = Array.isArray(section && section.fullRecords) ? section.fullRecords : (section && section.records);
+    if (!section || !Array.isArray(records)) return map;
+    records.forEach((r, idx) => {
       map[idx] = cleanDisplayText(r.name || `${code} ${idx + 1}`);
     });
     return map;
@@ -1074,8 +1071,11 @@ function enrichBridgeSections(sections) {
 
 function normalizeBridgeSections(parsed) {
   const sections = (parsed.sections || []).map((section) => {
+    const fullRecords = Array.isArray(section.records)
+      ? section.records.map((record) => ({ ...record }))
+      : [];
     const limit = getBiqBridgeRecordLimit(section.code);
-    const records = (section.records || [])
+    const records = fullRecords
       .slice(0, limit)
       .map((record) => ({
         index: record.index || 0,
@@ -1089,6 +1089,7 @@ function normalizeBridgeSections(parsed) {
       title: section.title || section.code,
       count: Number(section.count || records.length),
       records,
+      fullRecords,
       recordsTruncated: Number(section.count || 0) > records.length
     };
   });
@@ -2713,6 +2714,85 @@ function indexBiqRecordsByCivilopediaKey(biqTab, sectionCode) {
   return out;
 }
 
+function getRecordFieldsForSection(record, sectionCode) {
+  if (record && Array.isArray(record.fields) && record.fields.length > 0) return record.fields;
+  const english = String(record && record.english || '');
+  if (!english) return [];
+  return parseEnglishFields(sectionCode, english || '');
+}
+
+function getRecordFieldValue(record, sectionCode, baseKey) {
+  const target = String(baseKey || '').trim().toLowerCase();
+  if (!target) return '';
+  const fields = getRecordFieldsForSection(record, sectionCode);
+  const hit = fields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target);
+  return cleanDisplayText(hit && hit.value || '');
+}
+
+function isPrtoStrategyMapRecord(record) {
+  const raw = getRecordFieldValue(record, 'PRTO', 'otherStrategy');
+  const parsed = parseReferenceIdFromFieldValue(raw);
+  return Number.isFinite(parsed) && parsed >= 0;
+}
+
+function buildSyntheticUnitReferenceEntry(record, biqSourcePath, mode) {
+  const index = Number(record && record.index);
+  const name = cleanDisplayText(record && record.name || '') || `Unit ${Number.isFinite(index) ? index + 1 : '?'}`;
+  const civilopediaEntry = cleanDisplayText(getRecordFieldValue(record, 'PRTO', 'civilopediaentry'));
+  const rawRecordFields = getRecordFieldsForSection(record, 'PRTO');
+  const rawBiqFields = rawRecordFields
+    .filter((f) => String(f && (f.baseKey || f.key) || '').toLowerCase() !== 'civilopediaentry')
+    .map((f) => ({
+      key: f.key,
+      baseKey: f.baseKey || String(f.key || '').replace(/_\d+$/, ''),
+      label: f.label || toTitleFromKey(f.key),
+      value: cleanDisplayText(f.value),
+      originalValue: cleanDisplayText(f.originalValue == null ? f.value : f.originalValue),
+      editable: !!f.editable,
+      expectedSetter: String(f.expectedSetter || '')
+    }));
+  return {
+    id: `biq-prto-${Number.isFinite(index) ? index : name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    civilopediaKey: civilopediaEntry || '',
+    biqIndex: Number.isFinite(index) ? index : null,
+    name,
+    overview: '',
+    originalOverview: '',
+    description: '',
+    originalDescription: '',
+    techDependencies: [],
+    improvementKind: null,
+    iconPaths: [],
+    originalIconPaths: [],
+    racePaths: [],
+    originalRacePaths: [],
+    thumbPath: '',
+    animationName: '',
+    originalAnimationName: '',
+    biqSectionCode: 'PRTO',
+    biqSectionTitle: 'PRTO',
+    biqFields: projectUnitBiqFields({
+      rawFields: rawBiqFields,
+      civilopediaEntry: civilopediaEntry || `PRTO_${name.replace(/\s+/g, '_')}`
+    }),
+    improvementFlavorCount: 0,
+    civilizationFlavorCount: 0,
+    technologyFlavorCount: 0,
+    sourceMeta: {
+      overview: { source: 'BIQ', readPath: biqSourcePath || '', writePath: mode === 'scenario' ? (biqSourcePath || '') : '' },
+      description: { source: 'BIQ', readPath: biqSourcePath || '', writePath: mode === 'scenario' ? (biqSourcePath || '') : '' },
+      iconPaths: { source: 'BIQ', readPath: biqSourcePath || '', writePath: mode === 'scenario' ? (biqSourcePath || '') : '' },
+      animationName: { source: 'BIQ', readPath: biqSourcePath || '', writePath: mode === 'scenario' ? (biqSourcePath || '') : '' },
+      biq: {
+        source: 'BIQ',
+        readPath: biqSourcePath || '',
+        writePath: mode === 'scenario' ? (biqSourcePath || '') : ''
+      }
+    },
+    syntheticBiqOnly: true
+  };
+}
+
 function findLayerPathForKey(mapsByLayer, layerFilesByLayer, key, order) {
   const upperKey = String(key || '').toUpperCase();
   if (!upperKey) return '';
@@ -3096,6 +3176,26 @@ function buildReferenceTabs(civ3Path, options = {}) {
       }
     }
 
+    if (tabSpec.key === 'units' && options.biqTab && Array.isArray(options.biqTab.sections)) {
+      const prtoSection = options.biqTab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'PRTO');
+      const prtoRecords = Array.isArray(prtoSection && prtoSection.fullRecords)
+        ? prtoSection.fullRecords
+        : (prtoSection && Array.isArray(prtoSection.records) ? prtoSection.records : []);
+      const seenIndexes = new Set(entries.map((entry) => Number(entry && entry.biqIndex)).filter((n) => Number.isFinite(n)));
+      const seenCivilopediaKeys = new Set(entries.map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase()).filter(Boolean));
+      prtoRecords.forEach((record) => {
+        const idx = Number(record && record.index);
+        if (!Number.isFinite(idx) || seenIndexes.has(idx)) return;
+        if (isPrtoStrategyMapRecord(record)) return;
+        const civilopediaEntry = String(getRecordFieldValue(record, 'PRTO', 'civilopediaentry') || '').toUpperCase();
+        if (civilopediaEntry && seenCivilopediaKeys.has(civilopediaEntry)) return;
+        entries.push(buildSyntheticUnitReferenceEntry(record, (options.biqTab && options.biqTab.sourcePath) || '', mode));
+        seenIndexes.add(idx);
+        if (civilopediaEntry) seenCivilopediaKeys.add(civilopediaEntry);
+      });
+      entries.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+    }
+
     tabs[tabSpec.key] = {
       title: tabSpec.title,
       type: 'reference',
@@ -3150,7 +3250,11 @@ function buildMapTabFromBiq(biqTab, mode) {
     readOnly: mode !== 'scenario',
     sourcePath: (biqTab && biqTab.sourcePath) || '',
     error: (biqTab && biqTab.error) || '',
-    sections: hasMapData ? sections : []
+    hasMapData,
+    originalHasMap: hasMapData,
+    mapMutation: null,
+    recordOps: [],
+    sections
   };
 }
 
@@ -3507,19 +3611,27 @@ function buildBaseModel(defaultText, scenarioText, customText, mode, targetText)
 
   const rows = orderedKeys.map((key) => {
     const defaultValue = defaultParsed.map[key] ?? '';
+    const hasScenarioValue = Object.prototype.hasOwnProperty.call(scenarioParsed.map, key);
+    const hasCustomValue = Object.prototype.hasOwnProperty.call(customParsed.map, key);
+    const scenarioValue = hasScenarioValue ? scenarioParsed.map[key] : defaultValue;
+    const customValue = hasCustomValue ? customParsed.map[key] : scenarioValue;
     const effectiveValue = effective[key] ?? '';
     const editableValue = editableMap[key] ?? effectiveValue;
     let source = 'default';
-    if (Object.prototype.hasOwnProperty.call(customParsed.map, key)) {
+    if (hasCustomValue) {
       source = 'custom';
-    } else if (mode === 'scenario' && Object.prototype.hasOwnProperty.call(scenarioParsed.map, key)) {
+    } else if (mode === 'scenario' && hasScenarioValue) {
       source = 'scenario';
     }
     return {
       key,
       defaultValue,
+      scenarioValue,
+      customValue,
       effectiveValue,
       value: editableValue,
+      hasScenarioValue,
+      hasCustomValue,
       source,
       type: inferBaseType(defaultValue || effectiveValue || editableValue)
     };
@@ -4364,12 +4476,14 @@ function buildSavePlan(payload) {
     if (protectErr) return { ok: false, error: protectErr };
     const biqRecordOps = collectBiqReferenceRecordOps(payload.tabs || {});
     const biqStructureRecordOps = collectBiqStructureRecordOps(payload.tabs || {});
+    const biqMapStructureOps = collectBiqMapStructureOps(payload.tabs || {});
     const biqMapRecordOps = collectBiqMapRecordOps(payload.tabs || {});
     const biqEdits = collectBiqReferenceEdits(payload.tabs || {});
     const structureEdits = collectBiqStructureEdits(payload.tabs || {});
     const mapEdits = collectBiqMapEdits(payload.tabs || {});
     const allBiqEdits = biqRecordOps
       .concat(biqStructureRecordOps)
+      .concat(biqMapStructureOps)
       .concat(biqMapRecordOps)
       .concat(biqEdits)
       .concat(structureEdits)
@@ -5039,6 +5153,8 @@ function collectBiqStructureEdits(tabs) {
 function collectBiqMapRecordOps(tabs) {
   const ops = [];
   const tab = tabs && tabs.map;
+  const mutation = String(tab && tab.mapMutation || '').trim().toLowerCase();
+  if (mutation === 'set' || mutation === 'remove') return ops;
   if (!tab || !Array.isArray(tab.recordOps) || tab.recordOps.length === 0) return ops;
   tab.recordOps.forEach((op) => {
     const kind = String(op && op.op || '').toLowerCase();
@@ -5082,12 +5198,33 @@ function collectBiqMapRecordOps(tabs) {
   return ops;
 }
 
+function collectBiqMapStructureOps(tabs) {
+  const tab = tabs && tabs.map;
+  if (!tab) return [];
+  const mutation = String(tab.mapMutation || '').trim().toLowerCase();
+  if (!mutation) return [];
+  if (mutation === 'remove') {
+    return [{ op: 'removemap' }];
+  }
+  if (mutation !== 'set') return [];
+  const mapSectionCodes = new Set(['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY']);
+  const sections = (Array.isArray(tab.sections) ? tab.sections : [])
+    .filter((section) => mapSectionCodes.has(String(section && section.code || '').trim().toUpperCase()))
+    .map((section) => JSON.parse(JSON.stringify(section)));
+  if (sections.length === 0) return [];
+  return [{ op: 'setmap', sections }];
+}
+
 function collectBiqMapEdits(tabs) {
   const edits = [];
   const tab = tabs && tabs.map;
+  const mutation = String(tab && tab.mapMutation || '').trim().toLowerCase();
+  if (mutation === 'set' || mutation === 'remove') return edits;
   if (!tab || !Array.isArray(tab.sections)) return edits;
+  const editableMapSections = new Set(['WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY']);
   tab.sections.forEach((section) => {
     const sectionCode = String((section && section.code) || '').trim().toUpperCase();
+    if (!editableMapSections.has(sectionCode)) return;
     if (!sectionCode || !Array.isArray(section.records)) return;
     section.records.forEach((record) => {
       const recordIndex = Number(record && record.index);
@@ -5587,5 +5724,7 @@ module.exports = {
   saveBundle,
   previewSavePlan,
   previewFileDiff,
-  buildUnifiedDiffRows
+  buildUnifiedDiffRows,
+  buildSyntheticUnitReferenceEntry,
+  isPrtoStrategyMapRecord
 };

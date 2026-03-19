@@ -151,6 +151,7 @@ const state = {
   }
 };
 const mapCore = (typeof window !== 'undefined' && window.MapEditorCore) ? window.MapEditorCore : null;
+const mapGeneratorCore = (typeof window !== 'undefined' && window.MapGeneratorCore) ? window.MapGeneratorCore : null;
 const richTooltip = {
   node: null,
   active: false
@@ -176,6 +177,12 @@ const mapModal = {
   title: null,
   tab: null,
   tileSection: null
+};
+const generateMapModal = {
+  node: null,
+  body: null,
+  title: null,
+  tab: null
 };
 const pediaLinkPreview = {
   node: null,
@@ -3308,12 +3315,18 @@ function navigateToReferenceEntry(tabKey, entryOrKey, options = {}) {
   if (!targetTabKey || !state.bundle || !state.bundle.tabs) return false;
   const tab = state.bundle.tabs[targetTabKey];
   if (!tab || tab.type !== 'reference' || !Array.isArray(tab.entries)) return false;
-  const rawKey = typeof entryOrKey === 'string'
-    ? entryOrKey
-    : String(entryOrKey && entryOrKey.civilopediaKey || '');
-  const targetKey = String(rawKey || '').trim().toUpperCase();
-  if (!targetKey) return false;
-  const idx = tab.entries.findIndex((entry) => String(entry && entry.civilopediaKey || '').trim().toUpperCase() === targetKey);
+  const targetKey = typeof entryOrKey === 'string'
+    ? String(entryOrKey || '').trim().toUpperCase()
+    : String(entryOrKey && entryOrKey.civilopediaKey || '').trim().toUpperCase();
+  const targetBiqIndex = Number.isFinite(entryOrKey && entryOrKey.biqIndex) ? Number(entryOrKey.biqIndex) : NaN;
+  const targetName = String(entryOrKey && entryOrKey.name || '').trim().toLowerCase();
+  const idx = tab.entries.findIndex((entry, fallbackIdx) => {
+    if (targetKey && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === targetKey) return true;
+    const biqIdx = Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : fallbackIdx;
+    if (Number.isFinite(targetBiqIndex) && biqIdx === targetBiqIndex) return true;
+    if (targetName && String(entry && entry.name || '').trim().toLowerCase() === targetName) return true;
+    return false;
+  });
   if (idx < 0) return false;
   navigateWithHistory(() => {
     state.activeTab = targetTabKey;
@@ -3342,6 +3355,73 @@ function getReferenceEntrySearchTerms(tabKey, entry) {
     terms.push('Lists');
   }
   return terms.join(' ');
+}
+
+function getBiqSectionByCode(sectionCode) {
+  const code = String(sectionCode || '').toUpperCase();
+  const biq = state.bundle && state.bundle.biq;
+  const sections = biq && Array.isArray(biq.sections) ? biq.sections : [];
+  return sections.find((section) => String(section && section.code || '').toUpperCase() === code) || null;
+}
+
+function makeSyntheticReferenceEntryFromBiqRecord(tabKey, record, sectionCode) {
+  const idx = Number(record && record.index);
+  const name = String(record && record.name || `${sectionCode} ${Number.isFinite(idx) ? (idx + 1) : '?'}`).trim();
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  const civilopediaKey = String(getFieldByBaseKey(record, 'civilopediaentry')?.value || '').trim();
+  const sourcePath = String(((state.bundle || {}).biq || {}).sourcePath || '').trim();
+  return {
+    id: `synthetic-${String(tabKey || 'ref')}-${Number.isFinite(idx) ? idx : name}`,
+    civilopediaKey,
+    biqIndex: Number.isFinite(idx) ? idx : null,
+    name,
+    overview: '',
+    originalOverview: '',
+    description: '',
+    originalDescription: '',
+    techDependencies: [],
+    iconPaths: [],
+    originalIconPaths: [],
+    racePaths: [],
+    originalRacePaths: [],
+    thumbPath: '',
+    animationName: '',
+    originalAnimationName: '',
+    biqSectionCode: String(sectionCode || '').toUpperCase(),
+    biqSectionTitle: String(sectionCode || '').toUpperCase(),
+    biqFields: fields.map((field) => ({
+      ...field,
+      baseKey: field.baseKey || String(field.key || '').replace(/_\d+$/, ''),
+      originalValue: String(field.value || '').trim()
+    })),
+    sourceMeta: {
+      biq: {
+        source: 'BIQ',
+        readPath: sourcePath,
+        writePath: sourcePath
+      }
+    },
+    syntheticBiqOnly: true
+  };
+}
+
+function ensureSyntheticReferenceEntryForBiqRecord(tabKey, sectionCode, record) {
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+  if (!tab || !Array.isArray(tab.entries) || !record) return null;
+  const idx = Number(record && record.index);
+  const name = String(record && record.name || '').trim().toLowerCase();
+  const civilopediaKey = String(getFieldByBaseKey(record, 'civilopediaentry')?.value || '').trim().toUpperCase();
+  const existing = tab.entries.find((entry, fallbackIdx) => {
+    const biqIdx = Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : fallbackIdx;
+    if (Number.isFinite(idx) && biqIdx === idx) return true;
+    if (civilopediaKey && String(entry && entry.civilopediaKey || '').trim().toUpperCase() === civilopediaKey) return true;
+    if (name && String(entry && entry.name || '').trim().toLowerCase() === name) return true;
+    return false;
+  });
+  if (existing) return existing;
+  const synthetic = makeSyntheticReferenceEntryFromBiqRecord(tabKey, record, sectionCode);
+  tab.entries.push(synthetic);
+  return synthetic;
 }
 
 function getBiqRecordSearchTerms(sectionCode, record) {
@@ -5123,6 +5203,39 @@ function renderBaseTab(tab) {
     if (dirty) return activeOverrideSource;
     return String(row && row.source || '').trim().toLowerCase();
   };
+  const getBaseRowPills = (row) => {
+    const defaultValue = String(row && row.defaultValue || '');
+    const currentValue = String(row && row.value || '');
+    const scenarioValue = row && row.hasScenarioValue ? String(row.scenarioValue || '') : defaultValue;
+    const customValue = row && row.hasCustomValue ? String(row.customValue || '') : scenarioValue;
+    const dirty = isBaseRowDirty(row);
+    const primary = { key: '', title: '' };
+    const override = { visible: false, title: '' };
+
+    if (isScenarioMode()) {
+      const scenarioDisplayValue = dirty ? currentValue : scenarioValue;
+      if (scenarioDisplayValue !== defaultValue) {
+        primary.key = 'scenario';
+        primary.title = dirty
+          ? 'Unsaved scenario value differs from default.c3x_config.ini'
+          : 'Value in scenario.c3x_config.ini differs from default.c3x_config.ini';
+      }
+      if (row && row.hasCustomValue && customValue !== scenarioDisplayValue) {
+        override.visible = true;
+        override.title = `A value exists in custom.c3x_config.ini and will override this ${primary.key === 'scenario' ? 'scenario' : 'default'} value at runtime.`;
+      }
+    } else {
+      const customDisplayValue = dirty ? currentValue : customValue;
+      if (customDisplayValue !== defaultValue) {
+        primary.key = 'custom';
+        primary.title = dirty
+          ? 'Unsaved custom value differs from default.c3x_config.ini'
+          : 'Value in custom.c3x_config.ini differs from default.c3x_config.ini';
+      }
+    }
+
+    return { primary, override };
+  };
 
   const header = document.createElement('div');
   header.className = 'section-editor-header sticky';
@@ -5192,17 +5305,32 @@ function renderBaseTab(tab) {
     releaseBadge.classList.toggle('hidden', releaseInfo.label === 'R1');
     keyHead.appendChild(releaseBadge);
     const sourceBadge = document.createElement('span');
+    const overrideBadge = document.createElement('span');
     const refreshSourceBadge = () => {
       const sourceKey = getDisplaySourceKey(row);
-      sourceBadge.className = `c3x-source-pill source-${sourceKey || 'unknown'}`;
-      sourceBadge.textContent = sourceKey || 'unknown';
-      sourceBadge.classList.toggle('hidden', sourceKey === 'default' || !sourceKey || sourceKey === 'unknown');
-      if (sourceKey === 'custom') sourceBadge.title = 'Value shown from custom.c3x_config.ini';
-      else if (sourceKey === 'scenario') sourceBadge.title = 'Value shown from scenario.c3x_config.ini';
-      else sourceBadge.title = `Value shown from ${getBaseFieldSource(row)}`;
+      const pills = getBaseRowPills(row);
+      const primaryKey = pills.primary.key || sourceKey || 'unknown';
+      sourceBadge.className = `c3x-source-pill source-${primaryKey}`;
+      sourceBadge.textContent = pills.primary.key || primaryKey || 'unknown';
+      sourceBadge.classList.toggle('hidden', !pills.primary.key);
+      if (pills.primary.key) {
+        sourceBadge.title = pills.primary.title;
+      } else if (sourceKey === 'custom') {
+        sourceBadge.title = 'Value shown from custom.c3x_config.ini';
+      } else if (sourceKey === 'scenario') {
+        sourceBadge.title = 'Value shown from scenario.c3x_config.ini';
+      } else {
+        sourceBadge.title = `Value shown from ${getBaseFieldSource(row)}`;
+      }
+
+      overrideBadge.className = 'c3x-source-pill source-override';
+      overrideBadge.textContent = 'OVERRIDDEN';
+      overrideBadge.title = pills.override.title || 'A custom value exists and overrides this value at runtime.';
+      overrideBadge.classList.toggle('hidden', !pills.override.visible);
     };
     refreshSourceBadge();
     keyHead.appendChild(sourceBadge);
+    keyHead.appendChild(overrideBadge);
     keyTitle.appendChild(keyHead);
     keyWrap.appendChild(keyTitle);
     keyWrap.appendChild(createBaseMeta(row, tab.fieldDocs));
@@ -6288,7 +6416,48 @@ function drawPreviewFrameToCanvas(preview, canvas) {
 
 function loadReferenceListThumbnail(tabKey, entry, holder) {
   const assetPath = entry.thumbPath || '';
-  if (!assetPath) return;
+  if (!assetPath) {
+    if (tabKey === 'units' && entry) {
+      const iconIndexField = getBiqFieldByBaseKey(entry, 'iconindex');
+      const iconIndex = parseIntLoose(iconIndexField && iconIndexField.value, NaN);
+      if (Number.isFinite(iconIndex) && iconIndex >= 0) {
+        getUnits32AtlasPreview()
+          .then((preview) => {
+            if (!preview || !holder.isConnected) return;
+            const canvas = document.createElement('canvas');
+            canvas.width = 28;
+            canvas.height = 28;
+            canvas.className = 'entry-thumb-canvas';
+            if (!drawUnits32IconToCanvas(preview, iconIndex, canvas)) return;
+            holder.innerHTML = '';
+            holder.appendChild(canvas);
+          })
+          .catch(() => {});
+        return;
+      }
+      if (entry.name) {
+        window.c3xManager.getPreview({
+          kind: 'unitFlcFirstFrame',
+          civ3Path: state.settings.civ3Path,
+          scenarioPath: state.settings.scenarioPath,
+          scenarioPaths: getScenarioPreviewPaths(),
+          prtoName: String(entry.name || '')
+        })
+          .then((res) => {
+            if (!res || !res.ok || !holder.isConnected) return;
+            const canvas = document.createElement('canvas');
+            canvas.width = 28;
+            canvas.height = 28;
+            canvas.className = 'entry-thumb-canvas';
+            drawPreviewFrameToCanvas(res, canvas);
+            holder.innerHTML = '';
+            holder.appendChild(canvas);
+          })
+          .catch(() => {});
+      }
+    }
+    return;
+  }
   const key = JSON.stringify({
     kind: 'list-thumb',
     tabKey,
@@ -7634,6 +7803,7 @@ const FIELD_HELP_NOTES = {
       upgradecost: 'Gold cost factor for unit upgrades (based on shield cost difference).',
       maxcity1size: 'Population limit where a town must become a city.',
       maxcity2size: 'Population limit where a city must become a metropolis.',
+      wltkdminimumpop: 'Minimum population required for We Love the King Day.',
       towndefencebonus: 'Defensive bonus percentage for towns.',
       citydefencebonus: 'Defensive bonus percentage for cities.',
       metropolisdefencebonus: 'Defensive bonus percentage for metropolises.',
@@ -7935,7 +8105,7 @@ const BIQ_FIELD_HIDDEN = {
   all: new Set(['byte_length', 'datalength', 'data_length', 'note']),
   resources: new Set(['icon', 'question_mark', 'prerequisite', 'name']),
   improvements: new Set(['question_mark', 'name']),
-  units: new Set(['iconindex', 'question_mark', 'requiredtech', 'name']),
+  units: new Set(['question_mark', 'requiredtech', 'name']),
   technologies: new Set(['advanceicon', 'question_mark', 'name', 'prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4']),
   governments: new Set(['question_mark', 'name']),
   civilizations: new Set([
@@ -7960,9 +8130,11 @@ const QUINT_UNIT_RULE_VISIBLE_KEYS = new Set([
   'requiredtech',
   'requiredresource1', 'requiredresource2', 'requiredresource3',
   'upgradeto',
+  'iconindex',
   'unitclass',
   'attack', 'defence', 'movement', 'bombardstrength', 'bombardrange', 'rateoffire', 'airdefence',
   'hitpointbonus', 'operationalrange', 'capacity', 'populationcost', 'shieldcost', 'workerstrengthfloat',
+  'useexactcost',
   'requiressupport', 'zoneofcontrol', 'bombardeffects', 'createscraters',
   'offence', 'defencestrategy', 'explorestrategy', 'terraform', 'settle', 'kingstrategy', 'artillery',
   'cruisemissileunit', 'icbm', 'tacticalnuke', 'leaderunit', 'armyunit', 'flagstrategy',
@@ -7974,6 +8146,7 @@ const QUINT_UNIT_RULE_VISIBLE_KEYS = new Set([
   'load', 'unload', 'airlift', 'airdrop', 'pillage', 'bombard', 'buildarmy', 'finishimprovement', 'upgrade',
   'capture', 'scienceage', 'enslave', 'sacrifice', 'teleportable', 'telepad', 'charm', 'stealthattack', 'collateraldamage',
   'enslaveresultsin',
+  'telepadrange',
   'skipturn', 'wait', 'goto', 'fortify', 'disband', 'exploreorder', 'sentry',
   'bomb', 'rebase', 'precisionbombing', 'recon', 'intercept',
   'allterrainasroads', 'amphibiousunit', 'army', 'blitz', 'cruisemissile', 'detectinvisible',
@@ -8097,7 +8270,6 @@ const UNIT_BOTTOM_LIST_HIDDEN_KEYS = new Set([
   'availableto',
   'stealthtarget',
   'numstealthtargets',
-  'telepadrange',
   'numlegalunittelepads',
   'numlegalbuildingtelepads'
 ]);
@@ -8137,7 +8309,7 @@ const BIQ_SECTION_FRIENDLY_NAMES = {
   WSIZ: 'World Sizes',
   WCHR: 'World Characteristics',
   ERAS: 'Eras',
-  RULE: 'Core Rules',
+  RULE: 'General',
   DIFF: 'Difficulty Levels',
   ESPN: 'Espionage',
   CTZN: 'Citizens',
@@ -8311,70 +8483,70 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       'wltkdminimumpop', 'citizensaffectedbyhappyface', 'turnpenaltyforwhip', 'draftturnpenalty', 'chanceofrioting',
       'chancetointerceptairmissions', 'chancetointerceptstealthmissions', 'citiesforarmy',
       'citizenvalueinshields', 'shieldcostingold', 'basecapitalizationrate', 'forestvalueinshields', 'shieldvalueingold',
-      'towndefencebonus', 'citydefencebonus', 'metropolisdefencebonus', 'fortressdefencebonus', 'riverdefensivebonus', 'fortificationsdefencebonus', 'citizendefensivebonus', 'buildingdefensivebonus',
       'numspaceshipparts',
       'roadmovementrate', 'upgradecost', 'foodconsumptionpercitizen', 'startingtreasury', 'goldenageduration', 'defaultdifficultylevel', 'defaultmoneyresource',
+      'towndefencebonus', 'citydefencebonus', 'metropolisdefencebonus', 'fortressdefencebonus', 'riverdefensivebonus', 'fortificationsdefencebonus', 'citizendefensivebonus', 'buildingdefensivebonus',
       'questionmark1', 'questionmark2', 'questionmark3', 'questionmark4'
     ],
     fields: {
-      slave: { group: 'Default Units', control: 'reference' },
-      startunit1: { group: 'Default Units', control: 'reference' },
-      startunit2: { group: 'Default Units', control: 'reference' },
-      scout: { group: 'Default Units', control: 'reference' },
-      battlecreatedunit: { group: 'Default Units', control: 'reference' },
-      buildarmyunit: { group: 'Default Units', control: 'reference' },
-      basicbarbarian: { group: 'Default Units', control: 'reference' },
-      advancedbarbarian: { group: 'Default Units', control: 'reference' },
-      barbarianseaunit: { group: 'Default Units', control: 'reference' },
-      flagunit: { group: 'Default Units', control: 'reference' },
-      townname: { group: 'City Size Limits', control: 'text' },
-      cityname: { group: 'City Size Limits', control: 'text' },
-      metropolisname: { group: 'City Size Limits', control: 'text' },
-      maxcity1size: { group: 'City Size Limits', control: 'number' },
-      maxcity2size: { group: 'City Size Limits', control: 'number' },
-      futuretechcost: { group: 'Technology', control: 'number' },
-      minimumresearchtime: { group: 'Technology', control: 'number' },
-      maximumresearchtime: { group: 'Technology', control: 'number' },
-      wltkdminimumpop: { group: 'Citizen Mood', control: 'number' },
-      citizensaffectedbyhappyface: { group: 'Citizen Mood', control: 'number' },
-      turnpenaltyforwhip: { group: 'Citizen Mood', control: 'number' },
-      draftturnpenalty: { group: 'Citizen Mood', control: 'number' },
-      chanceofrioting: { group: 'Citizen Mood', control: 'number' },
-      chancetointerceptairmissions: { group: 'Various Unit Abilities', control: 'number' },
-      chancetointerceptstealthmissions: { group: 'Various Unit Abilities', control: 'number' },
-      citiesforarmy: { group: 'Various Unit Abilities', control: 'number' },
-      citizenvalueinshields: { group: 'Hurry Production/Wealth', control: 'number' },
-      shieldcostingold: { group: 'Hurry Production/Wealth', control: 'number' },
-      basecapitalizationrate: { group: 'Hurry Production/Wealth', control: 'number' },
-      forestvalueinshields: { group: 'Hurry Production/Wealth', control: 'number' },
-      shieldvalueingold: { group: 'Hurry Production/Wealth', control: 'number' },
-      town_defence_bonus: { group: 'Defensive Bonuses', control: 'number' },
-      towndefencebonus: { group: 'Defensive Bonuses', control: 'number' },
-      city_defence_bonus: { group: 'Defensive Bonuses', control: 'number' },
-      citydefencebonus: { group: 'Defensive Bonuses', control: 'number' },
-      metropolis_defence_bonus: { group: 'Defensive Bonuses', control: 'number' },
-      metropolisdefencebonus: { group: 'Defensive Bonuses', control: 'number' },
-      fortress_defence_bonus: { group: 'Defensive Bonuses', control: 'number' },
-      fortressdefencebonus: { group: 'Defensive Bonuses', control: 'number' },
-      river_defensive_bonus: { group: 'Defensive Bonuses', control: 'number' },
-      riverdefensivebonus: { group: 'Defensive Bonuses', control: 'number' },
-      riverdefencebonus: { group: 'Defensive Bonuses', control: 'number' },
-      fortifications_defence_bonus: { group: 'Defensive Bonuses', control: 'number' },
-      fortificationsdefencebonus: { group: 'Defensive Bonuses', control: 'number' },
-      citizendefensivebonus: { group: 'Defensive Bonuses', control: 'number' },
-      buildingdefensivebonus: { group: 'Defensive Bonuses', control: 'number' },
-      numspaceshipparts: { group: 'Spaceship Parts', control: 'number' },
-      roadmovementrate: { group: 'Other', control: 'number' },
-      upgradecost: { group: 'Other', control: 'number' },
-      foodconsumptionpercitizen: { group: 'Other', control: 'number' },
-      startingtreasury: { group: 'Other', control: 'number' },
-      goldenageduration: { group: 'Other', control: 'number' },
-      defaultdifficultylevel: { group: 'Other', control: 'reference' },
-      defaultmoneyresource: { group: 'Other', control: 'reference' },
-      questionmark1: { group: 'Unknowns', control: 'number' },
-      questionmark2: { group: 'Unknowns', control: 'number' },
-      questionmark3: { group: 'Unknowns', control: 'number' },
-      questionmark4: { group: 'Unknowns', control: 'number' },
+      slave: { group: 'Default Units', control: 'reference', label: 'Captured Unit' },
+      startunit1: { group: 'Default Units', control: 'reference', label: 'Start Unit 1' },
+      startunit2: { group: 'Default Units', control: 'reference', label: 'Start Unit 2' },
+      scout: { group: 'Default Units', control: 'reference', label: 'Scout' },
+      battlecreatedunit: { group: 'Default Units', control: 'reference', label: 'Battle-Created' },
+      buildarmyunit: { group: 'Default Units', control: 'reference', label: 'Build-Army' },
+      basicbarbarian: { group: 'Default Units', control: 'reference', label: 'Basic Barbarian' },
+      advancedbarbarian: { group: 'Default Units', control: 'reference', label: 'Adv. Barbarian' },
+      barbarianseaunit: { group: 'Default Units', control: 'reference', label: 'Barbarian Ship' },
+      flagunit: { group: 'Default Units', control: 'reference', label: 'Flag Unit' },
+      townname: { group: 'City Size Limits', control: 'text', label: 'Level One' },
+      cityname: { group: 'City Size Limits', control: 'text', label: 'Level Two' },
+      metropolisname: { group: 'City Size Limits', control: 'text', label: 'Level Three' },
+      maxcity1size: { group: 'City Size Limits', control: 'number', label: 'Maximum Size' },
+      maxcity2size: { group: 'City Size Limits', control: 'number', label: 'Maximum Size' },
+      futuretechcost: { group: 'Technology', control: 'number', label: 'Future Tech Cost' },
+      minimumresearchtime: { group: 'Technology', control: 'number', label: 'Minimum Research Time' },
+      maximumresearchtime: { group: 'Technology', control: 'number', label: 'Maximum Research Time' },
+      wltkdminimumpop: { group: 'Citizen Mood', control: 'number', label: 'Minimum Population for We Love the King' },
+      citizensaffectedbyhappyface: { group: 'Citizen Mood', control: 'number', label: 'Citizens affected by each Happy Face' },
+      turnpenaltyforwhip: { group: 'Citizen Mood', control: 'number', label: 'Turn Penalty for Each Hurry Sacrifice' },
+      draftturnpenalty: { group: 'Citizen Mood', control: 'number', label: 'Turn Penalty for Each Drafted Citizen' },
+      chanceofrioting: { group: 'Citizen Mood', control: 'number', label: 'Chance of Rioting with Unhappiness' },
+      chancetointerceptairmissions: { group: 'Various Unit Abilities', control: 'number', label: 'Chance of Intercepting Air Missions' },
+      chancetointerceptstealthmissions: { group: 'Various Unit Abilities', control: 'number', label: 'Chance of Intercepting Stealth Missions' },
+      citiesforarmy: { group: 'Various Unit Abilities', control: 'number', label: 'Cities Needed to Support an Army' },
+      citizenvalueinshields: { group: 'Hurry Production/Wealth', control: 'number', label: 'Citizen Value in Shields' },
+      shieldcostingold: { group: 'Hurry Production/Wealth', control: 'number', label: 'Shield Cost in Gold' },
+      basecapitalizationrate: { group: 'Hurry Production/Wealth', control: 'number', label: 'Base Capitalization Rate' },
+      forestvalueinshields: { group: 'Hurry Production/Wealth', control: 'number', label: 'Forest Value in Shields' },
+      shieldvalueingold: { group: 'Hurry Production/Wealth', control: 'number', label: 'Shield Value in Gold' },
+      numspaceshipparts: { group: 'Spaceship Parts', control: 'number', label: 'Number of Parts' },
+      roadmovementrate: { group: 'Other', control: 'number', label: 'Road movement rate' },
+      upgradecost: { group: 'Other', control: 'number', label: 'Upgrade Cost' },
+      foodconsumptionpercitizen: { group: 'Other', control: 'number', label: 'Food Consumption Per Citizen' },
+      startingtreasury: { group: 'Other', control: 'number', label: 'Starting Treasury' },
+      goldenageduration: { group: 'Other', control: 'number', label: 'Golden Age Duration' },
+      defaultdifficultylevel: { group: 'Other', control: 'reference', label: 'Default AI Difficulty' },
+      defaultmoneyresource: { group: 'Other', control: 'reference', label: 'Default Money Resource' },
+      town_defence_bonus: { group: 'Defensive Bonuses', control: 'number', label: 'Town' },
+      towndefencebonus: { group: 'Defensive Bonuses', control: 'number', label: 'Town' },
+      city_defence_bonus: { group: 'Defensive Bonuses', control: 'number', label: 'City' },
+      citydefencebonus: { group: 'Defensive Bonuses', control: 'number', label: 'City' },
+      metropolis_defence_bonus: { group: 'Defensive Bonuses', control: 'number', label: 'Metropolis' },
+      metropolisdefencebonus: { group: 'Defensive Bonuses', control: 'number', label: 'Metropolis' },
+      fortress_defence_bonus: { group: 'Defensive Bonuses', control: 'number', label: 'Fortress' },
+      fortressdefencebonus: { group: 'Defensive Bonuses', control: 'number', label: 'Fortress' },
+      river_defensive_bonus: { group: 'Defensive Bonuses', control: 'number', label: 'River' },
+      riverdefensivebonus: { group: 'Defensive Bonuses', control: 'number', label: 'River' },
+      riverdefencebonus: { group: 'Defensive Bonuses', control: 'number', label: 'River' },
+      fortifications_defence_bonus: { group: 'Defensive Bonuses', control: 'number', label: 'Fortification' },
+      fortificationsdefencebonus: { group: 'Defensive Bonuses', control: 'number', label: 'Fortification' },
+      citizendefensivebonus: { group: 'Defensive Bonuses', control: 'number', label: 'Citizen' },
+      buildingdefensivebonus: { group: 'Defensive Bonuses', control: 'number', label: 'Building' },
+      questionmark1: { group: 'Unknowns', control: 'number', label: 'Unknown 1' },
+      questionmark2: { group: 'Unknowns', control: 'number', label: 'Unknown 2' },
+      questionmark3: { group: 'Unknowns', control: 'number', label: 'Unknown 3' },
+      questionmark4: { group: 'Unknowns', control: 'number', label: 'Unknown 4' },
       questionmarkone: { group: 'Unknowns', control: 'number' },
       questionmarktwo: { group: 'Unknowns', control: 'number' },
       questionmarkthree: { group: 'Unknowns', control: 'number' },
@@ -8484,26 +8656,43 @@ function makeBiqSectionIndexOptions(sectionCode, oneBased = false) {
   const biq = state.bundle && state.bundle.biq;
   const sections = biq && Array.isArray(biq.sections) ? biq.sections : [];
   const section = sections.find((s) => String(s.code || '').toUpperCase() === code);
-  if (!section || !Array.isArray(section.records)) return [];
+  const records = Array.isArray(section && section.fullRecords)
+    ? section.fullRecords
+    : (section && Array.isArray(section.records) ? section.records : []);
+  if (!section || !Array.isArray(records)) return [];
   const targetTabKey = BIQ_SECTION_TO_REFERENCE_TAB[code] || '';
   const targetTab = targetTabKey && state.bundle && state.bundle.tabs && state.bundle.tabs[targetTabKey];
   const targetEntries = targetTab && Array.isArray(targetTab.entries) ? targetTab.entries : [];
   const entryByIndex = new Map();
   const entryByCivilopediaKey = new Map();
+  const entryByName = new Map();
   targetEntries.forEach((entry, fallbackIdx) => {
     const biqIndex = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
     entryByIndex.set(biqIndex, entry);
     const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
-    if (!key) return;
-    const prior = entryByCivilopediaKey.get(key);
-    if (!prior || (!prior.thumbPath && entry.thumbPath)) {
-      entryByCivilopediaKey.set(key, entry);
+    if (key) {
+      const prior = entryByCivilopediaKey.get(key);
+      if (!prior || (!prior.thumbPath && entry.thumbPath)) {
+        entryByCivilopediaKey.set(key, entry);
+      }
+    }
+    const nameKey = String(entry && entry.name || '').trim().toLowerCase();
+    if (nameKey) {
+      const priorByName = entryByName.get(nameKey);
+      if (!priorByName || (!priorByName.thumbPath && entry.thumbPath)) {
+        entryByName.set(nameKey, entry);
+      }
     }
   });
-  const rawOptions = section.records.map((rec, idx) => {
+  const rawOptions = records.map((rec, idx) => {
     const recIndex = Number.isFinite(rec && rec.index) ? Number(rec.index) : idx;
     const recCivilopediaKey = String(getFieldByBaseKey(rec, 'civilopediaentry')?.value || '').trim().toUpperCase();
-    const entry = entryByIndex.get(recIndex) || entryByCivilopediaKey.get(recCivilopediaKey) || null;
+    const recNameKey = String(rec && rec.name || '').trim().toLowerCase();
+    const entry = entryByIndex.get(recIndex)
+      || entryByCivilopediaKey.get(recCivilopediaKey)
+      || entryByName.get(recNameKey)
+      || (targetTabKey ? ensureSyntheticReferenceEntryForBiqRecord(targetTabKey, code, rec) : null)
+      || null;
     const liveName = String(entry && entry.name || '').trim();
     const fallbackName = String(rec && rec.name || '').trim();
     const fallbackFromKey = recCivilopediaKey
@@ -8532,10 +8721,11 @@ function makeBiqSectionIndexOptions(sectionCode, oneBased = false) {
   return rawOptions.map((opt) => {
     const key = String(opt && opt.label || '').trim().toLowerCase();
     const hasDup = key && Number(labelCounts.get(key) || 0) > 1;
-    if (!hasDup) return { value: opt.value, label: opt.label, entry: opt.entry };
+    if (!hasDup) return { value: opt.value, label: opt.label, displayLabel: opt.label, entry: opt.entry };
     return {
       value: opt.value,
       label: `${opt.label} [ID ${opt.recIndex}]`,
+      displayLabel: opt.label,
       entry: opt.entry
     };
   });
@@ -9114,8 +9304,9 @@ const REFERENCE_RULE_SCHEMAS = {
     order: [
       'name', 'requiredtech',
       'requiredresource1', 'requiredresource2', 'requiredresource3', 'upgradeto',
+      'iconindex',
       'attack', 'defence', 'movement', 'bombardstrength', 'bombardrange', 'rateoffire', 'airdefence',
-      'hitpointbonus', 'operationalrange', 'capacity', 'populationcost', 'shieldcost', 'workerstrengthfloat',
+      'hitpointbonus', 'operationalrange', 'capacity', 'populationcost', 'shieldcost', 'useexactcost', 'workerstrengthfloat',
       'requiressupport', 'zoneofcontrol', 'bombardeffects', 'createscraters',
       'offence', 'defencestrategy', 'explorestrategy', 'terraform', 'settle', 'kingstrategy', 'artillery',
       'cruisemissileunit', 'icbm', 'tacticalnuke', 'leaderunit', 'armyunit', 'flagstrategy',
@@ -9127,7 +9318,7 @@ const REFERENCE_RULE_SCHEMAS = {
       'ptwbuildairfield', 'ptwbuildradartower', 'ptwbuildoutpost', 'buildbarricade',
       'load', 'unload', 'airlift', 'airdrop', 'pillage', 'bombard', 'buildarmy', 'finishimprovement', 'upgrade',
       'capture', 'scienceage', 'enslave', 'sacrifice', 'teleportable', 'telepad', 'charm', 'stealthattack', 'collateraldamage',
-      'enslaveresultsin',
+      'enslaveresultsin', 'telepadrange',
       'skipturn', 'wait', 'goto', 'fortify', 'disband', 'exploreorder', 'sentry',
       'bomb', 'rebase', 'precisionbombing', 'recon', 'intercept',
       'allterrainasroads', 'amphibiousunit', 'army', 'blitz', 'cruisemissile', 'detectinvisible',
@@ -9145,6 +9336,7 @@ const REFERENCE_RULE_SCHEMAS = {
       requiredresource2: { group: 'Prerequisites', control: 'reference' },
       requiredresource3: { group: 'Prerequisites', control: 'reference' },
       upgradeto: { group: 'Prerequisites', control: 'reference' },
+      iconindex: { group: 'Identity', control: 'number', min: 0, label: 'Icon Index' },
       unitclass: { group: 'Class', control: 'select' },
       attack: { group: 'Unit Statistics', control: 'number', min: 0 },
       defence: { group: 'Unit Statistics', control: 'number', min: 0 },
@@ -9158,6 +9350,7 @@ const REFERENCE_RULE_SCHEMAS = {
       capacity: { group: 'Unit Statistics', control: 'number', min: 0 },
       populationcost: { group: 'Unit Statistics', control: 'number', min: 0 },
       shieldcost: { group: 'Unit Statistics', control: 'number', min: 0 },
+      useexactcost: { group: 'Unit Statistics', control: 'number', min: 0, label: 'Use Exact Cost' },
       workerstrengthfloat: { group: 'Unit Statistics', control: 'number', min: 0, label: 'Worker Strength' },
       requiressupport: { group: 'Unit Statistics', control: 'bool' },
       zoneofcontrol: { group: 'Unit Statistics', control: 'bool' },
@@ -9219,6 +9412,7 @@ const REFERENCE_RULE_SCHEMAS = {
       stealthattack: { group: 'Special Orders', control: 'bool', label: 'Stealth Attack' },
       collateraldamage: { group: 'Special Orders', control: 'bool', label: 'Collateral Damage' },
       enslaveresultsin: { group: 'Special Orders', control: 'reference' },
+      telepadrange: { group: 'Special Orders', control: 'number', min: 0, label: 'Telepad Range' },
       skipturn: { group: 'Standard Orders', control: 'bool' },
       wait: { group: 'Standard Orders', control: 'bool' },
       goto: { group: 'Standard Orders', control: 'bool' },
@@ -9546,6 +9740,103 @@ function renderTerrainValuesTable(groupCard, groupFields, tab) {
   groupCard.appendChild(tableRow);
 
   return pairDefs.flatMap(([regularKey, landmarkKey]) => [byKey.get(regularKey), byKey.get(landmarkKey)]).filter(Boolean);
+}
+
+function renderRuleCitySizeLimitsTable(groupCard, groupFields, entry, referenceEditable) {
+  const byKey = new Map(groupFields.map((field) => [normalizeRuleLookupKey(field && (field.baseKey || field.key)), field]));
+  const tableRow = document.createElement('div');
+  tableRow.className = 'rule-row';
+  const label = document.createElement('label');
+  label.className = 'field-meta';
+  label.textContent = 'City Size Limits';
+  tableRow.appendChild(label);
+
+  const controlWrap = document.createElement('div');
+  controlWrap.className = 'rule-control';
+  const table = document.createElement('table');
+  table.className = 'time-progression-table rule-city-size-table';
+  table.style.tableLayout = 'fixed';
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  ['', 'Name', 'Maximum Size'].forEach((title) => {
+    const th = document.createElement('th');
+    th.textContent = title;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+
+  const rows = [
+    { level: 'Level One', nameKey: 'townname', sizeKey: 'maxcity1size' },
+    { level: 'Level Two', nameKey: 'cityname', sizeKey: 'maxcity2size' },
+    { level: 'Level Three', nameKey: 'metropolisname', sizeKey: null }
+  ];
+  const makeNameCell = (field, placeholder) => {
+    const td = document.createElement('td');
+    const spec = getBiqStructureFieldSpec('RULE', field) || {};
+    if (!field) {
+      td.textContent = '(n/a)';
+      return td;
+    }
+    if (referenceEditable) {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = String(field.value || '');
+      input.placeholder = placeholder || '';
+      input.addEventListener('input', () => {
+        rememberUndoSnapshot();
+        field.value = String(input.value || '');
+        setDirty(true);
+      });
+      td.appendChild(input);
+      return td;
+    }
+    td.textContent = String(field.value || '');
+    if (spec.label) td.title = spec.label;
+    return td;
+  };
+  const makeSizeCell = (field) => {
+    const td = document.createElement('td');
+    if (!field) {
+      const none = document.createElement('span');
+      none.className = 'hint';
+      none.textContent = '—';
+      td.appendChild(none);
+      return td;
+    }
+    if (referenceEditable) {
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.value = String(parseIntFromDisplayValue(field.value) ?? '');
+      input.addEventListener('input', () => {
+        rememberUndoSnapshot();
+        field.value = input.value;
+        setDirty(true);
+      });
+      td.appendChild(input);
+      return td;
+    }
+    td.textContent = String(field.value || '0');
+    return td;
+  };
+
+  rows.forEach((rowDef) => {
+    const tr = document.createElement('tr');
+    const rowHead = document.createElement('th');
+    rowHead.scope = 'row';
+    rowHead.textContent = rowDef.level;
+    tr.appendChild(rowHead);
+    tr.appendChild(makeNameCell(byKey.get(rowDef.nameKey), rowDef.level));
+    tr.appendChild(makeSizeCell(byKey.get(rowDef.sizeKey)));
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  controlWrap.appendChild(table);
+  tableRow.appendChild(controlWrap);
+  groupCard.appendChild(tableRow);
+
+  return rows.flatMap((row) => [byKey.get(row.nameKey), byKey.get(row.sizeKey)]).filter(Boolean);
 }
 
 function getRuleFieldGroup(tabKey, field) {
@@ -11691,7 +11982,7 @@ function createReferencePicker(config) {
   const onSelect = typeof opts.onSelect === 'function' ? opts.onSelect : null;
 
   const normalizedOptions = [];
-  normalizedOptions.push({ value: '-1', label: noneLabel, entry: null });
+  normalizedOptions.push({ value: '-1', label: noneLabel, displayLabel: noneLabel, entry: null });
   options.forEach((opt) => {
     if (!opt) return;
     const value = normalizeConfigToken(opt.value);
@@ -11699,6 +11990,7 @@ function createReferencePicker(config) {
     normalizedOptions.push({
       value,
       label: String(opt.label || value),
+      displayLabel: String(opt.displayLabel || opt.label || value),
       entry: opt.entry || null
     });
   });
@@ -11729,7 +12021,7 @@ function createReferencePicker(config) {
       return parsed == null ? String(value ?? '') : String(parsed);
     })();
     const selected = findOptionByValue(normalizedOptions, normalizedValue) || normalizedOptions[0];
-    const selectedLabel = selected ? String(selected.label || noneLabel) : noneLabel;
+    const selectedLabel = selected ? String(selected.displayLabel || selected.label || noneLabel) : noneLabel;
     selectedJumpLabel = selectedLabel;
     buttonText.textContent = selectedLabel;
     buttonText.title = selectedLabel;
@@ -12000,6 +12292,208 @@ function createColorSlotPicker(config) {
   document.addEventListener('click', (ev) => {
     if (!wrap.contains(ev.target)) menu.classList.add('hidden');
   });
+  return wrap;
+}
+
+function getUnits32AtlasMetrics(preview, spriteSize = 32, gutter = 1) {
+  const atlas = rgbaToCanvas(preview);
+  if (!atlas || !atlas.width || !atlas.height) return null;
+  const stride = spriteSize + gutter;
+  const cols = Math.max(1, Math.floor((atlas.width - gutter) / stride));
+  const rows = Math.max(1, Math.floor((atlas.height - gutter) / stride));
+  return { atlas, cols, rows, stride, gutter, spriteSize };
+}
+
+function drawUnits32IconToCanvas(preview, spriteIndex, canvas, spriteSize = 32) {
+  if (!preview || !canvas || !Number.isFinite(spriteIndex) || spriteIndex < 0) return false;
+  const metrics = getUnits32AtlasMetrics(preview, spriteSize, 1);
+  if (!metrics) return false;
+  const { atlas, cols, rows, stride, gutter } = metrics;
+  const row = Math.floor(spriteIndex / cols);
+  const col = spriteIndex % cols;
+  if (row >= rows) return false;
+  const sx = col * stride + gutter;
+  const sy = row * stride + gutter;
+  if (sx + spriteSize > atlas.width || sy + spriteSize > atlas.height) return false;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(atlas, sx, sy, spriteSize, spriteSize, 0, 0, canvas.width, canvas.height);
+  return true;
+}
+
+async function getUnits32AtlasPreview() {
+  const cacheKey = JSON.stringify({
+    kind: 'units32-atlas',
+    civ3Path: state.settings && state.settings.civ3Path,
+    scenarioPath: state.settings && state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPathsKey()
+  });
+  if (state.previewCache.has(cacheKey)) return state.previewCache.get(cacheKey);
+  const res = await window.c3xManager.getPreview({
+    kind: 'civilopediaIcon',
+    civ3Path: state.settings.civ3Path,
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths(),
+    assetPath: 'Art/Units/units_32.pcx'
+  });
+  if (res && res.ok) {
+    setPreviewCache(cacheKey, res);
+    return res;
+  }
+  return null;
+}
+
+function createUnitIconIndexPicker(currentValue, onSelect) {
+  const UNIT_ICON_ITEM_SIZE = 42;
+  const UNIT_ICON_COLS = 8;
+  const UNIT_ICON_OVERSCAN_ROWS = 2;
+  const wrap = document.createElement('div');
+  wrap.className = 'path-input-with-btn unit-icon-index-picker';
+  const valueInput = document.createElement('input');
+  valueInput.type = 'number';
+  valueInput.min = '0';
+  const parsed = parseIntFromDisplayValue(currentValue);
+  let current = parsed == null ? 0 : Math.max(0, parsed);
+  valueInput.value = String(current);
+  const previewHost = document.createElement('span');
+  previewHost.className = 'entry-thumb';
+  const previewCanvas = document.createElement('canvas');
+  previewCanvas.width = 28;
+  previewCanvas.height = 28;
+  previewCanvas.className = 'entry-thumb-canvas';
+  previewHost.appendChild(previewCanvas);
+  const openBtn = document.createElement('button');
+  openBtn.type = 'button';
+  openBtn.textContent = 'Select Icon';
+  const menu = document.createElement('div');
+  menu.className = 'color-slot-picker-menu unit-icon-picker-menu hidden';
+  const status = document.createElement('div');
+  status.className = 'hint';
+  status.textContent = 'Loading units_32 icons...';
+  const scroller = document.createElement('div');
+  scroller.className = 'unit-icon-picker-scroller';
+  const grid = document.createElement('div');
+  grid.className = 'unit-icon-picker-grid';
+  scroller.appendChild(grid);
+  menu.appendChild(status);
+  menu.appendChild(scroller);
+  let atlasPreview = null;
+  let gridBuilt = false;
+  let buildToken = 0;
+  let totalIcons = 0;
+  let totalRows = 0;
+
+  const renderVisibleIcons = () => {
+    if (!atlasPreview || !gridBuilt) return;
+    const token = buildToken;
+    const scrollTop = scroller.scrollTop || 0;
+    const viewportHeight = scroller.clientHeight || 280;
+    const firstRow = Math.max(0, Math.floor(scrollTop / UNIT_ICON_ITEM_SIZE) - UNIT_ICON_OVERSCAN_ROWS);
+    const lastRow = Math.max(firstRow, Math.min(totalRows - 1, Math.ceil((scrollTop + viewportHeight) / UNIT_ICON_ITEM_SIZE) + UNIT_ICON_OVERSCAN_ROWS));
+    const start = firstRow * UNIT_ICON_COLS;
+    const end = Math.min(totalIcons, ((lastRow + 1) * UNIT_ICON_COLS));
+    const fragment = document.createDocumentFragment();
+    grid.innerHTML = '';
+    for (let idx = start; idx < end; idx += 1) {
+      if (token !== buildToken) return;
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'unit-icon-picker-item';
+      item.title = `Icon ${idx}`;
+      item.setAttribute('aria-label', `Icon ${idx}`);
+      item.classList.toggle('active', idx === current);
+      item.style.left = `${(idx % UNIT_ICON_COLS) * UNIT_ICON_ITEM_SIZE}px`;
+      item.style.top = `${Math.floor(idx / UNIT_ICON_COLS) * UNIT_ICON_ITEM_SIZE}px`;
+      const canvas = document.createElement('canvas');
+      canvas.width = 28;
+      canvas.height = 28;
+      canvas.className = 'entry-thumb-canvas';
+      drawUnits32IconToCanvas(atlasPreview, idx, canvas);
+      item.appendChild(canvas);
+      item.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        current = idx;
+        valueInput.value = String(idx);
+        menu.classList.add('hidden');
+        if (typeof onSelect === 'function') onSelect(String(idx));
+        syncPreview();
+      });
+      fragment.appendChild(item);
+    }
+    grid.appendChild(fragment);
+  };
+
+  const syncPreview = async () => {
+    if (!atlasPreview) atlasPreview = await getUnits32AtlasPreview();
+    if (!atlasPreview || !drawUnits32IconToCanvas(atlasPreview, current, previewCanvas)) {
+      previewHost.innerHTML = '';
+      previewHost.textContent = '#';
+      return;
+    }
+    if (!previewHost.contains(previewCanvas)) {
+      previewHost.innerHTML = '';
+      previewHost.appendChild(previewCanvas);
+    }
+  };
+
+  const buildGrid = async () => {
+    if (!atlasPreview) atlasPreview = await getUnits32AtlasPreview();
+    ++buildToken;
+    grid.innerHTML = '';
+    scroller.scrollTop = 0;
+    gridBuilt = false;
+    if (!atlasPreview || !atlasPreview.width || !atlasPreview.height) {
+      status.textContent = 'Could not load units_32.pcx';
+      return;
+    }
+    const metrics = getUnits32AtlasMetrics(atlasPreview, 32, 1);
+    if (!metrics) {
+      status.textContent = 'Could not parse units_32.pcx';
+      return;
+    }
+    const { cols, rows } = metrics;
+    totalIcons = cols * rows;
+    totalRows = Math.ceil(totalIcons / UNIT_ICON_COLS);
+    grid.style.width = `${UNIT_ICON_COLS * UNIT_ICON_ITEM_SIZE}px`;
+    grid.style.height = `${totalRows * UNIT_ICON_ITEM_SIZE}px`;
+    gridBuilt = true;
+    status.textContent = `${totalIcons} icons`;
+    renderVisibleIcons();
+  };
+
+  valueInput.addEventListener('input', () => {
+    current = Math.max(0, parseIntLoose(valueInput.value, 0));
+    if (typeof onSelect === 'function') onSelect(String(current));
+    syncPreview();
+    renderVisibleIcons();
+  });
+  let renderQueued = false;
+  scroller.addEventListener('scroll', () => {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      renderVisibleIcons();
+    });
+  });
+  openBtn.addEventListener('click', async (ev) => {
+    ev.preventDefault();
+    const opening = menu.classList.contains('hidden');
+    menu.classList.toggle('hidden');
+    if (opening && !gridBuilt) await buildGrid();
+    if (opening) renderVisibleIcons();
+  });
+  document.addEventListener('click', (ev) => {
+    if (!wrap.contains(ev.target)) menu.classList.add('hidden');
+  });
+
+  wrap.appendChild(previewHost);
+  wrap.appendChild(valueInput);
+  wrap.appendChild(openBtn);
+  wrap.appendChild(menu);
+  syncPreview();
   return wrap;
 }
 
@@ -12836,6 +13330,261 @@ function openMapModal(config) {
   overlay.classList.remove('hidden');
   overlay.setAttribute('aria-hidden', 'false');
   renderMapModalBody();
+}
+
+function ensureGenerateMapModalNode() {
+  if (generateMapModal.node && generateMapModal.node.isConnected) return generateMapModal.node;
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-modal-overlay hidden';
+  overlay.setAttribute('aria-hidden', 'true');
+  overlay.innerHTML = `
+    <div class="confirm-modal generate-map-modal" role="dialog" aria-modal="true" aria-labelledby="generate-map-modal-title" aria-describedby="generate-map-modal-body">
+      <h3 id="generate-map-modal-title">Generate Map</h3>
+      <p id="generate-map-modal-body"></p>
+      <div id="generate-map-modal-content" class="entity-modal-content"></div>
+      <div class="confirm-modal-actions">
+        <button type="button" class="ghost" data-act="cancel">Cancel</button>
+        <button type="button" class="secondary" data-act="confirm">Generate</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  generateMapModal.node = overlay;
+  generateMapModal.title = overlay.querySelector('#generate-map-modal-title');
+  generateMapModal.body = overlay.querySelector('#generate-map-modal-content');
+  const cancelBtn = overlay.querySelector('[data-act="cancel"]');
+  const confirmBtn = overlay.querySelector('[data-act="confirm"]');
+  if (cancelBtn) cancelBtn.addEventListener('click', () => closeGenerateMapModal());
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) closeGenerateMapModal();
+  });
+  generateMapModal.cancelBtn = cancelBtn;
+  generateMapModal.confirmBtn = confirmBtn;
+  generateMapModal.desc = overlay.querySelector('#generate-map-modal-body');
+  return overlay;
+}
+
+function closeGenerateMapModal() {
+  const overlay = ensureGenerateMapModalNode();
+  overlay.classList.add('hidden');
+  overlay.setAttribute('aria-hidden', 'true');
+  if (generateMapModal.body) generateMapModal.body.innerHTML = '';
+  if (generateMapModal.confirmBtn) {
+    generateMapModal.confirmBtn.disabled = false;
+    generateMapModal.confirmBtn.onclick = null;
+  }
+  generateMapModal.tab = null;
+}
+
+function confirmRemoveMap(tab) {
+  if (!el.entityModalOverlay) return Promise.resolve(false);
+  if (el.entityModalTitle) el.entityModalTitle.textContent = 'Remove Scenario Map';
+  if (el.entityModalBody) {
+    el.entityModalBody.textContent = 'Remove the map and all scenario map data from this BIQ? Cities, units, colonies, and starting locations on the map will be removed.';
+  }
+  if (el.entityModalContent) el.entityModalContent.innerHTML = '';
+  if (el.entityModalConfirm) {
+    el.entityModalConfirm.textContent = 'Remove Map';
+    el.entityModalConfirm.disabled = false;
+    el.entityModalConfirm.classList.add('danger');
+  }
+  state.entityModal.open = true;
+  el.entityModalOverlay.classList.remove('hidden');
+  el.entityModalOverlay.setAttribute('aria-hidden', 'false');
+  return new Promise((resolve) => {
+    state.entityModal.resolve = resolve;
+    const cleanup = () => {
+      if (el.entityModalConfirm) el.entityModalConfirm.classList.remove('danger');
+      hideEntityModal();
+    };
+    if (el.entityModalConfirm) {
+      el.entityModalConfirm.onclick = () => {
+        cleanup();
+        resolveEntityModal(true);
+      };
+    }
+    if (el.entityModalCancel) {
+      el.entityModalCancel.onclick = () => {
+        cleanup();
+        resolveEntityModal(false);
+      };
+      el.entityModalCancel.focus({ preventScroll: true });
+    }
+  });
+}
+
+function openGenerateMapModal(tab) {
+  if (!tab) return;
+  const overlay = ensureGenerateMapModalNode();
+  generateMapModal.tab = tab;
+  if (generateMapModal.title) {
+    generateMapModal.title.textContent = hasMapData(tab) ? 'Generate New Map' : 'Generate Map';
+  }
+  if (generateMapModal.desc) {
+    generateMapModal.desc.textContent = hasMapData(tab)
+      ? 'Replace the current scenario map using the standard Civ 3-style generation options below.'
+      : 'Create a new scenario map using the standard Civ 3-style generation options below.';
+  }
+  if (generateMapModal.body) {
+    const form = document.createElement('form');
+    form.className = 'entity-modal-content';
+    const worldSizeOptions = getMapWorldSizeOptions(tab);
+    const defaultWorldSizeSpec = getMapGenerationWorldSizeSpec(tab);
+    const defaultWorldSize = defaultWorldSizeSpec.value;
+    form.innerHTML = `
+      <div class="map-generation-size-row">
+        <div>
+          <label>World Size</label>
+          <select name="world-size"></select>
+        </div>
+        <div>
+          <label>Width</label>
+          <input name="width" type="number" min="66" max="362" step="1" />
+        </div>
+        <div>
+          <label>Height</label>
+          <input name="height" type="number" min="66" max="362" step="1" />
+        </div>
+      </div>
+      <label>Landform</label>
+      <select name="landform">
+        <option value="0">Random</option>
+        <option value="2" selected>Continents</option>
+        <option value="1">Archipelago</option>
+        <option value="3">Pangaea</option>
+      </select>
+      <label>Temperature</label>
+      <select name="temperature">
+        <option value="0">Random</option>
+        <option value="3">Cool</option>
+        <option value="1" selected>Temperate</option>
+        <option value="2">Warm</option>
+      </select>
+      <label>Climate</label>
+      <select name="climate">
+        <option value="0">Random</option>
+        <option value="3">Arid</option>
+        <option value="1" selected>Normal</option>
+        <option value="2">Wet</option>
+      </select>
+      <label>Age</label>
+      <select name="age">
+        <option value="0">Random</option>
+        <option value="2">3 Billion</option>
+        <option value="1" selected>4 Billion</option>
+        <option value="3">5 Billion</option>
+      </select>
+      <label>Barbarians</label>
+      <select name="barbarian">
+        <option value="0">None</option>
+        <option value="1" selected>Sedentary</option>
+        <option value="2">Roaming</option>
+        <option value="3">Restless</option>
+        <option value="4">Raging</option>
+      </select>
+      <label>Ocean Coverage</label>
+      <select name="ocean">
+        <option value="0">Random</option>
+        <option value="2">60%</option>
+        <option value="3" selected>70%</option>
+        <option value="4">80%</option>
+      </select>
+      <div class="section-card">
+        <div class="section-top"><strong>Flags</strong></div>
+        <label class="bool-toggle"><input name="polar-ice-caps" type="checkbox" /><span>Polar Ice Caps</span></label>
+        <label class="bool-toggle"><input name="x-wrapping" type="checkbox" /><span>Allow X-wrapping</span></label>
+        <label class="bool-toggle"><input name="y-wrapping" type="checkbox" /><span>Allow Y-wrapping</span></label>
+      </div>
+      <div class="section-card">
+        <div class="section-top"><strong>World Seed</strong></div>
+        <label class="bool-toggle"><input name="map-seed-enabled" type="checkbox" /><span>Set explicit world seed</span></label>
+        <input name="map-seed" type="number" step="1" value="${MAP_GENERATION_DEFAULTS.mapSeed}" disabled />
+      </div>
+      <p class="hint">Generation uses a seeded terrain pipeline with landform, climate, age, ocean coverage, wrapping, and start-location placement.</p>
+    `;
+    const worldSizeSelect = form.querySelector('select[name="world-size"]');
+    const widthInput = form.querySelector('input[name="width"]');
+    const heightInput = form.querySelector('input[name="height"]');
+    const mapSeedEnabled = form.querySelector('input[name="map-seed-enabled"]');
+    const mapSeedInput = form.querySelector('input[name="map-seed"]');
+    if (worldSizeSelect) {
+      const options = worldSizeOptions.length > 0
+        ? worldSizeOptions
+        : [{ value: String(defaultWorldSize), label: 'Standard (130x130)' }];
+      options.forEach((option) => {
+        const node = document.createElement('option');
+        node.value = String(option.value);
+        node.textContent = String(option.label);
+        worldSizeSelect.appendChild(node);
+      });
+      worldSizeSelect.value = String(defaultWorldSize);
+      worldSizeSelect.addEventListener('change', () => {
+        const spec = getMapGenerationWorldSizeSpec(tab, worldSizeSelect.value);
+        if (widthInput) widthInput.value = String(spec.width || MAP_GENERATION_DEFAULTS.width);
+        if (heightInput) heightInput.value = String(spec.height || MAP_GENERATION_DEFAULTS.height);
+      });
+    }
+    if (widthInput) widthInput.value = String(defaultWorldSizeSpec.width || MAP_GENERATION_DEFAULTS.width);
+    if (heightInput) heightInput.value = String(defaultWorldSizeSpec.height || MAP_GENERATION_DEFAULTS.height);
+    if (mapSeedEnabled && mapSeedInput) {
+      mapSeedEnabled.checked = !!MAP_GENERATION_DEFAULTS.mapSeedEnabled;
+      mapSeedInput.disabled = !mapSeedEnabled.checked;
+      mapSeedEnabled.addEventListener('change', () => {
+        mapSeedInput.disabled = !mapSeedEnabled.checked;
+      });
+    }
+    generateMapModal.body.innerHTML = '';
+    generateMapModal.body.appendChild(form);
+    if (generateMapModal.confirmBtn) {
+      generateMapModal.confirmBtn.textContent = hasMapData(tab) ? 'Replace Map' : 'Generate';
+      generateMapModal.confirmBtn.onclick = () => {
+        const hadMap = hasMapData(tab);
+        const generation = {
+          worldSize: worldSizeSelect ? worldSizeSelect.value : defaultWorldSize,
+          width: widthInput ? widthInput.value : defaultWorldSizeSpec.width,
+          height: heightInput ? heightInput.value : defaultWorldSizeSpec.height,
+          selectedLandform: form.querySelector('select[name="landform"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedLandform,
+          selectedTemperature: form.querySelector('select[name="temperature"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedTemperature,
+          selectedClimate: form.querySelector('select[name="climate"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedClimate,
+          selectedAge: form.querySelector('select[name="age"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedAge,
+          selectedBarbarian: form.querySelector('select[name="barbarian"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedBarbarian,
+          selectedOcean: form.querySelector('select[name="ocean"]')?.value ?? MAP_GENERATION_DEFAULTS.selectedOcean,
+          polarIceCaps: !!form.querySelector('input[name="polar-ice-caps"]')?.checked,
+          xWrapping: !!form.querySelector('input[name="x-wrapping"]')?.checked,
+          yWrapping: !!form.querySelector('input[name="y-wrapping"]')?.checked,
+          mapSeedEnabled: !!mapSeedEnabled?.checked,
+          mapSeed: mapSeedInput ? mapSeedInput.value : MAP_GENERATION_DEFAULTS.mapSeed
+        };
+        rememberUndoSnapshot();
+        const generatedSections = buildGeneratedMapSections(tab, generation);
+        applyGeneratedMapSectionsToTab(tab, generatedSections, 'set');
+        setDirty(true);
+        closeGenerateMapModal();
+        renderTabs();
+        renderActiveTab({ preserveTabScroll: true });
+        const tileSection = tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE');
+        if (tileSection) {
+          openMapModal({ tab, tileSection, title: `${tab.title || 'Map'} Editor` });
+        }
+        setStatus(hadMap ? 'Generated new map.' : 'Created new map.');
+      };
+    }
+  }
+  overlay.classList.remove('hidden');
+  overlay.setAttribute('aria-hidden', 'false');
+}
+
+async function requestRemoveMap(tab) {
+  if (!tab || !hasMapData(tab) || !isScenarioMode()) return;
+  const confirmed = await confirmRemoveMap(tab);
+  if (!confirmed) return;
+  rememberUndoSnapshot();
+  removeMapFromTab(tab);
+  closeMapModal();
+  setDirty(true);
+  renderTabs();
+  renderActiveTab({ preserveTabScroll: true });
+  setStatus('Removed scenario map.');
 }
 
 function mapCivilopediaKeyToTabKey(civilopediaKey) {
@@ -15683,6 +16432,13 @@ function renderReferenceTab(tab, tabKey) {
                 }
               });
               controlWrap.appendChild(editor);
+            } else if (tabKey === 'units' && baseKey === 'iconindex') {
+              const picker = createUnitIconIndexPicker(field.value, (value) => {
+                rememberUndoSnapshot();
+                field.value = String(value);
+                setDirty(true);
+              });
+              controlWrap.appendChild(picker);
             } else if (useColorSlotPicker) {
               const colorPicker = createColorSlotPicker({
                 currentValue: field.value,
@@ -16214,7 +16970,7 @@ function renderBiqTab(tab) {
     card.className = 'section-card';
     const top = document.createElement('div');
     top.className = 'section-top';
-    top.innerHTML = '<strong>Map Editor</strong><span class="hint">Opens in modal</span>';
+    top.innerHTML = '<strong>Map Editor</strong>';
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
     openBtn.className = 'secondary';
@@ -16226,7 +16982,7 @@ function renderBiqTab(tab) {
     card.appendChild(top);
     const hint = document.createElement('p');
     hint.className = 'hint';
-    hint.textContent = 'Pan, zoom, and tile inspection are now in a large modal workspace.';
+    hint.textContent = 'Open the full-screen map editor to navigate, paint, and inspect tiles.';
     card.appendChild(hint);
     wrap.appendChild(card);
     window.requestAnimationFrame(() => {
@@ -17698,35 +18454,55 @@ function renderMapTab(tab) {
   }
   const sections = Array.isArray(tab.sections) ? tab.sections : [];
   const tileSection = sections.find((s) => s.code === 'TILE');
-  if (!tileSection) {
-    const note = document.createElement('p');
-    note.className = 'hint';
-    note.textContent = 'No map tile section found in this BIQ.';
-    wrap.appendChild(note);
-    return wrap;
-  }
   const card = document.createElement('div');
   card.className = 'section-card';
   const top = document.createElement('div');
   top.className = 'section-top';
-  top.innerHTML = '<strong>Map Editor</strong><span class="hint">Opens in modal</span>';
-  const openBtn = document.createElement('button');
-  openBtn.type = 'button';
-  openBtn.className = 'secondary';
-  openBtn.textContent = 'Open Map';
-  openBtn.addEventListener('click', () => {
-    openMapModal({ tab, tileSection, title: `${tab.title || 'Map'} Editor` });
-  });
-  top.appendChild(openBtn);
+  const actions = document.createElement('div');
+  actions.className = 'section-actions';
+  top.innerHTML = `<strong>${hasMapData(tab) ? 'Map Editor' : 'Map Generation'}</strong>`;
+  if (hasMapData(tab) && tileSection) {
+    const openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.className = 'secondary';
+    openBtn.textContent = 'Open Map';
+    openBtn.addEventListener('click', () => {
+      openMapModal({ tab, tileSection, title: `${tab.title || 'Map'} Editor` });
+    });
+    actions.appendChild(openBtn);
+  }
+  if (isScenarioMode()) {
+    const generateBtn = document.createElement('button');
+    generateBtn.type = 'button';
+    generateBtn.className = 'ghost';
+    generateBtn.textContent = hasMapData(tab) ? 'Generate Map' : 'Create Map';
+    generateBtn.addEventListener('click', () => openGenerateMapModal(tab));
+    actions.appendChild(generateBtn);
+    if (hasMapData(tab)) {
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'ghost danger';
+      removeBtn.textContent = 'Remove Map';
+      removeBtn.addEventListener('click', () => {
+        void requestRemoveMap(tab);
+      });
+      actions.appendChild(removeBtn);
+    }
+  }
+  if (actions.childNodes.length > 0) top.appendChild(actions);
   card.appendChild(top);
   const note = document.createElement('p');
   note.className = 'hint';
-  note.textContent = 'Map editing now uses a full-screen modal for navigation and editing.';
+  note.textContent = hasMapData(tab)
+    ? 'Open the full-screen map editor to navigate, paint, and inspect tiles.'
+    : 'This scenario does not currently contain a map. Create one to start editing.';
   card.appendChild(note);
   wrap.appendChild(card);
-  window.requestAnimationFrame(() => {
-    openMapModal({ tab, tileSection, title: `${tab.title || 'Map'} Editor` });
-  });
+  if (hasMapData(tab) && tileSection) {
+    window.requestAnimationFrame(() => {
+      openMapModal({ tab, tileSection, title: `${tab.title || 'Map'} Editor` });
+    });
+  }
   return wrap;
 }
 
@@ -17740,6 +18516,256 @@ function getFieldByBaseKey(record, baseKey) {
     if (keyRaw === targetRaw) return true;
     return toCanonical(keyRaw) === targetCanon;
   }) || null;
+}
+
+const BIQ_MAP_SECTION_CODES = ['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'];
+const BIQ_MAP_SECTION_CODE_SET = new Set(BIQ_MAP_SECTION_CODES);
+const MAP_GENERATION_DEFAULTS = Object.freeze({
+  worldSize: 2,
+  selectedLandform: 2,
+  selectedTemperature: 1,
+  selectedClimate: 1,
+  selectedAge: 1,
+  selectedBarbarian: 1,
+  selectedOcean: 3,
+  width: 130,
+  height: 130,
+  polarIceCaps: false,
+  xWrapping: false,
+  yWrapping: false,
+  mapSeedEnabled: false,
+  mapSeed: 12461875
+});
+
+function isMapSectionCode(code) {
+  return BIQ_MAP_SECTION_CODE_SET.has(String(code || '').trim().toUpperCase());
+}
+
+function hasMapData(tab) {
+  if (!tab || !Array.isArray(tab.sections)) return false;
+  const wmapSection = tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'WMAP');
+  const tileSection = tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'TILE');
+  return !!(
+    wmapSection
+    && tileSection
+    && Array.isArray(wmapSection.records)
+    && wmapSection.records.length > 0
+    && Array.isArray(tileSection.records)
+    && tileSection.records.length > 0
+  );
+}
+
+function createGeneratedMapField(baseKey, value, label = '') {
+  const stringValue = String(value == null ? '' : value);
+  return {
+    key: String(baseKey || ''),
+    baseKey: String(baseKey || ''),
+    label: String(label || toFriendlyKey(baseKey || '')),
+    value: stringValue,
+    originalValue: stringValue
+  };
+}
+
+function createGeneratedMapRecord(index, fieldEntries, name = '') {
+  return {
+    index,
+    name: String(name || ''),
+    fields: fieldEntries.map((entry) => createGeneratedMapField(entry.baseKey, entry.value, entry.label))
+  };
+}
+
+function createGeneratedMapSection(code, records) {
+  const upper = String(code || '').trim().toUpperCase();
+  return {
+    code: upper,
+    title: BIQ_SECTION_FRIENDLY_NAMES[upper] || upper,
+    records: Array.isArray(records) ? records : []
+  };
+}
+
+function getMapWorldSizeOptions(tab) {
+  const wsizSection = tab && Array.isArray(tab.sections)
+    ? tab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'WSIZ')
+    : null;
+  const records = wsizSection && Array.isArray(wsizSection.records) ? wsizSection.records : [];
+  return records.map((record, idx) => {
+    const width = parseIntLoose(getFieldByBaseKey(record, 'width')?.value, 0);
+    const height = parseIntLoose(getFieldByBaseKey(record, 'height')?.value, 0);
+    const distance = parseIntLoose(getFieldByBaseKey(record, 'distancebetweencivs')?.value, 0);
+    const numCivs = parseIntLoose(getFieldByBaseKey(record, 'numberofcivs')?.value, 0);
+    const label = String(record && record.name || `World Size ${idx + 1}`);
+    return {
+      value: String(idx),
+      label: width > 0 && height > 0 ? `${label} (${width}x${height})` : label,
+      width,
+      height,
+      distanceBetweenCivs: distance,
+      numCivs
+    };
+  });
+}
+
+function getMapGenerationWorldSizeSpec(tab, preferredIndex = MAP_GENERATION_DEFAULTS.worldSize) {
+  const options = getMapWorldSizeOptions(tab);
+  const preferred = options.find((option) => Number.parseInt(String(option.value || ''), 10) === Number(preferredIndex));
+  const firstSized = options.find((option) => option.width > 0 && option.height > 0);
+  const fallback = { value: String(MAP_GENERATION_DEFAULTS.worldSize), label: 'Standard', width: 130, height: 130, distanceBetweenCivs: 20, numCivs: 8 };
+  return preferred || firstSized || fallback;
+}
+
+function buildGeneratedMapSections(tab, generation = {}) {
+  const worldSizeSpec = getMapGenerationWorldSizeSpec(tab, generation.worldSize);
+  const requestedWidth = Number.parseInt(String(generation.width ?? worldSizeSpec.width ?? MAP_GENERATION_DEFAULTS.width), 10);
+  const requestedHeight = Number.parseInt(String(generation.height ?? worldSizeSpec.height ?? MAP_GENERATION_DEFAULTS.height), 10);
+  const width = Math.max(66, Math.min(362, Number.isFinite(requestedWidth) ? requestedWidth : 130));
+  const height = Math.max(66, Math.min(362, Number.isFinite(requestedHeight) ? requestedHeight : 130));
+  const evenWidth = width % 2 === 0 ? width : width + 1;
+  const worldSize = Number.parseInt(String(worldSizeSpec.value || MAP_GENERATION_DEFAULTS.worldSize), 10);
+  const xWrapping = !!generation.xWrapping;
+  const yWrapping = !!generation.yWrapping;
+  const polarIceCaps = !!generation.polarIceCaps;
+  const mapFlags = (xWrapping ? 1 : 0) | (yWrapping ? 2 : 0) | (polarIceCaps ? 4 : 0);
+  const mapSeedEnabled = !!generation.mapSeedEnabled;
+  const mapSeedRaw = Number.parseInt(String(generation.mapSeed ?? MAP_GENERATION_DEFAULTS.mapSeed), 10);
+  const mapSeed = mapSeedEnabled && Number.isFinite(mapSeedRaw) ? mapSeedRaw : MAP_GENERATION_DEFAULTS.mapSeed;
+  const generatedWorld = (mapGeneratorCore && typeof mapGeneratorCore.generate === 'function')
+    ? mapGeneratorCore.generate({
+      width: evenWidth,
+      height,
+      xWrapping,
+      yWrapping,
+      polarIceCaps,
+      selectedLandform: generation.selectedLandform ?? MAP_GENERATION_DEFAULTS.selectedLandform,
+      selectedTemperature: generation.selectedTemperature ?? MAP_GENERATION_DEFAULTS.selectedTemperature,
+      selectedClimate: generation.selectedClimate ?? MAP_GENERATION_DEFAULTS.selectedClimate,
+      selectedAge: generation.selectedAge ?? MAP_GENERATION_DEFAULTS.selectedAge,
+      selectedOcean: generation.selectedOcean ?? MAP_GENERATION_DEFAULTS.selectedOcean,
+      mapSeed,
+      numCivs: Math.max(1, Number(worldSizeSpec.numCivs) || 8),
+      distanceBetweenCivs: Math.max(1, Number(worldSizeSpec.distanceBetweenCivs) || 20)
+    })
+    : null;
+  const tileCount = generatedWorld && Array.isArray(generatedWorld.tiles)
+    ? generatedWorld.tiles.length
+    : Math.max(1, Math.floor((evenWidth * height) / 2));
+  const numContinents = generatedWorld && Array.isArray(generatedWorld.continents)
+    ? Math.max(1, Math.min(12, generatedWorld.continents.length))
+    : 1;
+  const wchrRecord = createGeneratedMapRecord(0, [
+    { baseKey: 'selectedclimate', value: generation.selectedClimate ?? MAP_GENERATION_DEFAULTS.selectedClimate, label: 'Selected Climate' },
+    { baseKey: 'actualclimate', value: generation.selectedClimate ?? MAP_GENERATION_DEFAULTS.selectedClimate, label: 'Actual Climate' },
+    { baseKey: 'selectedbarbarianactivity', value: generation.selectedBarbarian ?? MAP_GENERATION_DEFAULTS.selectedBarbarian, label: 'Selected Barbarian Activity' },
+    { baseKey: 'actualbarbarianactivity', value: generation.selectedBarbarian ?? MAP_GENERATION_DEFAULTS.selectedBarbarian, label: 'Actual Barbarian Activity' },
+    { baseKey: 'selectedlandform', value: generation.selectedLandform ?? MAP_GENERATION_DEFAULTS.selectedLandform, label: 'Selected Landform' },
+    { baseKey: 'actuallandform', value: generation.selectedLandform ?? MAP_GENERATION_DEFAULTS.selectedLandform, label: 'Actual Landform' },
+    { baseKey: 'selectedoceancoverage', value: generation.selectedOcean ?? MAP_GENERATION_DEFAULTS.selectedOcean, label: 'Selected Ocean Coverage' },
+    { baseKey: 'actualoceancoverage', value: generation.selectedOcean ?? MAP_GENERATION_DEFAULTS.selectedOcean, label: 'Actual Ocean Coverage' },
+    { baseKey: 'selectedtemperature', value: generation.selectedTemperature ?? MAP_GENERATION_DEFAULTS.selectedTemperature, label: 'Selected Temperature' },
+    { baseKey: 'actualtemperature', value: generation.selectedTemperature ?? MAP_GENERATION_DEFAULTS.selectedTemperature, label: 'Actual Temperature' },
+    { baseKey: 'selectedage', value: generation.selectedAge ?? MAP_GENERATION_DEFAULTS.selectedAge, label: 'Selected Age' },
+    { baseKey: 'actualage', value: generation.selectedAge ?? MAP_GENERATION_DEFAULTS.selectedAge, label: 'Actual Age' },
+    { baseKey: 'worldsize', value: Number.isFinite(worldSize) ? worldSize : MAP_GENERATION_DEFAULTS.worldSize, label: 'World Size' }
+  ], 'World Parameters');
+  const wmapRecord = createGeneratedMapRecord(0, [
+    { baseKey: 'width', value: evenWidth, label: 'Map Width' },
+    { baseKey: 'height', value: height, label: 'Map Height' },
+    { baseKey: 'numcontinents', value: numContinents, label: 'Number Of Continents' },
+    { baseKey: 'distancebetweencivs', value: Math.max(1, Number(worldSizeSpec.distanceBetweenCivs) || 20), label: 'Distance Between Civilizations' },
+    { baseKey: 'numcivs', value: Math.max(1, Number(worldSizeSpec.numCivs) || 8), label: 'Number Of Civilizations' },
+    { baseKey: 'questionmark1', value: Math.max(1, Math.floor(height * 0.7)), label: 'Question Mark 1' },
+    { baseKey: 'questionmark2', value: 0, label: 'Question Mark 2' },
+    { baseKey: 'questionmark3', value: -1, label: 'Question Mark 3' },
+    { baseKey: 'mapseed', value: mapSeed, label: 'Map Seed' },
+    { baseKey: 'flags', value: mapFlags, label: 'Flags' }
+  ], 'World Map');
+  const tileRecords = [];
+  for (let idx = 0; idx < tileCount; idx += 1) {
+    const generatedTile = generatedWorld && generatedWorld.tiles ? generatedWorld.tiles[idx] : null;
+    const packedTerrain = generatedTile ? generatedTile.packedTerrain : 0;
+    tileRecords.push(createGeneratedMapRecord(idx, [
+      { baseKey: 'riverconnectioninfo', value: generatedTile ? generatedTile.riverConnectionInfo : 0, label: 'River Connection Info' },
+      { baseKey: 'border', value: 0, label: 'Border' },
+      { baseKey: 'resource', value: -1, label: 'Resource' },
+      { baseKey: 'image', value: generatedTile ? generatedTile.image : 0, label: 'Image' },
+      { baseKey: 'file', value: generatedTile ? generatedTile.file : 8, label: 'File' },
+      { baseKey: 'questionmark', value: 0, label: 'Question Mark' },
+      { baseKey: 'overlays', value: 0, label: 'Overlays' },
+      { baseKey: 'baserealterrain', value: packedTerrain, label: 'Base Real Terrain' },
+      { baseKey: 'bonuses', value: 0, label: 'Bonuses' },
+      { baseKey: 'rivercrossingdata', value: 0, label: 'River Crossing Data' },
+      { baseKey: 'barbariantribe', value: -1, label: 'Barbarian Tribe' },
+      { baseKey: 'city', value: -1, label: 'City' },
+      { baseKey: 'colony', value: -1, label: 'Colony' },
+      { baseKey: 'continent', value: generatedTile ? generatedTile.continent : -1, label: 'Continent' },
+      { baseKey: 'qm2', value: 6, label: 'Question Mark 2' },
+      { baseKey: 'victorypointlocation', value: -1, label: 'Victory Point Location' },
+      { baseKey: 'ruin', value: 0, label: 'Ruin' },
+      { baseKey: 'c3coverlays', value: generatedTile ? generatedTile.c3cOverlays : 0, label: 'C3C Overlays' },
+      { baseKey: 'qm3', value: 0, label: 'Question Mark 3' },
+      { baseKey: 'c3cbaserealterrain', value: packedTerrain, label: 'C3C Base Real Terrain' },
+      { baseKey: 'qm4', value: 0, label: 'Question Mark 4' },
+      { baseKey: 'fogofwar', value: 1, label: 'Fog Of War' },
+      { baseKey: 'c3cbonuses', value: generatedTile ? generatedTile.c3cBonuses : 0, label: 'C3C Bonuses' },
+      { baseKey: 'qm5', value: 0, label: 'Question Mark 5' }
+    ], `Tile ${idx + 1}`));
+  }
+  const continentRecords = [];
+  for (let idx = 0; idx < 12; idx += 1) {
+    const generatedContinent = generatedWorld && generatedWorld.continents ? generatedWorld.continents[idx] : null;
+    continentRecords.push(createGeneratedMapRecord(idx, [
+      { baseKey: 'continentclass', value: generatedContinent ? generatedContinent.continentClass : 0, label: 'Continent Class' },
+      { baseKey: 'numtiles', value: generatedContinent ? generatedContinent.numTiles : 0, label: 'Number Of Tiles' }
+    ], `Continent ${idx + 1}`));
+  }
+  const startingLocationRecords = [];
+  for (let idx = 0; idx < 20; idx += 1) {
+    const generatedStart = generatedWorld && generatedWorld.startingLocations ? generatedWorld.startingLocations[idx] : null;
+    startingLocationRecords.push(createGeneratedMapRecord(idx, [
+      { baseKey: 'ownertype', value: generatedStart ? generatedStart.ownerType : 0, label: 'Owner Type' },
+      { baseKey: 'owner', value: generatedStart ? generatedStart.owner : -1, label: 'Owner' },
+      { baseKey: 'x', value: generatedStart ? generatedStart.x : 0, label: 'X' },
+      { baseKey: 'y', value: generatedStart ? generatedStart.y : 0, label: 'Y' }
+    ], `Start ${idx + 1}`));
+  }
+  return [
+    createGeneratedMapSection('WCHR', [wchrRecord]),
+    createGeneratedMapSection('WMAP', [wmapRecord]),
+    createGeneratedMapSection('TILE', tileRecords),
+    createGeneratedMapSection('CONT', continentRecords),
+    createGeneratedMapSection('SLOC', startingLocationRecords),
+    createGeneratedMapSection('CITY', []),
+    createGeneratedMapSection('UNIT', []),
+    createGeneratedMapSection('CLNY', [])
+  ];
+}
+
+function applyGeneratedMapSectionsToTab(tab, generatedSections, mutation = 'set') {
+  if (!tab) return false;
+  const existingSections = Array.isArray(tab.sections) ? tab.sections.filter((section) => !isMapSectionCode(section && section.code)) : [];
+  const nextSections = existingSections.slice();
+  const insertAt = nextSections.findIndex((section) => {
+    const code = String(section && section.code || '').toUpperCase();
+    return code === 'GAME' || code === 'LEAD';
+  });
+  const mapSections = Array.isArray(generatedSections) ? generatedSections : [];
+  if (insertAt >= 0) nextSections.splice(insertAt, 0, ...mapSections);
+  else nextSections.push(...mapSections);
+  tab.sections = nextSections;
+  tab.hasMapData = hasMapData(tab);
+  tab.mapMutation = mutation;
+  tab.recordOps = [];
+  state.biqMapSelectedTile = tab.hasMapData ? 0 : -1;
+  return true;
+}
+
+function removeMapFromTab(tab) {
+  if (!tab) return false;
+  tab.sections = Array.isArray(tab.sections) ? tab.sections.filter((section) => !isMapSectionCode(section && section.code)) : [];
+  tab.hasMapData = false;
+  tab.mapMutation = tab.originalHasMap ? 'remove' : null;
+  tab.recordOps = [];
+  state.biqMapSelectedTile = -1;
+  return true;
 }
 
 function parseIntLoose(value, fallback = 0) {
@@ -21381,6 +22407,26 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     floatingRight.appendChild(inspector);
   } else {
     container.appendChild(inspector);
+  }
+
+  if (floatingUi && isScenarioMode()) {
+    const actionBar = document.createElement('div');
+    actionBar.className = 'map-modal-action-bar';
+    const generateBtn = document.createElement('button');
+    generateBtn.type = 'button';
+    generateBtn.className = 'secondary';
+    generateBtn.textContent = 'Generate Map';
+    generateBtn.addEventListener('click', () => openGenerateMapModal(tab));
+    actionBar.appendChild(generateBtn);
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'ghost danger';
+    removeBtn.textContent = 'Remove Map';
+    removeBtn.addEventListener('click', () => {
+      void requestRemoveMap(tab);
+    });
+    actionBar.appendChild(removeBtn);
+    container.appendChild(actionBar);
   }
 
   return container;

@@ -1931,38 +1931,73 @@ const WRITABLE_TERR = ['food_bonus', 'shields_bonus', 'commerce_bonus', 'defence
 // RULE (Game Rules) - partial: parse what we can, store tail
 // ---------------------------------------------------------------------------
 
-const RULE_SCALAR_NAMES = [
+const RULE_VISIBLE_SCALAR_NAMES = [
   'advancedBarbarian', 'basicBarbarian', 'barbarianSeaUnit', 'citiesForArmy', 'chanceOfRioting',
   'draftTurnPenalty', 'shieldCostInGold', 'fortressDefenceBonus', 'citizensAffectedByHappyFace',
   'questionMark1', 'questionMark2', 'forestValueInShields', 'shieldValueInGold', 'citizenValueInShields',
   'defaultDifficultyLevel', 'battleCreatedUnit', 'buildArmyUnit', 'buildingDefensiveBonus',
   'citizenDefensiveBonus', 'defaultMoneyResource', 'chanceToInterceptAirMissions',
   'chanceToInterceptStealthMissions', 'startingTreasury', 'questionMark3', 'foodConsumptionPerCitizen',
-  'riverDefensiveBonus', 'turnPenaltyForWhip', 'scout', 'roadMovementRate', 'startUnit1', 'startUnit2',
-  'WLTKDMinimumPop', 'townDefenceBonus', 'cityDefenceBonus', 'metropolisDefenceBonus',
-  'maxCity1Size', 'maxCity2Size'
+  'riverDefensiveBonus', 'turnPenaltyForWhip', 'scout', 'slave', 'roadMovementRate', 'startUnit1',
+  'startUnit2', 'WLTKDMinimumPop', 'townDefenceBonus', 'cityDefenceBonus', 'metropolisDefenceBonus',
+  'maxCity1Size', 'maxCity2Size', 'questionMark4', 'fortificationsDefenceBonus'
 ];
+
+const RULE_TRAILING_SCALAR_NAMES = [
+  'futureTechCost', 'goldenAgeDuration', 'maximumResearchTime', 'minimumResearchTime'
+];
+
+function readInt32Safe(data, off, fallback = 0) {
+  return off + 4 <= data.length ? data.readInt32LE(off) : fallback;
+}
 
 function parseRULE(data, io) {
   let off = 0;
-  const townName = readStr(data, off, 32); off += 32;
-  const cityName = readStr(data, off, 32); off += 32;
-  const metropolisName = readStr(data, off, 32); off += 32;
-  const numSSParts = off + 4 <= data.length ? data.readInt32LE(off) : 0; off += 4;
+  const townName = readStr(data, off, 32).trim(); off += 32;
+  const cityName = readStr(data, off, 32).trim(); off += 32;
+  const metropolisName = readStr(data, off, 32).trim(); off += 32;
+  const numSSParts = readInt32Safe(data, off); off += 4;
   const numberOfPartsRequired = [];
   for (let i = 0; i < numSSParts && off + 4 <= data.length; i++) {
     numberOfPartsRequired.push(data.readInt32LE(off)); off += 4;
   }
   const scalars = {};
-  for (const sn of RULE_SCALAR_NAMES) {
-    scalars[sn] = off + 4 <= data.length ? data.readInt32LE(off) : 0; off += 4;
+  for (const sn of RULE_VISIBLE_SCALAR_NAMES) {
+    scalars[sn] = readInt32Safe(data, off); off += 4;
+  }
+  const numCultureLevels = readInt32Safe(data, off); off += 4;
+  const culturalLevelNames = [];
+  for (let i = 0; i < numCultureLevels && off + 64 <= data.length; i++) {
+    culturalLevelNames.push(readStr(data, off, 64).trim()); off += 64;
+  }
+  const borderExpansionMultiplier = readInt32Safe(data, off); off += 4;
+  const borderFactor = readInt32Safe(data, off, 10); off += 4;
+  const trailingScalars = {};
+  for (const sn of RULE_TRAILING_SCALAR_NAMES) {
+    trailingScalars[sn] = readInt32Safe(data, off); off += 4;
+  }
+  let flagUnit = 0;
+  if (io.isPTWPlus) {
+    flagUnit = readInt32Safe(data, off); off += 4;
+  }
+  let upgradeCost = 0;
+  if (io.isConquests) {
+    upgradeCost = readInt32Safe(data, off); off += 4;
   }
   const _tail = off < data.length ? Buffer.from(data.subarray(off)) : Buffer.alloc(0);
   return {
     name: 'Rules',
     townName, cityName, metropolisName,
     numSSParts, numberOfPartsRequired,
-    ...scalars, _tail
+    ...scalars,
+    numCultureLevels,
+    culturalLevelNames,
+    borderExpansionMultiplier,
+    borderFactor,
+    ...trailingScalars,
+    flagUnit,
+    upgradeCost,
+    _tail
   };
 }
 
@@ -1974,7 +2009,15 @@ function serializeRULE(rec, io) {
   const parts = Array.isArray(rec.numberOfPartsRequired) ? rec.numberOfPartsRequired : [];
   w.writeInt(parts.length);
   for (const p of parts) w.writeInt(p | 0);
-  for (const sn of RULE_SCALAR_NAMES) w.writeInt((rec[sn] != null ? rec[sn] : 0) | 0);
+  for (const sn of RULE_VISIBLE_SCALAR_NAMES) w.writeInt((rec[sn] != null ? rec[sn] : 0) | 0);
+  const culturalLevelNames = Array.isArray(rec.culturalLevelNames) ? rec.culturalLevelNames : [];
+  w.writeInt(culturalLevelNames.length);
+  for (const levelName of culturalLevelNames) writeStr(w, levelName, 64);
+  w.writeInt((rec.borderExpansionMultiplier != null ? rec.borderExpansionMultiplier : 0) | 0);
+  w.writeInt((rec.borderFactor != null ? rec.borderFactor : 10) | 0);
+  for (const sn of RULE_TRAILING_SCALAR_NAMES) w.writeInt((rec[sn] != null ? rec[sn] : 0) | 0);
+  if (io.isPTWPlus) w.writeInt((rec.flagUnit != null ? rec.flagUnit : 0) | 0);
+  if (io.isConquests) w.writeInt((rec.upgradeCost != null ? rec.upgradeCost : 0) | 0);
   if (rec._tail && rec._tail.length > 0) w.writeBytes(rec._tail);
   return w.toBuffer();
 }
@@ -1990,13 +2033,22 @@ function toEnglishRULE(rec, io) {
   (rec.numberOfPartsRequired || []).forEach((v, i) => {
     pairs.push([`number_of_parts_${i}_required`, String(v | 0)]);
   });
-  for (const sn of RULE_SCALAR_NAMES) {
+  for (const sn of RULE_VISIBLE_SCALAR_NAMES) {
     pairs.push([sn, String((rec[sn] != null ? rec[sn] : 0) | 0)]);
+  }
+  for (const sn of RULE_TRAILING_SCALAR_NAMES) {
+    pairs.push([sn, String((rec[sn] != null ? rec[sn] : 0) | 0)]);
+  }
+  if (io.isPTWPlus) {
+    pairs.push(['flagUnit', String((rec.flagUnit != null ? rec.flagUnit : 0) | 0)]);
+  }
+  if (io.isConquests) {
+    pairs.push(['upgradeCost', String((rec.upgradeCost != null ? rec.upgradeCost : 0) | 0)]);
   }
   return lines(pairs);
 }
 
-const WRITABLE_RULE = ['town_name', 'city_name', 'metropolis_name', 'advanced_barbarian', 'basic_barbarian', 'barbarian_sea_unit', 'cities_for_army', 'chance_of_rioting', 'draft_turn_penalty', 'shield_cost_in_gold', 'fortress_defence_bonus', 'citizens_affected_by_happy_face', 'forest_value_in_shields', 'shield_value_in_gold', 'citizen_value_in_shields', 'default_difficulty_level', 'battle_created_unit', 'build_army_unit', 'building_defensive_bonus', 'citizen_defensive_bonus', 'default_money_resource', 'chance_to_intercept_air_missions', 'chance_to_intercept_stealth_missions', 'starting_treasury', 'food_consumption_per_citizen', 'river_defensive_bonus', 'turn_penalty_for_whip', 'scout', 'road_movement_rate', 'start_unit1', 'start_unit2', 'w_l_t_k_d_minimum_pop', 'town_defence_bonus', 'city_defence_bonus', 'metropolis_defence_bonus', 'max_city1_size', 'max_city2_size'];
+const WRITABLE_RULE = ['town_name', 'city_name', 'metropolis_name', 'advanced_barbarian', 'basic_barbarian', 'barbarian_sea_unit', 'cities_for_army', 'chance_of_rioting', 'draft_turn_penalty', 'shield_cost_in_gold', 'fortress_defence_bonus', 'citizens_affected_by_happy_face', 'forest_value_in_shields', 'shield_value_in_gold', 'citizen_value_in_shields', 'default_difficulty_level', 'battle_created_unit', 'build_army_unit', 'building_defensive_bonus', 'citizen_defensive_bonus', 'default_money_resource', 'chance_to_intercept_air_missions', 'chance_to_intercept_stealth_missions', 'starting_treasury', 'food_consumption_per_citizen', 'river_defensive_bonus', 'turn_penalty_for_whip', 'scout', 'slave', 'road_movement_rate', 'start_unit1', 'start_unit2', 'w_l_t_k_d_minimum_pop', 'town_defence_bonus', 'city_defence_bonus', 'metropolis_defence_bonus', 'max_city1_size', 'max_city2_size', 'question_mark_1', 'question_mark_2', 'question_mark_3', 'question_mark_4', 'fortifications_defence_bonus', 'future_tech_cost', 'golden_age_duration', 'maximum_research_time', 'minimum_research_time', 'flag_unit', 'upgrade_cost'];
 
 // ---------------------------------------------------------------------------
 // LEAD (Scenario Leaders)
@@ -2812,6 +2864,183 @@ function copyRecord(src) {
   return clone;
 }
 
+function buildMapSectionRecordFromUi(sectionCode, record, io, recordIndex) {
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  const valueByKey = new Map();
+  fields.forEach((field) => {
+    const key = canonicalKey(field && (field.baseKey || field.key));
+    if (!key) return;
+    valueByKey.set(key, String(field && field.value != null ? field.value : ''));
+  });
+  const getInt = (key, fallback = 0) => {
+    const raw = valueByKey.get(canonicalKey(key));
+    if (raw == null) return fallback;
+    const parsed = Number.parseInt(String(raw).match(/-?\d+/)?.[0] || '', 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const getString = (key, fallback = '') => {
+    const raw = valueByKey.get(canonicalKey(key));
+    return raw == null ? String(fallback) : String(raw);
+  };
+  if (sectionCode === 'WCHR') {
+    return {
+      name: 'World Parameters',
+      selectedClimate: getInt('selectedclimate', 1),
+      actualClimate: getInt('actualclimate', getInt('selectedclimate', 1)),
+      selectedBarbarian: getInt('selectedbarbarianactivity', 1),
+      actualBarbarian: getInt('actualbarbarianactivity', getInt('selectedbarbarianactivity', 1)),
+      selectedLandform: getInt('selectedlandform', 1),
+      actualLandform: getInt('actuallandform', getInt('selectedlandform', 1)),
+      selectedOcean: getInt('selectedoceancoverage', 1),
+      actualOcean: getInt('actualoceancoverage', getInt('selectedoceancoverage', 1)),
+      selectedTemp: getInt('selectedtemperature', 1),
+      actualTemp: getInt('actualtemperature', getInt('selectedtemperature', 1)),
+      selectedAge: getInt('selectedage', 1),
+      actualAge: getInt('actualage', getInt('selectedage', 1)),
+      worldSize: getInt('worldsize', 2)
+    };
+  }
+  if (sectionCode === 'WMAP') {
+    return {
+      name: 'World Map',
+      numResources: 0,
+      resourceOccurrences: [],
+      numContinents: getInt('numcontinents', 1),
+      height: getInt('height', 130),
+      distanceBetweenCivs: getInt('distancebetweencivs', 20),
+      numCivs: getInt('numcivs', 8),
+      qm1: getInt('questionmark1', 0),
+      qm2: getInt('questionmark2', 0),
+      width: getInt('width', 130),
+      qm3: getInt('questionmark3', -1),
+      unknownBytes: Buffer.alloc(124),
+      mapSeed: getInt('mapseed', 0),
+      flags: getInt('flags', 0),
+      _tail: Buffer.alloc(0)
+    };
+  }
+  if (sectionCode === 'TILE') {
+    const rawRecord = Buffer.alloc(getTileRecordLength(io.versionTag, io.majorVersion));
+    rawRecord.writeUInt32LE(Math.max(0, rawRecord.length - 4), 0);
+    for (const fd of TILE_FIELDS) {
+      const bodyOff = 4 + fd.off;
+      const value = getInt(fd.name, 0);
+      switch (fd.type) {
+        case 'uint8': rawRecord[bodyOff] = value & 0xff; break;
+        case 'uint16': rawRecord.writeUInt16LE(value & 0xffff, bodyOff); break;
+        case 'int16': rawRecord.writeInt16LE(value | 0, bodyOff); break;
+        case 'int32': rawRecord.writeInt32LE(value | 0, bodyOff); break;
+        default: rawRecord[bodyOff] = value & 0xff;
+      }
+    }
+    return { index: recordIndex, ...parseTILE(rawRecord, recordIndex, io), _rawRecord: rawRecord };
+  }
+  if (sectionCode === 'CONT') {
+    return {
+      continentClass: getInt('continentclass', 0),
+      numTiles: getInt('numtiles', 0)
+    };
+  }
+  if (sectionCode === 'SLOC') {
+    return {
+      ownerType: getInt('ownertype', 0),
+      owner: getInt('owner', -1),
+      x: getInt('x', 0),
+      y: getInt('y', 0)
+    };
+  }
+  if (sectionCode === 'CLNY') {
+    return {
+      ownerType: getInt('ownertype', 0),
+      owner: getInt('owner', -1),
+      x: getInt('x', 0),
+      y: getInt('y', 0),
+      improvementType: getInt('improvementtype', 0)
+    };
+  }
+  if (sectionCode === 'CITY') {
+    const buildingFields = fields
+      .filter((field) => /^building(?:_\d+)?$/i.test(String(field && (field.baseKey || field.key) || '')))
+      .map((field) => Number.parseInt(String(field && field.value || '').match(/-?\d+/)?.[0] || '', 10))
+      .filter((n) => Number.isFinite(n) && n >= 0);
+    const buildingsRaw = getString('buildings', '');
+    const buildings = buildingsRaw
+      ? buildingsRaw.split(/[,\s]+/).map((part) => Number.parseInt(part, 10)).filter((n) => Number.isFinite(n) && n >= 0)
+      : buildingFields;
+    return {
+      hasWalls: getInt('haswalls', 0),
+      hasPalace: getInt('haspalace', 0),
+      name: getString('name', ''),
+      ownerType: getInt('ownertype', 0),
+      numBuildings: buildings.length,
+      buildings,
+      culture: getInt('culture', 0),
+      owner: getInt('owner', -1),
+      size: getInt('size', 1),
+      x: getInt('x', 0),
+      y: getInt('y', 0),
+      cityLevel: getInt('citylevel', 0),
+      borderLevel: getInt('borderlevel', 0),
+      useAutoName: getInt('useautoname', 0)
+    };
+  }
+  if (sectionCode === 'UNIT') {
+    return {
+      name: getString('name', ''),
+      ownerType: getInt('ownertype', 0),
+      experienceLevel: getInt('experiencelevel', 0),
+      owner: getInt('owner', -1),
+      pRTONumber: getInt('prtonumber', getInt('unit', 0)),
+      AIStrategy: getInt('aistrategy', 0),
+      x: getInt('x', 0),
+      y: getInt('y', 0),
+      customName: getString('customname', ''),
+      useCivilizationKing: getInt('usecivilizationking', 0)
+    };
+  }
+  return { _rawData: Buffer.alloc(0) };
+}
+
+function buildMapSectionFromUi(section, io) {
+  const code = String(section && section.code || '').trim().toUpperCase();
+  const records = Array.isArray(section && section.records) ? section.records : [];
+  const nextSection = {
+    code,
+    count: records.length,
+    records: records.map((record, index) => {
+      const built = buildMapSectionRecordFromUi(code, record, io, index);
+      if (built && !Number.isFinite(built.index)) built.index = index;
+      return built;
+    }),
+    _modified: true
+  };
+  if (code === 'WMAP' && nextSection.records[0] && Number.isFinite(nextSection.records[0].width)) {
+    io.mapWidth = nextSection.records[0].width;
+  }
+  return nextSection;
+}
+
+function removeMapSectionsFromParsed(parsed) {
+  parsed.sections = parsed.sections.filter((section) => !['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'].includes(String(section && section.code || '').toUpperCase()));
+}
+
+function setMapSectionsOnParsed(parsed, uiSections) {
+  removeMapSectionsFromParsed(parsed);
+  const mapSections = Array.isArray(uiSections) ? uiSections : [];
+  const builtSections = [];
+  mapSections.forEach((section) => {
+    const code = String(section && section.code || '').trim().toUpperCase();
+    if (!['WCHR', 'WMAP', 'TILE', 'CONT', 'SLOC', 'CITY', 'UNIT', 'CLNY'].includes(code)) return;
+    builtSections.push(buildMapSectionFromUi(section, parsed.io));
+  });
+  const insertAt = parsed.sections.findIndex((section) => {
+    const code = String(section && section.code || '').toUpperCase();
+    return code === 'GAME' || code === 'LEAD';
+  });
+  if (insertAt >= 0) parsed.sections.splice(insertAt, 0, ...builtSections);
+  else parsed.sections.push(...builtSections);
+}
+
 // ---------------------------------------------------------------------------
 // applyEdits: apply SET/ADD/COPY/DELETE edits to a buffer, return new buffer
 // ---------------------------------------------------------------------------
@@ -2824,8 +3053,8 @@ function applyEdits(buf, edits) {
   const parsed = parseAllSections(buf);
   if (!parsed.ok) return { ok: false, error: parsed.error || 'Failed to parse BIQ' };
 
-  const { sections, io } = parsed;
-  const sectionByCode = new Map(sections.map((s) => [s.code, s]));
+  const { io } = parsed;
+  let sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
 
   let applied = 0;
   let skipped = 0;
@@ -2833,6 +3062,18 @@ function applyEdits(buf, edits) {
 
   for (const edit of edits) {
     const op = String(edit.op || 'set').toLowerCase();
+    if (op === 'removemap') {
+      removeMapSectionsFromParsed(parsed);
+      sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
+      applied++;
+      continue;
+    }
+    if (op === 'setmap') {
+      setMapSectionsOnParsed(parsed, edit.sections);
+      sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
+      applied++;
+      continue;
+    }
     const code = String(edit.sectionCode || '').toUpperCase();
     const section = sectionByCode.get(code);
 

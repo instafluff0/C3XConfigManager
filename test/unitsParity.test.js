@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { loadBundle } = require('../src/configCore');
+const { loadBundle, buildSyntheticUnitReferenceEntry, isPrtoStrategyMapRecord } = require('../src/configCore');
 const { projectUnitBiqFields, collapseUnitBiqFields } = require('../src/biq/unitCodec');
 
 const CIV3_ROOT = process.env.C3X_CIV3_ROOT || path.resolve(__dirname, '..', '..', '..');
@@ -50,6 +50,7 @@ test('Barrage in TIDES projects raw PRTO fields into Quint-style unit UI fields'
   const bundle = getTidesBundle();
   const barrage = bundle.tabs.units.entries.find((entry) => entry.civilopediaKey === 'PRTO_BARRAGE');
   assert.ok(barrage, 'Expected Barrage / PRTO_BARRAGE unit');
+  const raw = getRawPrtoMap(bundle, 'PRTO_BARRAGE');
 
   const fieldKeys = new Set((barrage.biqFields || []).map((field) => String(field.baseKey || field.key || '').toLowerCase()));
   assert.ok(fieldKeys.has('civilopediaentry'));
@@ -57,9 +58,12 @@ test('Barrage in TIDES projects raw PRTO fields into Quint-style unit UI fields'
   assert.ok(fieldKeys.has('requiredresource1'));
   assert.ok(fieldKeys.has('requiredresource2'));
   assert.ok(fieldKeys.has('upgradeto'));
+  assert.ok(fieldKeys.has('iconindex'));
   assert.ok(fieldKeys.has('bombardstrength'));
   assert.ok(fieldKeys.has('rateoffire'));
   assert.ok(fieldKeys.has('operationalrange'));
+  assert.ok(fieldKeys.has('useexactcost'));
+  assert.ok(fieldKeys.has('telepadrange'));
   assert.ok(fieldKeys.has('unitclass'));
   assert.ok(fieldKeys.has('offence'));
   assert.ok(fieldKeys.has('airbombard'));
@@ -78,10 +82,13 @@ test('Barrage in TIDES projects raw PRTO fields into Quint-style unit UI fields'
   assert.equal(getField(barrage, 'requiredresource1').value, 'Gaja Stone (22)');
   assert.equal(getField(barrage, 'requiredresource2').value, 'Coal (3)');
   assert.equal(getField(barrage, 'upgradeto').value, '+ Impale + (562)');
+  assert.equal(getField(barrage, 'iconindex').value, raw.get('iconindex')[0]);
   assert.equal(getField(barrage, 'bombardstrength').value, '25');
   assert.equal(getField(barrage, 'rateoffire').value, '4');
   assert.equal(getField(barrage, 'operationalrange').value, '3');
   assert.equal(getField(barrage, 'shieldcost').value, '16');
+  assert.equal(getField(barrage, 'useexactcost').value, raw.get('useexactcost')[0]);
+  assert.equal(getField(barrage, 'telepadrange').value, raw.get('telepadrange')[0]);
   assert.equal(getField(barrage, 'unitclass').value, 'Air (2)');
   assert.equal(getField(barrage, 'offence').value, 'false');
   assert.equal(getField(barrage, 'airbombard').value, 'true');
@@ -155,9 +162,12 @@ test('PRTO codec round-trips Quint unit references, packed flags, and repeated l
     { baseKey: 'requiredResource1', key: 'requiredResource1', value: 'Gaja Stone (22)', originalValue: 'Gaja Stone (22)', editable: true },
     { baseKey: 'requiredResource2', key: 'requiredResource2', value: 'Coal (3)', originalValue: 'Coal (3)', editable: true },
     { baseKey: 'upgradeTo', key: 'upgradeTo', value: '+ Impale + (562)', originalValue: '+ Impale + (562)', editable: true },
+    { baseKey: 'iconIndex', key: 'iconIndex', value: '12', originalValue: '12', editable: true },
     { baseKey: 'bombardStrength', key: 'bombardStrength', value: '25', originalValue: '25', editable: true },
     { baseKey: 'rateOfFire', key: 'rateOfFire', value: '4', originalValue: '4', editable: true },
     { baseKey: 'operationalRange', key: 'operationalRange', value: '3', originalValue: '3', editable: true },
+    { baseKey: 'useExactCost', key: 'useExactCost', value: '7', originalValue: '7', editable: true },
+    { baseKey: 'telepadRange', key: 'telepadRange', value: '0', originalValue: '0', editable: true },
     { baseKey: 'unitClass', key: 'unitClass', value: 'Air (2)', originalValue: 'Air (2)', editable: true },
     { baseKey: 'availableTo', key: 'availableTo', value: '134217726', originalValue: '134217726', editable: true },
     { baseKey: 'zoneOfControl', key: 'zoneOfControl', value: 'false', originalValue: 'false', editable: true },
@@ -194,6 +204,9 @@ test('PRTO codec round-trips Quint unit references, packed flags, and repeated l
   assert.equal(projectedByKey.get('requiredtech').value, 'Theory (164)');
   assert.equal(projectedByKey.get('requiredresource1').value, 'Gaja Stone (22)');
   assert.equal(projectedByKey.get('upgradeto').value, '+ Impale + (562)');
+  assert.equal(projectedByKey.get('iconindex').value, '12');
+  assert.equal(projectedByKey.get('useexactcost').value, '7');
+  assert.equal(projectedByKey.get('telepadrange').value, '0');
   assert.equal(projectedByKey.get('airbombard').value, 'true');
   assert.equal(projectedByKey.get('capture').value, 'false');
   assert.equal(projectedByKey.get('bomb').value, 'true');
@@ -203,6 +216,9 @@ test('PRTO codec round-trips Quint unit references, packed flags, and repeated l
   assert.equal(collapsed.requiredTech, 'Theory (164)');
   assert.equal(collapsed.requiredResource1, 'Gaja Stone (22)');
   assert.equal(collapsed.upgradeTo, '+ Impale + (562)');
+  assert.equal(collapsed.iconIndex, '12');
+  assert.equal(collapsed.useExactCost, '7');
+  assert.equal(collapsed.telepadRange, '0');
   assert.equal(collapsed.unitAbilities, '941622284');
   assert.equal(collapsed.AIStrategy, '64');
   assert.equal(collapsed.PTWStandardOrders, '79');
@@ -212,4 +228,39 @@ test('PRTO codec round-trips Quint unit references, packed flags, and repeated l
   assert.deepEqual(collapsed.ignoreMovementCost, ['1', '0']);
   assert.deepEqual(collapsed.legalUnitTelepad, ['Paratrooper (12)']);
   assert.deepEqual(collapsed.legalBuildingTelepad, ['Academy (14)']);
+});
+
+test('synthetic PRTO entries parse full-record english fields and skip strategy-map duplicates', () => {
+  const baseRecord = {
+    index: 677,
+    name: '# Work Mule #',
+    english: [
+      'civilopediaEntry: PRTO_WORK_MULE',
+      'iconIndex: 91',
+      'otherStrategy: -1',
+      'useExactCost: 7',
+      'telepadRange: 0'
+    ].join('\n')
+  };
+  const strategyMapRecord = {
+    index: 678,
+    name: '# Work Mule #',
+    english: [
+      'civilopediaEntry: PRTO_WORK_MULE',
+      'iconIndex: 91',
+      'otherStrategy: 677',
+      'useExactCost: 7',
+      'telepadRange: 0'
+    ].join('\n')
+  };
+
+  assert.equal(isPrtoStrategyMapRecord(baseRecord), false);
+  assert.equal(isPrtoStrategyMapRecord(strategyMapRecord), true);
+
+  const synthetic = buildSyntheticUnitReferenceEntry(baseRecord, '/tmp/test.biq', 'scenario');
+  assert.equal(synthetic.name, '# Work Mule #');
+  assert.equal(synthetic.civilopediaKey, 'PRTO_WORK_MULE');
+  assert.equal(getField(synthetic, 'iconindex').value, '91');
+  assert.equal(getField(synthetic, 'useexactcost').value, '7');
+  assert.equal(getField(synthetic, 'telepadrange').value, '0');
 });

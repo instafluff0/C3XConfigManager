@@ -817,37 +817,72 @@ test('RULE parser produces human-readable fields', () => {
   w.writeBytes(ws('Metropolis', 32));
   w.writeInt(5);  // numSSParts
   for (let i = 0; i < 5; i++) w.writeInt(i + 1); // numberOfPartsRequired
-  // 37 RULE_SCALAR_NAMES
-  const scalarNames = [
+  // Visible Quint RULE fields before the culture-level block.
+  const primaryScalarNames = [
     'advancedBarbarian', 'basicBarbarian', 'barbarianSeaUnit', 'citiesForArmy', 'chanceOfRioting',
     'draftTurnPenalty', 'shieldCostInGold', 'fortressDefenceBonus', 'citizensAffectedByHappyFace',
     'questionMark1', 'questionMark2', 'forestValueInShields', 'shieldValueInGold', 'citizenValueInShields',
     'defaultDifficultyLevel', 'battleCreatedUnit', 'buildArmyUnit', 'buildingDefensiveBonus',
     'citizenDefensiveBonus', 'defaultMoneyResource', 'chanceToInterceptAirMissions',
     'chanceToInterceptStealthMissions', 'startingTreasury', 'questionMark3', 'foodConsumptionPerCitizen',
-    'riverDefensiveBonus', 'turnPenaltyForWhip', 'scout', 'roadMovementRate', 'startUnit1', 'startUnit2',
+    'riverDefensiveBonus', 'turnPenaltyForWhip', 'scout', 'slave', 'roadMovementRate', 'startUnit1', 'startUnit2',
     'WLTKDMinimumPop', 'townDefenceBonus', 'cityDefenceBonus', 'metropolisDefenceBonus',
-    'maxCity1Size', 'maxCity2Size'
+    'maxCity1Size', 'maxCity2Size', 'questionMark4', 'fortificationsDefenceBonus'
   ];
-  for (let i = 0; i < scalarNames.length; i++) w.writeInt(i === 0 ? 7 : i); // advancedBarbarian=7
+  for (let i = 0; i < primaryScalarNames.length; i++) w.writeInt(i + 1);
+  w.writeInt(3); // numCultureLevels
+  w.writeBytes(ws('Village', 64));
+  w.writeBytes(ws('Town', 64));
+  w.writeBytes(ws('City', 64));
+  w.writeInt(2); // borderExpansionMultiplier
+  w.writeInt(10); // borderFactor
+  const trailingScalarNames = ['futureTechCost', 'goldenAgeDuration', 'maximumResearchTime', 'minimumResearchTime', 'flagUnit', 'upgradeCost'];
+  for (let i = 0; i < trailingScalarNames.length; i++) w.writeInt(41 + i);
   const data = w.toBuffer();
 
   const rec = reg.parse(data, io);
   assert.equal(rec.townName, 'Town');
   assert.equal(rec.cityName, 'City');
   assert.equal(rec.metropolisName, 'Metropolis');
-  assert.equal(rec.advancedBarbarian, 7);
+  assert.equal(rec.advancedBarbarian, 1);
+  assert.equal(rec.slave, 29);
+  assert.equal(rec.roadMovementRate, 30);
+  assert.equal(rec.startUnit1, 31);
+  assert.equal(rec.startUnit2, 32);
+  assert.equal(rec.WLTKDMinimumPop, 33);
+  assert.equal(rec.maxCity1Size, 37);
+  assert.equal(rec.maxCity2Size, 38);
+  assert.equal(rec.questionMark4, 39);
+  assert.equal(rec.fortificationsDefenceBonus, 40);
+  assert.equal(rec.numCultureLevels, 3);
+  assert.deepEqual(rec.culturalLevelNames, ['Village', 'Town', 'City']);
+  assert.equal(rec.borderExpansionMultiplier, 2);
+  assert.equal(rec.borderFactor, 10);
+  assert.equal(rec.futureTechCost, 41);
+  assert.equal(rec.goldenAgeDuration, 42);
+  assert.equal(rec.maximumResearchTime, 43);
+  assert.equal(rec.minimumResearchTime, 44);
+  assert.equal(rec.flagUnit, 45);
+  assert.equal(rec.upgradeCost, 46);
 
   const english = sectionToEnglish({ index: 0, ...rec }, 'RULE', io);
   assertNoGenericFields(english, 'RULE');
   const map = parseEnglish(english);
   assert.equal(map.get('townName'), 'Town');
   assert.equal(map.get('cityName'), 'City');
-  assert.equal(map.get('advancedBarbarian'), '7');
+  assert.equal(map.get('advancedBarbarian'), '1');
+  assert.equal(map.get('slave'), '29');
+  assert.equal(map.get('roadMovementRate'), '30');
   // Spaceship parts must be present
   assert.equal(map.get('numSpaceshipParts'), '5', 'RULE: expected numSpaceshipParts');
   assert.equal(map.get('number_of_parts_0_required'), '1', 'RULE: expected number_of_parts_0_required');
   assert.equal(map.get('number_of_parts_4_required'), '5', 'RULE: expected number_of_parts_4_required');
+  assert.equal(map.get('futureTechCost'), '41');
+  assert.equal(map.get('goldenAgeDuration'), '42');
+  assert.equal(map.get('maximumResearchTime'), '43');
+  assert.equal(map.get('minimumResearchTime'), '44');
+  assert.equal(map.get('flagUnit'), '45');
+  assert.equal(map.get('upgradeCost'), '46');
 
   // RULE has a static name, verify it is not a code+index fallback
   const name = sectionRecordName({ index: 0, ...rec }, 'RULE');
