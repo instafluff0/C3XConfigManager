@@ -43,7 +43,7 @@ test('createScenario copies BIQ, scenario text files, and C3X defaults into a ne
   assert.equal(result.ok, true);
   const scenarioDir = path.join(parentDir, 'My Scenario');
   assert.equal(path.normalize(result.scenarioDir), path.normalize(scenarioDir));
-  assert.equal(fs.existsSync(path.join(scenarioDir, 'My Scenario.biq')), true);
+  assert.equal(fs.existsSync(path.join(parentDir, 'My Scenario.biq')), true);
   assert.equal(fs.existsSync(path.join(scenarioDir, 'Text', 'Civilopedia.txt')), true);
   assert.equal(fs.existsSync(path.join(scenarioDir, 'Text', 'PediaIcons.txt')), true);
   assert.equal(fs.existsSync(path.join(scenarioDir, 'Text', 'diplomacy.txt')), true);
@@ -130,8 +130,8 @@ test('createScenario can copy an existing scenario and rename BIQ to the new sce
 
   assert.equal(result.ok, true);
   const copiedDir = path.join(parentDir, 'Copied Scenario');
-  assert.equal(fs.existsSync(path.join(copiedDir, 'Copied Scenario.biq')), true);
-  assert.equal(fs.existsSync(path.join(copiedDir, 'Source Scenario.biq')), false);
+  assert.equal(fs.existsSync(path.join(parentDir, 'Copied Scenario.biq')), true);
+  assert.equal(fs.existsSync(path.join(copiedDir, 'Copied Scenario.biq')), false);
   assert.equal(fs.existsSync(path.join(copiedDir, 'Text', 'Civilopedia.txt')), true);
   assert.equal(fs.existsSync(path.join(copiedDir, 'scenario.c3x_config.ini')), true);
   assert.equal(fs.existsSync(path.join(copiedDir, 'Art', 'Units', 'TestUnit', 'TestUnit.ini')), true);
@@ -159,7 +159,7 @@ test('createScenario can copy a BIQ from shared Scenarios root without copying t
 
   assert.equal(result.ok, true);
   const copiedDir = path.join(parentDir, 'Copied Shared Source');
-  assert.equal(fs.existsSync(path.join(copiedDir, 'Copied Shared Source.biq')), true);
+  assert.equal(fs.existsSync(path.join(parentDir, 'Copied Shared Source.biq')), true);
   assert.equal(fs.existsSync(path.join(copiedDir, 'Text', 'Civilopedia.txt')), true);
   assert.equal(fs.existsSync(path.join(copiedDir, 'Unrelated Scenario')), false);
 });

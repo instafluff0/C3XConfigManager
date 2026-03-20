@@ -16274,7 +16274,8 @@ function renderReferenceTab(tab, tabKey) {
       const ops = ensureReferenceRecordOps(tab);
       ops.push({
         op: 'add',
-        newRecordRef: key
+        newRecordRef: key,
+        importArtFrom: result.importFilePath
       });
       rememberUndoSnapshot();
       tab.entries.unshift(newEntry);
@@ -16576,12 +16577,7 @@ function renderReferenceTab(tab, tabKey) {
     }
 
     const identityMeta = document.createElement('div');
-    identityMeta.className = 'section-card source-section';
     const deferredInfoBlocks = [];
-    const identityTitle = document.createElement('div');
-    identityTitle.className = 'section-top';
-    identityTitle.innerHTML = '<strong>Identity & Art</strong>';
-    identityMeta.appendChild(identityTitle);
     const identityGrid = document.createElement('div');
     identityGrid.className = 'kv-grid';
     const showInlineReadonlyKey = REFERENCE_TOP_NAME_EDIT_TABS.has(tabKey);

@@ -2777,7 +2777,13 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
     if (canonicalKey(key) === ck) {
       const old = rec[key];
       if (typeof old === 'number' || old == null) {
-        const n = Number.parseInt(value, 10);
+        let n = Number.parseInt(value, 10);
+        if (!Number.isFinite(n)) {
+          const m = String(value).match(/\((-?\d+)\)$/);
+          if (m) n = Number.parseInt(m[1], 10);
+        }
+        // 'None' is the noneLabel for maybeFormatIdReference (-1 = no reference)
+        if (!Number.isFinite(n) && String(value).trim() === 'None') n = -1;
         rec[key] = Number.isFinite(n) ? n : (old || 0);
       } else if (typeof old === 'string') {
         rec[key] = String(value);
@@ -2793,7 +2799,12 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
   }
 
   // If field doesn't exist yet (new record), create it
-  const n = Number.parseInt(value, 10);
+  let n = Number.parseInt(value, 10);
+  if (!Number.isFinite(n)) {
+    const m = String(value).match(/\((-?\d+)\)$/);
+    if (m) n = Number.parseInt(m[1], 10);
+  }
+  if (!Number.isFinite(n) && String(value).trim() === 'None') n = -1;
   if (Number.isFinite(n)) {
     rec[ck] = n;
   } else {
@@ -2847,6 +2858,23 @@ function createDefaultRecord(code, civKey, io) {
         freeTechs: [-1, -1, -1, -1], bonuses: 0, governorSettings: 0, buildNever: 0, buildOften: 0, plurality: 0,
         kingUnit: -1, flavors: 0, questionMark: 0, diplomacyTextIndex: 0, numScientificLeaders: 0, scientificLeaderNames: []
       };
+    }
+    case 'PRTO': {
+      const terrainCount = io && io.isConquests ? 14 : 12;
+      const prtoRec = {
+        zoneOfControl: 0, name, civilopediaEntry: civKey,
+        bombardEffects: 0, ignoreMovementCost: Array(terrainCount).fill(0),
+        requiresSupport: 0, useExactCost: 7, telepadRange: 0, questionMark3: 1,
+        legalUnitTelepads: [], enslaveResultsIn: -1, questionMark5: 1,
+        stealthTargets: [], questionMark6: 1, legalBuildingTelepads: [],
+        createsCraters: 0, workerStrengthFloat: 0, questionMark8: 0, airDefence: 0,
+        _tail: Buffer.alloc(0)
+      };
+      PRTO_PRIMARY_SCALAR_FIELDS.forEach((key) => {
+        prtoRec[key] = (key === 'upgradeTo' || key === 'requiredTech' || key.startsWith('requiredResource')) ? -1 : 0;
+      });
+      PRTO_MID_SCALAR_FIELDS.forEach((key) => { prtoRec[key] = 0; });
+      return prtoRec;
     }
     case 'CITY': return {
       hasWalls: 0, hasPalace: 0, name: '', ownerType: 1, numBuildings: 0, buildings: [],

@@ -1893,7 +1893,7 @@ function createScenario(payload = {}) {
 
     const parentDir = path.resolve(requestedParent || defaultParent);
     const scenarioDir = path.join(parentDir, scenarioStem);
-    const scenarioBiqPath = path.join(scenarioDir, `${scenarioStem}.biq`);
+    const scenarioBiqPath = path.join(parentDir, `${scenarioStem}.biq`);
 
     if (fs.existsSync(scenarioDir)) {
       return { ok: false, error: `Scenario folder already exists: ${scenarioDir}` };
@@ -1933,6 +1933,7 @@ function createScenario(payload = {}) {
         kind: 'biq',
         from: path.join(civ3Root, 'Conquests', 'conquests.biq'),
         relTo: `${scenarioStem}.biq`,
+        toParentDir: true,
         required: true
       });
 
@@ -2013,7 +2014,7 @@ function createScenario(payload = {}) {
           copiedFiles.push({ kind: 'scenarioContent', from: sourceContentRoot, to: scenarioDir });
         }
         const sourceBiqInTemp = path.join(tempDir, path.basename(sourceScenarioPath));
-        const targetBiqInTemp = path.join(tempDir, `${scenarioStem}.biq`);
+        const targetBiqInTemp = scenarioBiqPath;
         const copiedSearchRootMap = new Map();
         if (sourceContentRoot) copiedSearchRootMap.set(path.resolve(sourceContentRoot), path.resolve(tempDir));
         if (path.normalize(sourceBiqInTemp) !== path.normalize(targetBiqInTemp)) {
@@ -2023,6 +2024,7 @@ function createScenario(payload = {}) {
             fs.copyFileSync(sourceScenarioPath, targetBiqInTemp);
           }
         }
+        fs.chmodSync(targetBiqInTemp, 0o644);
         const externalRoots = dedupePathList(sourceSearchRoots)
           .filter((root) => !sourceContentRoot || path.resolve(root) !== path.resolve(sourceContentRoot));
         externalRoots.forEach((sourceRoot, idx) => {
@@ -2047,7 +2049,7 @@ function createScenario(payload = {}) {
             const srcResolved = path.resolve(sourceRoot);
             const mapped = copiedSearchRootMap.get(srcResolved);
             if (!mapped || path.resolve(mapped) === path.resolve(tempDir)) return;
-            const rel = path.relative(tempDir, mapped).replace(/\\/g, '/').trim();
+            const rel = path.relative(parentDir, path.join(scenarioDir, path.relative(tempDir, mapped))).replace(/\\/g, '/').trim();
             if (rel) rewrittenFolders.push(rel);
           });
           const rewrittenValue = rewrittenFolders.join('; ');
@@ -2059,7 +2061,7 @@ function createScenario(payload = {}) {
               fieldKey: sourceSearchField.fieldKey,
               value: rewrittenValue
             }],
-            civ3Path,
+            civ3Path: civ3Root,
             outputPath: targetBiqInTemp
           });
           if (!biqRewrite.ok) {
@@ -2070,15 +2072,36 @@ function createScenario(payload = {}) {
         fs.mkdirSync(tempDir, { recursive: true });
         tempCreated = true;
         copyPlan.forEach((entry) => {
-          const destPath = path.join(tempDir, entry.relTo);
+          const destPath = entry.toParentDir
+            ? path.join(parentDir, entry.relTo)
+            : path.join(tempDir, entry.relTo);
           fs.mkdirSync(path.dirname(destPath), { recursive: true });
           fs.copyFileSync(entry.from, destPath);
+          if (entry.kind === 'biq') fs.chmodSync(destPath, 0o644);
           copiedFiles.push({
             kind: entry.kind,
             from: entry.from,
-            to: path.join(scenarioDir, entry.relTo)
+            to: entry.toParentDir ? path.join(parentDir, entry.relTo) : path.join(scenarioDir, entry.relTo)
           });
         });
+        const baseBiqTab = loadBiqTab({ mode: 'scenario', civ3Path: civ3Root, scenarioPath: scenarioBiqPath });
+        const baseSearchField = getScenarioSearchFieldMeta(baseBiqTab);
+        if (baseSearchField && baseSearchField.fieldKey) {
+          const biqRewrite = applyBiqReferenceEdits({
+            biqPath: scenarioBiqPath,
+            edits: [{
+              sectionCode: 'GAME',
+              recordRef: '@INDEX:0',
+              fieldKey: baseSearchField.fieldKey,
+              value: scenarioStem
+            }],
+            civ3Path: civ3Root,
+            outputPath: scenarioBiqPath
+          });
+          if (!biqRewrite.ok) {
+            throw new Error(biqRewrite.error || 'Failed to write scenario search folder into BIQ.');
+          }
+        }
       }
       fs.renameSync(tempDir, scenarioDir);
       tempCreated = false;
@@ -3313,7 +3336,14 @@ function buildReferenceTabs(civ3Path, options = {}) {
         if (syntheticSectionCode === 'RACE' && civilopediaEntry === 'RACE_BARBARIANS') return;
         if (civilopediaEntry && seenSyntheticKeys.has(civilopediaEntry)) return;
         const recordName = cleanDisplayText(record && record.name || '') || `${syntheticSectionCode} ${Number.isFinite(idx) ? idx + 1 : '?'}`;
-        const rawRecordFields = getRecordFieldsForSection(record, syntheticSectionCode);
+        // Prefer the enriched record (section.records) if available — it has display-formatted fields.
+        // fullRecords have raw english text; section.records have fields processed by enrichBridgeSections.
+        const enrichedRecord = Array.isArray(syntheticSection.records)
+          ? syntheticSection.records.find((r) => Number(r && r.index) === idx)
+          : null;
+        const rawRecordFields = (enrichedRecord && Array.isArray(enrichedRecord.fields) && enrichedRecord.fields.length > 0)
+          ? enrichedRecord.fields
+          : getRecordFieldsForSection(record, syntheticSectionCode);
         const rawBiqFields = rawRecordFields
           .filter((f) => String(f && (f.baseKey || f.key) || '').toLowerCase() !== 'civilopediaentry')
           .map((f) => ({
@@ -4659,6 +4689,142 @@ function commitWritesWithRollback(writes) {
   }
 }
 
+// Recursively list all files under a directory, returning absolute paths.
+function listFilesRecursive(dir) {
+  const results = [];
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (_err) {
+    return results;
+  }
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...listFilesRecursive(fullPath));
+    } else if (entry.isFile()) {
+      results.push(fullPath);
+    }
+  }
+  return results;
+}
+
+// Resolve a relative art path against a list of search roots, returning the
+// first absolute path that exists, or null.
+function resolveArtFileFromRoots(relPath, searchRoots) {
+  const normalized = normalizeRelativePath(relPath);
+  if (!normalized) return null;
+  for (const root of searchRoots) {
+    const abs = path.join(root, normalized);
+    try {
+      if (fs.existsSync(abs) && fs.statSync(abs).isFile()) return abs;
+    } catch (_err) {
+      // skip
+    }
+  }
+  return null;
+}
+
+// For each import op (op:'add' with importArtFrom), collect { sourcePath, targetPath }
+// pairs for all art files that should be copied into the target content root.
+function collectImportArtCopies({ tabs, targetContentRoot, civ3Path }) {
+  if (!targetContentRoot) return [];
+  const copies = [];
+  // Cache source search roots per source BIQ path to avoid repeated BIQ loads.
+  const sourceRootsCache = new Map();
+
+  const getSourceRoots = (sourceBiqPath) => {
+    if (sourceRootsCache.has(sourceBiqPath)) return sourceRootsCache.get(sourceBiqPath);
+    let roots = [];
+    try {
+      const sourceBiqTab = loadBiqTab({ mode: 'scenario', civ3Path, scenarioPath: sourceBiqPath });
+      const ctx = deriveScenarioPathContext({ scenarioPath: sourceBiqPath, civ3Path, biqTab: sourceBiqTab });
+      // Prefer: source scenario dir → its search roots → civ3 base.
+      roots = dedupePathList([ctx.biqRoot, ...ctx.searchRoots, civ3Path].filter(Boolean));
+    } catch (_err) {
+      roots = [];
+    }
+    sourceRootsCache.set(sourceBiqPath, roots);
+    return roots;
+  };
+
+  const addFileCopy = (sourcePath, relPath) => {
+    if (!sourcePath) return;
+    const targetPath = path.join(targetContentRoot, normalizeRelativePath(relPath));
+    copies.push({ sourcePath, targetPath });
+  };
+
+  for (const spec of REFERENCE_TAB_SPECS) {
+    const tab = tabs[spec.key];
+    if (!tab || !Array.isArray(tab.recordOps)) continue;
+
+    const importOps = tab.recordOps.filter(
+      (op) => String(op && op.op || '').toLowerCase() === 'add' &&
+               String(op && op.importArtFrom || '').trim()
+    );
+    if (importOps.length === 0) continue;
+
+    const sectionCode = getSectionCodeForReferenceTabKey(spec.key);
+
+    for (const op of importOps) {
+      const newRef = String(op.newRecordRef || '').trim().toUpperCase();
+      const sourceBiqPath = String(op.importArtFrom || '').trim();
+      if (!newRef || !sourceBiqPath) continue;
+      let sourceExists = false;
+      try { sourceExists = fs.existsSync(sourceBiqPath) && fs.statSync(sourceBiqPath).isFile(); } catch (_e) { /* skip */ }
+      if (!sourceExists) continue;
+
+      const entry = (Array.isArray(tab.entries) ? tab.entries : [])
+        .find((e) => String(e && e.civilopediaKey || '').toUpperCase() === newRef);
+      if (!entry) continue;
+
+      const sourceRoots = getSourceRoots(sourceBiqPath);
+
+      // Copy icon PCX files (used by tech, resource, improvement, government, etc.)
+      for (const relPath of (Array.isArray(entry.iconPaths) ? entry.iconPaths : [])) {
+        if (!relPath) continue;
+        addFileCopy(resolveArtFileFromRoots(relPath, sourceRoots), relPath);
+      }
+
+      // Copy race/civ PCX icon files
+      for (const relPath of (Array.isArray(entry.racePaths) ? entry.racePaths : [])) {
+        if (!relPath) continue;
+        addFileCopy(resolveArtFileFromRoots(relPath, sourceRoots), relPath);
+      }
+
+      // Copy unit animation folder (entire directory, all files)
+      if (sectionCode === 'PRTO' && entry.animationName) {
+        const animFolderRel = path.join('Art', 'Units', entry.animationName);
+        for (const root of sourceRoots) {
+          const srcDir = path.join(root, animFolderRel);
+          let isDir = false;
+          try { isDir = fs.existsSync(srcDir) && fs.statSync(srcDir).isDirectory(); } catch (_e) { /* skip */ }
+          if (isDir) {
+            for (const absFile of listFilesRecursive(srcDir)) {
+              const relFile = path.relative(root, absFile);
+              addFileCopy(absFile, relFile);
+            }
+            break;
+          }
+        }
+      }
+
+      // Copy FLC files embedded in RACE BIQ fields (forward/reverse era filenames)
+      if (sectionCode === 'RACE' && Array.isArray(entry.biqFields)) {
+        for (const field of entry.biqFields) {
+          const key = String(field && (field.baseKey || field.key) || '').toLowerCase();
+          if (/^(forward|reverse)filename_for_era_\d+$/.test(key)) {
+            const relPath = String(field && field.value || '').trim();
+            if (relPath) addFileCopy(resolveArtFileFromRoots(relPath, sourceRoots), relPath);
+          }
+        }
+      }
+    }
+  }
+
+  return copies;
+}
+
 function buildSavePlan(payload) {
   const mode = payload.mode === 'scenario' ? 'scenario' : 'global';
   const c3xPath = payload.c3xPath || '';
@@ -4721,7 +4887,12 @@ function buildSavePlan(payload) {
     civ3Path,
     scenarioRoot: scenarioContext.biqRoot,
     scenarioSearchPaths: scenarioContext.searchRoots,
-    scenarioContentRoot: scenarioContext.contentWriteRoot || scenarioDir
+    scenarioContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+    importedKeys: new Set(
+      ((((payload.tabs || {}).units || {}).recordOps) || [])
+        .filter((op) => op && op.op === 'add' && op.importArtFrom)
+        .map((op) => String(op.newRecordRef || ''))
+    )
   });
   if (unitValidationError) return { ok: false, error: unitValidationError };
 
@@ -4934,6 +5105,24 @@ function buildSavePlan(payload) {
         });
         saveReport.push({ kind: 'unitIni', path: edit.targetPath, applied: unitIniSave.applied });
       }
+    }
+
+    // Copy art files referenced by imported entries into the local scenario content root.
+    // Skips files that cannot be resolved; never blocks a save.
+    const artCopies = collectImportArtCopies({
+      tabs: payload.tabs || {},
+      targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+      civ3Path
+    });
+    for (const artCopy of artCopies) {
+      let data;
+      try {
+        data = fs.readFileSync(artCopy.sourcePath);
+      } catch (_err) {
+        continue; // source unreadable – skip gracefully
+      }
+      plannedWrites.push({ kind: 'art', path: artCopy.targetPath, data });
+      saveReport.push({ kind: 'art', path: artCopy.targetPath });
     }
   }
 
@@ -6169,12 +6358,16 @@ function validateUnitAnimationReferenceChanges({
   civ3Path,
   scenarioRoot,
   scenarioSearchPaths,
-  scenarioContentRoot
+  scenarioContentRoot,
+  importedKeys
 }) {
   if (mode !== 'scenario') return null;
   const entries = ((((tabs || {}).units || {}).entries) || []);
   if (!Array.isArray(entries)) return null;
+  const imported = importedKeys instanceof Set ? importedKeys : new Set();
   for (const entry of entries) {
+    // Skip entries being imported — art copy pipeline handles these
+    if (entry && imported.has(String(entry.civilopediaKey || ''))) continue;
     const animationName = String(entry && entry.animationName || '').trim();
     if (!animationName) continue;
     if (!isSafeUnitAnimationFolderName(animationName)) {
