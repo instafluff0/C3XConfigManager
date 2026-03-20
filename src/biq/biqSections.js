@@ -563,6 +563,22 @@ function cloneIntList(values) {
     .filter((value) => Number.isFinite(value));
 }
 
+function parseEditInt(value, fallback = NaN) {
+  let n = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(n)) {
+    const match = String(value).match(/\((-?\d+)\)$/);
+    if (match) n = Number.parseInt(match[1], 10);
+  }
+  if (!Number.isFinite(n) && String(value).trim() === 'None') n = -1;
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function ensureArraySize(arr, size, fillValue) {
+  const next = Array.isArray(arr) ? arr.slice() : [];
+  while (next.length < size) next.push(fillValue);
+  return next;
+}
+
 function parsePRTO(data, io) {
   let off = 0;
   if (data.length < 68) return { name: '', civilopediaEntry: '', _rawData: data };
@@ -656,8 +672,13 @@ function serializePRTO(rec, io) {
   writeStr(w, rec.name, 32);
   writeStr(w, rec.civilopediaEntry, 32);
   PRTO_PRIMARY_SCALAR_FIELDS.forEach((key) => w.writeInt((rec[key] != null ? rec[key] : 0) | 0));
-  PRTO_MID_SCALAR_FIELDS.forEach((key) => w.writeInt((rec[key] != null ? rec[key] : 0) | 0));
-  w.writeInt(((rec.PTWActionsMix | 0) + 65536) | 0);
+  PRTO_MID_SCALAR_FIELDS.forEach((key) => {
+    if (key === 'PTWActionsMix') {
+      w.writeInt(((rec.PTWActionsMix | 0) + 65536) | 0);
+      return;
+    }
+    w.writeInt((rec[key] != null ? rec[key] : 0) | 0);
+  });
   w.writeInt(rec.bombardEffects | 0);
 
   const terrainCount = io && io.isConquests ? 14 : 12;
@@ -2671,6 +2692,30 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
   const ck = canonicalKey(fieldKey);
 
   if (code === 'RACE') {
+    const freeTechMatch = ck.match(/^freetech(\d+)(index)?$/);
+    if (freeTechMatch) {
+      const idx = Number.parseInt(freeTechMatch[1], 10) - 1;
+      if (!Number.isFinite(idx) || idx < 0) return false;
+      rec.freeTechs = ensureArraySize(rec.freeTechs, Math.max(4, idx + 1), -1);
+      rec.freeTechs[idx] = parseEditInt(value, -1);
+      return true;
+    }
+
+    const filenameMatch = ck.match(/^(forwardfilename|reversefilename)(?:forera|)(\d+)$/);
+    if (filenameMatch) {
+      const kind = filenameMatch[1];
+      const idx = Number.parseInt(filenameMatch[2], 10);
+      if (!Number.isFinite(idx) || idx < 0) return false;
+      if (kind === 'forwardfilename') {
+        rec.forwardFilenames = ensureArraySize(rec.forwardFilenames, idx + 1, '');
+        rec.forwardFilenames[idx] = String(value);
+      } else {
+        rec.reverseFilenames = ensureArraySize(rec.reverseFilenames, idx + 1, '');
+        rec.reverseFilenames[idx] = String(value);
+      }
+      return true;
+    }
+
     const listSpecs = [
       { prefix: 'cityname', arrayKey: 'cityNames', countKey: 'numCities' },
       { prefix: 'milleader', arrayKey: 'milLeaderNames', countKey: 'numMilLeaders' },
@@ -2696,6 +2741,60 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
         rec[spec.countKey] = rec[spec.arrayKey].length;
         return true;
       }
+    }
+  }
+
+  if (code === 'TECH') {
+    const prereqMatch = ck.match(/^prerequisite(\d+)$/);
+    if (prereqMatch) {
+      const idx = Number.parseInt(prereqMatch[1], 10) - 1;
+      if (!Number.isFinite(idx) || idx < 0) return false;
+      rec.prerequisites = ensureArraySize(rec.prerequisites, Math.max(4, idx + 1), -1);
+      rec.prerequisites[idx] = parseEditInt(value, -1);
+      return true;
+    }
+  }
+
+  if (code === 'GOVT') {
+    const aliasMap = {
+      assimilationchance: 'assimilation',
+      militarypolicelimit: 'militaryPolice',
+      freeunitspertown: 'perTown',
+      freeunitspercity: 'perCity',
+      freeunitspermetropolis: 'perMetropolis',
+      questionmarkone: 'questionMark1',
+      questionmarktwo: 'qm2',
+      questionmarkthree: 'qm3',
+      questionmarkfour: 'qm4'
+    };
+    if (Object.prototype.hasOwnProperty.call(aliasMap, ck)) {
+      rec[aliasMap[ck]] = parseEditInt(value, 0);
+      return true;
+    }
+    const titleMatch = ck.match(/^(male|female)titleera(\d+)$/);
+    if (titleMatch) {
+      const isFemale = titleMatch[1] === 'female';
+      const eraIdx = Number.parseInt(titleMatch[2], 10) - 1;
+      if (!Number.isFinite(eraIdx) || eraIdx < 0) return false;
+      const titleIdx = eraIdx * 2 + (isFemale ? 1 : 0);
+      rec.rulerTitles = ensureArraySize(rec.rulerTitles, Math.max(8, titleIdx + 1), '');
+      rec.rulerTitles[titleIdx] = String(value);
+      return true;
+    }
+    const relationMatch = ck.match(/^govtrelation(\d+)(canbribe|briberymod|resistancemod)$/);
+    if (relationMatch) {
+      const relIdx = Number.parseInt(relationMatch[1], 10);
+      if (!Number.isFinite(relIdx) || relIdx < 0) return false;
+      rec.relations = ensureArraySize(rec.relations, relIdx + 1, { canBribe: 0, briberyMod: 0, resistanceMod: 0 });
+      if (!rec.relations[relIdx] || typeof rec.relations[relIdx] !== 'object') {
+        rec.relations[relIdx] = { canBribe: 0, briberyMod: 0, resistanceMod: 0 };
+      }
+      const parsed = parseEditInt(value, 0);
+      if (relationMatch[2] === 'canbribe') rec.relations[relIdx].canBribe = parsed;
+      if (relationMatch[2] === 'briberymod') rec.relations[relIdx].briberyMod = parsed;
+      if (relationMatch[2] === 'resistancemod') rec.relations[relIdx].resistanceMod = parsed;
+      rec.numGovts = rec.relations.length;
+      return true;
     }
   }
 
@@ -2752,6 +2851,49 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
 
   // GAME: victoryConditionsAndRules bitmask individual flags
   if (code === 'GAME') {
+    if (ck === 'numberofplayablecivs') {
+      const n = Math.max(0, parseEditInt(value, 0));
+      rec.playableCivIds = ensureArraySize(rec.playableCivIds, n, -1).slice(0, n);
+      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, n, 4).slice(0, n);
+      rec.numPlayableCivs = n;
+      return true;
+    }
+    if (ck === 'playablecivids') {
+      const ids = String(value || '')
+        .split(/[,\s]+/)
+        .map((part) => parseEditInt(part, NaN))
+        .filter((part) => Number.isFinite(part) && part >= 0);
+      rec.playableCivIds = ids;
+      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, ids.length, 4).slice(0, ids.length);
+      rec.numPlayableCivs = ids.length;
+      return true;
+    }
+    const playableMatch = ck.match(/^playableciv(\d+)$/);
+    if (playableMatch) {
+      const idx = Number.parseInt(playableMatch[1], 10);
+      if (!Number.isFinite(idx) || idx < 0) return false;
+      rec.playableCivIds = ensureArraySize(rec.playableCivIds, idx + 1, -1);
+      rec.playableCivIds[idx] = parseEditInt(value, -1);
+      rec.civPartOfWhichAlliance = ensureArraySize(rec.civPartOfWhichAlliance, rec.playableCivIds.length, 4).slice(0, rec.playableCivIds.length);
+      rec.numPlayableCivs = rec.playableCivIds.length;
+      return true;
+    }
+    const turnsMatch = ck.match(/^turnsintimesection(\d+)$/);
+    if (turnsMatch) {
+      const idx = Number.parseInt(turnsMatch[1], 10);
+      if (!Number.isFinite(idx) || idx < 0) return false;
+      rec.turnsPerTimescale = ensureArraySize(rec.turnsPerTimescale, idx + 1, 0);
+      rec.turnsPerTimescale[idx] = parseEditInt(value, 0);
+      return true;
+    }
+    const perTurnMatch = ck.match(/^timeperturnintimesection(\d+)$/);
+    if (perTurnMatch) {
+      const idx = Number.parseInt(perTurnMatch[1], 10);
+      if (!Number.isFinite(idx) || idx < 0) return false;
+      rec.timeUnitsPerTurn = ensureArraySize(rec.timeUnitsPerTurn, idx + 1, 0);
+      rec.timeUnitsPerTurn[idx] = parseEditInt(value, 0);
+      return true;
+    }
     const VCR_FLAG_BITS = {
       dominationenabled: 0, spaceraceenabled: 1, diplomacticenabled: 2,
       conquestenabled: 3, culturalenabled: 4, civspecificabilitiesenabled: 5,
@@ -2770,6 +2912,33 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
     }
   }
 
+  if (code === 'TERR') {
+    if (ck === 'numpossibleresources') {
+      const count = Math.max(0, parseEditInt(value, 0));
+      const nextMask = Buffer.alloc(Math.ceil(count / 8));
+      const currentMask = Buffer.isBuffer(rec.possibleResources) ? rec.possibleResources : Buffer.alloc(0);
+      currentMask.copy(nextMask, 0, 0, Math.min(currentMask.length, nextMask.length));
+      rec.numTotalResources = count;
+      rec.possibleResources = nextMask;
+      return true;
+    }
+    if (ck === 'possibleresourcesmask') {
+      const maskValues = String(value || '')
+        .split(/[,\s]+/)
+        .filter(Boolean)
+        .map((part) => parseEditInt(part, 0) ? 1 : 0);
+      const count = Math.max(rec.numTotalResources | 0, maskValues.length);
+      const nextMask = Buffer.alloc(Math.ceil(count / 8));
+      for (let i = 0; i < maskValues.length; i += 1) {
+        if (!maskValues[i]) continue;
+        nextMask[i >> 3] |= (1 << (i & 7));
+      }
+      rec.numTotalResources = count;
+      rec.possibleResources = nextMask;
+      return true;
+    }
+  }
+
   // Generic: set field on rec object
   // Try exact camelCase match first
   for (const key of Object.keys(rec)) {
@@ -2777,13 +2946,7 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
     if (canonicalKey(key) === ck) {
       const old = rec[key];
       if (typeof old === 'number' || old == null) {
-        let n = Number.parseInt(value, 10);
-        if (!Number.isFinite(n)) {
-          const m = String(value).match(/\((-?\d+)\)$/);
-          if (m) n = Number.parseInt(m[1], 10);
-        }
-        // 'None' is the noneLabel for maybeFormatIdReference (-1 = no reference)
-        if (!Number.isFinite(n) && String(value).trim() === 'None') n = -1;
+        const n = parseEditInt(value, NaN);
         rec[key] = Number.isFinite(n) ? n : (old || 0);
       } else if (typeof old === 'string') {
         rec[key] = String(value);
@@ -2799,12 +2962,7 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
   }
 
   // If field doesn't exist yet (new record), create it
-  let n = Number.parseInt(value, 10);
-  if (!Number.isFinite(n)) {
-    const m = String(value).match(/\((-?\d+)\)$/);
-    if (m) n = Number.parseInt(m[1], 10);
-  }
-  if (!Number.isFinite(n) && String(value).trim() === 'None') n = -1;
+  const n = parseEditInt(value, NaN);
   if (Number.isFinite(n)) {
     rec[ck] = n;
   } else {
@@ -2900,6 +3058,347 @@ function copyRecord(src) {
     else clone[k] = v;
   }
   return clone;
+}
+
+function getSectionByCode(parsed, sectionCode) {
+  const code = String(sectionCode || '').trim().toUpperCase();
+  return ((parsed && parsed.sections) || []).find((section) => String(section && section.code || '').trim().toUpperCase() === code) || null;
+}
+
+function getRecordCivilopediaRef(record) {
+  return String(record && record.civilopediaEntry || '').trim().toUpperCase();
+}
+
+function normalizeRaceDependentSections(parsed, edits, originalRaceRefs) {
+  const raceSection = getSectionByCode(parsed, 'RACE');
+  if (!raceSection || !Array.isArray(raceSection.records)) return { ok: true };
+
+  const finalRaceRefs = raceSection.records.map((record) => getRecordCivilopediaRef(record));
+  const finalRaceCount = finalRaceRefs.length;
+  if (finalRaceCount > 32) {
+    return {
+      ok: false,
+      error: 'Civilization III supports at most 32 civilizations total, including Barbarians. Delete a civilization before adding or importing another one.'
+    };
+  }
+
+  raceSection.records.forEach((record, index) => {
+    record.index = index;
+    if (Object.prototype.hasOwnProperty.call(record || {}, 'uniqueCivCounter')) record.uniqueCivCounter = index;
+  });
+
+  const raceCrudTouched = (Array.isArray(edits) ? edits : []).some((edit) => {
+    const code = String(edit && edit.sectionCode || '').trim().toUpperCase();
+    const op = String(edit && edit.op || 'set').trim().toLowerCase();
+    return code === 'RACE' && (op === 'add' || op === 'copy' || op === 'delete');
+  });
+  if (!raceCrudTouched) return { ok: true };
+
+  const oldRaceCount = Array.isArray(originalRaceRefs) ? originalRaceRefs.length : 0;
+  const oldToNewRaceIndex = new Map();
+  (Array.isArray(originalRaceRefs) ? originalRaceRefs : []).forEach((ref, oldIndex) => {
+    const newIndex = finalRaceRefs.indexOf(ref);
+    if (newIndex >= 0) oldToNewRaceIndex.set(oldIndex, newIndex);
+  });
+
+  const hasExplicitPlayableGameEdits = (Array.isArray(edits) ? edits : []).some((edit) => {
+    if (String(edit && edit.sectionCode || '').trim().toUpperCase() !== 'GAME') return false;
+    const fieldKey = canonicalKey(edit && edit.fieldKey);
+    return fieldKey === 'numberofplayablecivs'
+      || fieldKey === 'playablecivids'
+      || /^playableciv\d+$/.test(fieldKey);
+  });
+  const hasExplicitLeadCivEdits = (Array.isArray(edits) ? edits : []).some((edit) => {
+    if (String(edit && edit.sectionCode || '').trim().toUpperCase() !== 'LEAD') return false;
+    return canonicalKey(edit && edit.fieldKey) === 'civ';
+  });
+
+  const remapCivilizationIndex = (value) => {
+    const parsedValue = Number.parseInt(String(value), 10);
+    if (!Number.isFinite(parsedValue) || parsedValue < 0) return null;
+    if (parsedValue < oldRaceCount) {
+      const mapped = oldToNewRaceIndex.get(parsedValue);
+      return Number.isFinite(mapped) ? mapped : null;
+    }
+    if (parsedValue < finalRaceCount) return parsedValue;
+    return null;
+  };
+
+  const gameSection = getSectionByCode(parsed, 'GAME');
+  const gameRecord = gameSection && Array.isArray(gameSection.records) ? gameSection.records[0] : null;
+  if (gameRecord) {
+    const currentIds = Array.isArray(gameRecord.playableCivIds) ? gameRecord.playableCivIds : [];
+    const currentAlliance = Array.isArray(gameRecord.civPartOfWhichAlliance) ? gameRecord.civPartOfWhichAlliance : [];
+    const nextIds = [];
+    const nextAlliance = [];
+    currentIds.forEach((id, idx) => {
+      let nextId = null;
+      if (hasExplicitPlayableGameEdits) {
+        const parsedId = Number.parseInt(String(id), 10);
+        nextId = Number.isFinite(parsedId) && parsedId >= 0 && parsedId < finalRaceCount ? parsedId : null;
+      } else {
+        nextId = remapCivilizationIndex(id);
+      }
+      if (!Number.isFinite(nextId) || nextId < 0 || nextId >= finalRaceCount) return;
+      nextIds.push(nextId);
+      nextAlliance.push(Number.isFinite(Number(currentAlliance[idx])) ? Number(currentAlliance[idx]) : 4);
+    });
+    gameRecord.playableCivIds = nextIds;
+    gameRecord.civPartOfWhichAlliance = nextAlliance;
+    gameRecord.numPlayableCivs = nextIds.length;
+  }
+
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  if (leadSection && Array.isArray(leadSection.records)) {
+    leadSection.records.forEach((record) => {
+      const currentCiv = Number.parseInt(String(record && record.civ), 10);
+      if (!Number.isFinite(currentCiv) || currentCiv < 0) return;
+      let nextCiv = null;
+      if (hasExplicitLeadCivEdits) {
+        nextCiv = currentCiv < finalRaceCount ? currentCiv : null;
+      } else {
+        nextCiv = remapCivilizationIndex(currentCiv);
+      }
+      record.civ = Number.isFinite(nextCiv) && nextCiv >= 0 ? nextCiv : 0;
+    });
+  }
+
+  return { ok: true };
+}
+
+function buildDeletedSectionRemap(originalRefs, finalRefs) {
+  const oldToNew = new Map();
+  const oldList = Array.isArray(originalRefs) ? originalRefs : [];
+  const newList = Array.isArray(finalRefs) ? finalRefs : [];
+  oldList.forEach((ref, oldIndex) => {
+    const newIndex = newList.indexOf(ref);
+    if (newIndex >= 0) oldToNew.set(oldIndex, newIndex);
+  });
+  return {
+    oldCount: oldList.length,
+    finalCount: newList.length,
+    oldToNew
+  };
+}
+
+function remapDeletedSectionIndex(value, remap, deletedFallback = -1) {
+  const parsedValue = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsedValue) || parsedValue < 0) return parsedValue;
+  if (!remap) return parsedValue;
+  if (parsedValue < remap.oldCount) {
+    return remap.oldToNew.has(parsedValue) ? remap.oldToNew.get(parsedValue) : deletedFallback;
+  }
+  if (parsedValue < remap.finalCount) return parsedValue;
+  return deletedFallback;
+}
+
+function remapDeletedSectionList(values, remap, deletedFallback = -1) {
+  return (Array.isArray(values) ? values : []).map((value) => remapDeletedSectionIndex(value, remap, deletedFallback));
+}
+
+function remapDeletedSectionListRemovingDeleted(values, remap) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => remapDeletedSectionIndex(value, remap, null))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+}
+
+function shiftPossibleResourcesMask(mask, totalCount, remap) {
+  const oldCount = Number.isFinite(Number(totalCount)) ? Math.max(0, Number(totalCount)) : 0;
+  const bits = [];
+  const source = Buffer.isBuffer(mask) ? mask : Buffer.alloc(0);
+  for (let i = 0; i < oldCount; i += 1) {
+    const byteIndex = i >> 3;
+    const bitMask = 1 << (i & 7);
+    bits.push(byteIndex < source.length && (source[byteIndex] & bitMask) !== 0 ? 1 : 0);
+  }
+  const nextBits = [];
+  for (let i = 0; i < oldCount; i += 1) {
+    const nextIndex = remapDeletedSectionIndex(i, remap, null);
+    if (!Number.isFinite(nextIndex) || nextIndex < 0) continue;
+    nextBits[nextIndex] = bits[i] ? 1 : 0;
+  }
+  const nextCount = remap ? remap.finalCount : oldCount;
+  const nextMask = Buffer.alloc(Math.ceil(nextCount / 8));
+  for (let i = 0; i < nextCount; i += 1) {
+    if (!nextBits[i]) continue;
+    nextMask[i >> 3] |= 1 << (i & 7);
+  }
+  return { numTotalResources: nextCount, possibleResources: nextMask };
+}
+
+function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection) {
+  const deleteTouchedCodes = new Set((Array.isArray(edits) ? edits : [])
+    .filter((edit) => String(edit && edit.op || '').trim().toLowerCase() === 'delete')
+    .map((edit) => String(edit && edit.sectionCode || '').trim().toUpperCase())
+    .filter(Boolean));
+  if (deleteTouchedCodes.size === 0) return { ok: true };
+
+  const sections = ((parsed && parsed.sections) || []);
+  const remaps = new Map();
+  deleteTouchedCodes.forEach((code) => {
+    const section = getSectionByCode(parsed, code);
+    const finalRefs = section && Array.isArray(section.records)
+      ? section.records.map((record) => getRecordCivilopediaRef(record))
+      : [];
+    remaps.set(code, buildDeletedSectionRemap((originalRefsBySection && originalRefsBySection[code]) || [], finalRefs));
+  });
+
+  const techRemap = remaps.get('TECH');
+  const goodRemap = remaps.get('GOOD');
+  const bldgRemap = remaps.get('BLDG');
+  const govtRemap = remaps.get('GOVT');
+  const prtoRemap = remaps.get('PRTO');
+
+  const raceSection = getSectionByCode(parsed, 'RACE');
+  if (raceSection && Array.isArray(raceSection.records)) {
+    raceSection.records.forEach((rec) => {
+      if (techRemap) rec.freeTechs = remapDeletedSectionList(ensureArraySize(rec.freeTechs, 4, -1), techRemap, -1);
+      if (govtRemap) {
+        rec.favoriteGovernment = remapDeletedSectionIndex(rec.favoriteGovernment, govtRemap, -1);
+        rec.shunnedGovernment = remapDeletedSectionIndex(rec.shunnedGovernment, govtRemap, -1);
+      }
+      if (prtoRemap) rec.kingUnit = remapDeletedSectionIndex(rec.kingUnit, prtoRemap, -1);
+    });
+  }
+
+  const goodSection = getSectionByCode(parsed, 'GOOD');
+  if (goodSection && Array.isArray(goodSection.records) && techRemap) {
+    goodSection.records.forEach((rec) => {
+      rec.prerequisite = remapDeletedSectionIndex(rec.prerequisite, techRemap, -1);
+    });
+  }
+
+  const techSection = getSectionByCode(parsed, 'TECH');
+  if (techSection && Array.isArray(techSection.records) && techRemap) {
+    techSection.records.forEach((rec, index) => {
+      rec.prerequisites = remapDeletedSectionList(ensureArraySize(rec.prerequisites, 4, -1), techRemap, -1);
+      rec.index = index;
+    });
+  }
+
+  const govtSection = getSectionByCode(parsed, 'GOVT');
+  if (govtSection && Array.isArray(govtSection.records)) {
+    govtSection.records.forEach((rec, index) => {
+      if (techRemap) rec.prerequisiteTechnology = remapDeletedSectionIndex(rec.prerequisiteTechnology, techRemap, -1);
+      rec.index = index;
+    });
+    if (govtRemap) {
+      govtSection.records.forEach((rec) => {
+        const relations = Array.isArray(rec.relations) ? rec.relations : [];
+        const nextRelations = [];
+        for (let oldIndex = 0; oldIndex < relations.length; oldIndex += 1) {
+          const nextIndex = remapDeletedSectionIndex(oldIndex, govtRemap, null);
+          if (!Number.isFinite(nextIndex) || nextIndex < 0) continue;
+          nextRelations[nextIndex] = relations[oldIndex];
+        }
+        rec.relations = [];
+        for (let i = 0; i < govtRemap.finalCount; i += 1) {
+          rec.relations.push(nextRelations[i] || { canBribe: 0, briberyMod: 0, resistanceMod: 0 });
+        }
+        rec.numGovts = rec.relations.length;
+      });
+    }
+  }
+
+  const bldgSection = getSectionByCode(parsed, 'BLDG');
+  if (bldgSection && Array.isArray(bldgSection.records)) {
+    bldgSection.records.forEach((rec) => {
+      if (techRemap) {
+        rec.reqAdvance = remapDeletedSectionIndex(rec.reqAdvance, techRemap, -1);
+        rec.obsoleteBy = remapDeletedSectionIndex(rec.obsoleteBy, techRemap, -1);
+      }
+      if (goodRemap) {
+        rec.reqResource1 = remapDeletedSectionIndex(rec.reqResource1, goodRemap, -1);
+        rec.reqResource2 = remapDeletedSectionIndex(rec.reqResource2, goodRemap, -1);
+      }
+      if (govtRemap) rec.reqGovernment = remapDeletedSectionIndex(rec.reqGovernment, govtRemap, -1);
+      if (bldgRemap) {
+        rec.gainInEveryCity = remapDeletedSectionIndex(rec.gainInEveryCity, bldgRemap, 0);
+        rec.gainOnContinent = remapDeletedSectionIndex(rec.gainOnContinent, bldgRemap, 0);
+        rec.reqImprovement = remapDeletedSectionIndex(rec.reqImprovement, bldgRemap, 0);
+        rec.doublesHappiness = remapDeletedSectionIndex(rec.doublesHappiness, bldgRemap, 0);
+      }
+      if (prtoRemap) rec.unitProduced = remapDeletedSectionIndex(rec.unitProduced, prtoRemap, -1);
+    });
+  }
+
+  const prtoSection = getSectionByCode(parsed, 'PRTO');
+  if (prtoSection && Array.isArray(prtoSection.records)) {
+    prtoSection.records.forEach((rec) => {
+      if (goodRemap) {
+        rec.requiredResource1 = remapDeletedSectionIndex(rec.requiredResource1, goodRemap, -1);
+        rec.requiredResource2 = remapDeletedSectionIndex(rec.requiredResource2, goodRemap, -1);
+        rec.requiredResource3 = remapDeletedSectionIndex(rec.requiredResource3, goodRemap, -1);
+      }
+      if (techRemap) rec.requiredTech = remapDeletedSectionIndex(rec.requiredTech, techRemap, -1);
+      if (prtoRemap) {
+        rec.upgradeTo = remapDeletedSectionIndex(rec.upgradeTo, prtoRemap, -1);
+        rec.enslaveResultsIn = remapDeletedSectionIndex(rec.enslaveResultsIn, prtoRemap, -1);
+        rec.legalUnitTelepads = remapDeletedSectionListRemovingDeleted(rec.legalUnitTelepads, prtoRemap);
+        rec.stealthTargets = remapDeletedSectionListRemovingDeleted(rec.stealthTargets, prtoRemap);
+      }
+      if (bldgRemap) rec.legalBuildingTelepads = remapDeletedSectionListRemovingDeleted(rec.legalBuildingTelepads, bldgRemap);
+    });
+  }
+
+  const ruleSection = getSectionByCode(parsed, 'RULE');
+  if (ruleSection && Array.isArray(ruleSection.records)) {
+    ruleSection.records.forEach((rec) => {
+      if (goodRemap) rec.defaultMoneyResource = remapDeletedSectionIndex(rec.defaultMoneyResource, goodRemap, -1);
+      if (prtoRemap) {
+        [
+          'advancedBarbarian', 'basicBarbarian', 'barbarianSeaUnit', 'battleCreatedUnit',
+          'buildArmyUnit', 'scout', 'slave', 'startUnit1', 'startUnit2', 'flagUnit'
+        ].forEach((key) => {
+          if (Object.prototype.hasOwnProperty.call(rec, key)) rec[key] = remapDeletedSectionIndex(rec[key], prtoRemap, -1);
+        });
+      }
+    });
+  }
+
+  const terrSection = getSectionByCode(parsed, 'TERR');
+  if (terrSection && Array.isArray(terrSection.records) && goodRemap) {
+    terrSection.records.forEach((rec) => {
+      const next = shiftPossibleResourcesMask(rec.possibleResources, rec.numTotalResources, goodRemap);
+      rec.numTotalResources = next.numTotalResources;
+      rec.possibleResources = next.possibleResources;
+    });
+  }
+
+  const citySection = getSectionByCode(parsed, 'CITY');
+  if (citySection && Array.isArray(citySection.records) && bldgRemap) {
+    citySection.records.forEach((rec) => {
+      rec.buildings = remapDeletedSectionListRemovingDeleted(rec.buildings, bldgRemap);
+      rec.numBuildings = Array.isArray(rec.buildings) ? rec.buildings.length : 0;
+    });
+  }
+
+  const unitSection = getSectionByCode(parsed, 'UNIT');
+  if (unitSection && Array.isArray(unitSection.records) && prtoRemap) {
+    unitSection.records.forEach((rec) => {
+      rec.pRTONumber = remapDeletedSectionIndex(rec.pRTONumber, prtoRemap, -1);
+    });
+  }
+
+  const leadSection = getSectionByCode(parsed, 'LEAD');
+  if (leadSection && Array.isArray(leadSection.records)) {
+    leadSection.records.forEach((rec) => {
+      if (techRemap) rec.techIndices = remapDeletedSectionList(Array.isArray(rec.techIndices) ? rec.techIndices : [], techRemap, -1).filter((value) => Number.isFinite(value) && value >= 0);
+      if (govtRemap) rec.government = remapDeletedSectionIndex(rec.government, govtRemap, -1);
+      if (prtoRemap) {
+        rec.startUnits = (Array.isArray(rec.startUnits) ? rec.startUnits : [])
+          .map((entry) => ({
+            ...entry,
+            startUnitIndex: remapDeletedSectionIndex(entry && entry.startUnitIndex, prtoRemap, -1)
+          }))
+          .filter((entry) => Number.isFinite(entry.startUnitIndex) && entry.startUnitIndex >= 0 && Number(entry.startUnitCount) > 0);
+        rec.numStartUnits = rec.startUnits.length;
+      }
+      if (techRemap) rec.numStartTechs = Array.isArray(rec.techIndices) ? rec.techIndices.length : 0;
+    });
+  }
+
+  return { ok: true };
 }
 
 function buildMapSectionRecordFromUi(sectionCode, record, io, recordIndex) {
@@ -3092,6 +3591,17 @@ function applyEdits(buf, edits) {
   if (!parsed.ok) return { ok: false, error: parsed.error || 'Failed to parse BIQ' };
 
   const { io } = parsed;
+  const originalRefsBySection = {};
+  ['RACE', 'TECH', 'GOOD', 'BLDG', 'GOVT', 'PRTO'].forEach((code) => {
+    const section = getSectionByCode(parsed, code);
+    originalRefsBySection[code] = section && Array.isArray(section.records)
+      ? section.records.map((record) => getRecordCivilopediaRef(record))
+      : [];
+  });
+  const originalRaceSection = getSectionByCode(parsed, 'RACE');
+  const originalRaceRefs = originalRaceSection && Array.isArray(originalRaceSection.records)
+    ? originalRaceSection.records.map((record) => getRecordCivilopediaRef(record))
+    : [];
   let sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
 
   let applied = 0;
@@ -3191,6 +3701,15 @@ function applyEdits(buf, edits) {
     }
   }
 
+  const normalizeRaceResult = normalizeRaceDependentSections(parsed, edits, originalRaceRefs);
+  if (!normalizeRaceResult.ok) {
+    return { ok: false, error: normalizeRaceResult.error || 'Failed to normalize civilization-dependent BIQ data.' };
+  }
+  const normalizeDeleteResult = normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection);
+  if (!normalizeDeleteResult.ok) {
+    return { ok: false, error: normalizeDeleteResult.error || 'Failed to normalize deleted BIQ references.' };
+  }
+
   const newBuf = buildBiqBuffer(parsed);
   return {
     ok: true,
@@ -3238,4 +3757,5 @@ module.exports = {
   TILE_FIELDS,
   TILE_FIELD_MAP,
   getTileRecordLength,
+  normalizeDeletedReferenceSections,
 };

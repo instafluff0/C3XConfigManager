@@ -57,12 +57,12 @@ function mkC3xDir(parent) {
  * Copy the base BIQ to a fresh tmp dir and load a scenario bundle from it.
  * Returns { tmpDir, c3xDir, biqPath, bundle } or null when the BIQ is absent.
  */
-function setupScenario() {
-  if (!BASE_BIQ_EXISTS) return null;
+function setupScenario(sourceBiqPath = BASE_BIQ) {
+  if (!sourceBiqPath || !fs.existsSync(sourceBiqPath)) return null;
   const tmpDir = mkTmpDir();
   const c3xDir = mkC3xDir(tmpDir);
   const biqPath = path.join(tmpDir, 'test.biq');
-  fs.copyFileSync(BASE_BIQ, biqPath);
+  fs.copyFileSync(sourceBiqPath, biqPath);
   fs.chmodSync(biqPath, 0o644);
   const bundle = loadBundle({ mode: 'scenario', c3xPath: c3xDir, civ3Path: CIV3_ROOT, scenarioPath: biqPath });
   return { tmpDir, c3xDir, biqPath, bundle };
@@ -113,6 +113,23 @@ function fieldVal(entry, key) {
     (field) => String(field && (field.baseKey || field.key) || '').toLowerCase() === String(key || '').toLowerCase()
   );
   return f ? f.value : undefined;
+}
+
+function getSection(bundle, sectionCode) {
+  const sections = (bundle && bundle.biq && Array.isArray(bundle.biq.sections))
+    ? bundle.biq.sections : [];
+  const code = String(sectionCode || '').trim().toUpperCase();
+  return sections.find((section) => String(section && section.code || '').trim().toUpperCase() === code) || null;
+}
+
+function getGameRecord(bundle) {
+  const section = getSection(bundle, 'GAME');
+  return section && Array.isArray(section.records) ? section.records[0] : null;
+}
+
+function getLeadRecords(bundle) {
+  const section = getSection(bundle, 'LEAD');
+  return section && Array.isArray(section.records) ? section.records : [];
 }
 
 /**
@@ -184,8 +201,9 @@ const ADD_CASES = [
 
 for (const { tabKey, sectionCode, prefix } of ADD_CASES) {
   test(`Add blank ${sectionCode}: new record present and others untouched`, (t) => {
-    const ctx = setupScenario();
-    if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+    const sourceBiq = tabKey === 'civilizations' ? TIDES_BIQ : BASE_BIQ;
+    const ctx = setupScenario(sourceBiq);
+    if (!ctx) return t.skip(`Source BIQ not found: ${sourceBiq}`);
     const { c3xDir, biqPath } = ctx;
 
     const before = reload(c3xDir, biqPath);
@@ -243,8 +261,9 @@ const COPY_SEEDS = {
 
 for (const { tabKey, sectionCode, prefix } of ADD_CASES) {
   test(`Copy ${sectionCode}: copy present, source unchanged, key fields match`, (t) => {
-    const ctx = setupScenario();
-    if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+    const sourceBiq = tabKey === 'civilizations' ? TIDES_BIQ : BASE_BIQ;
+    const ctx = setupScenario(sourceBiq);
+    if (!ctx) return t.skip(`Source BIQ not found: ${sourceBiq}`);
     const { c3xDir, biqPath } = ctx;
 
     const before = reload(c3xDir, biqPath);
@@ -308,8 +327,9 @@ for (const { tabKey, sectionCode, prefix } of ADD_CASES) {
 
 for (const { tabKey, sectionCode, prefix } of ADD_CASES) {
   test(`Delete ${sectionCode}: record gone after delete, others untouched`, (t) => {
-    const ctx = setupScenario();
-    if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+    const sourceBiq = tabKey === 'civilizations' ? TIDES_BIQ : BASE_BIQ;
+    const ctx = setupScenario(sourceBiq);
+    if (!ctx) return t.skip(`Source BIQ not found: ${sourceBiq}`);
     const { c3xDir, biqPath } = ctx;
 
     // Step 1: add a fresh record so we have something safe to delete
@@ -367,9 +387,9 @@ for (const { tabKey, sectionCode, prefix } of ADD_CASES) {
 // ---------------------------------------------------------------------------
 
 // Helper: run a full import from Tides and return { before, after, saveResult, newKey, importedEntry, srcEntry }
-function runTidesImport(t, tabKey, sectionCode, prefix, srcPicker) {
-  const ctx = setupScenario();
-  if (!ctx) { t.skip(`Base BIQ not found: ${BASE_BIQ}`); return null; }
+function runTidesImport(t, tabKey, sectionCode, prefix, srcPicker, targetBiqPath = BASE_BIQ) {
+  const ctx = setupScenario(targetBiqPath);
+  if (!ctx) { t.skip(`Target BIQ not found: ${targetBiqPath}`); return null; }
   if (!TIDES_BIQ_EXISTS) { t.skip(`Tides of Crimson BIQ not found: ${TIDES_BIQ}`); return null; }
   const { c3xDir, biqPath } = ctx;
 
@@ -399,7 +419,8 @@ function runTidesImport(t, tabKey, sectionCode, prefix, srcPicker) {
 test('Import Civ from Tides: save succeeds and new RACE record present', (t) => {
   const r = runTidesImport(t, 'civilizations', 'RACE', 'RACE_',
     (b) => b.tabs.civilizations.entries.find((e) => e.civilopediaKey === 'RACE_AMAZONIANS')
-      || b.tabs.civilizations.entries[0]);
+      || b.tabs.civilizations.entries[0],
+    TIDES_BIQ);
   if (!r) return;
   assert.equal(r.saveResult.ok, true, String(r.saveResult.error || 'save failed'));
   assert.equal(biqHasKey(r.after, 'RACE', r.newKey), true, 'imported RACE record should be present');
@@ -408,7 +429,8 @@ test('Import Civ from Tides: save succeeds and new RACE record present', (t) => 
 test('Import Civ from Tides: scalar field values match source entry', (t) => {
   const r = runTidesImport(t, 'civilizations', 'RACE', 'RACE_',
     (b) => b.tabs.civilizations.entries.find((e) => e.civilopediaKey === 'RACE_AMAZONIANS')
-      || b.tabs.civilizations.entries[0]);
+      || b.tabs.civilizations.entries[0],
+    TIDES_BIQ);
   if (!r) return;
   assert.equal(r.saveResult.ok, true, String(r.saveResult.error || 'save failed'));
   const reloaded = getEntry(r.after, 'civilizations', r.newKey);
@@ -425,7 +447,8 @@ test('Import Civ from Tides: scalar field values match source entry', (t) => {
 
 test('Import Civ from Tides: does NOT increase tech count (no baggage)', (t) => {
   const r = runTidesImport(t, 'civilizations', 'RACE', 'RACE_',
-    (b) => b.tabs.civilizations.entries[0]);
+    (b) => b.tabs.civilizations.entries[0],
+    TIDES_BIQ);
   if (!r) return;
   assert.equal(r.saveResult.ok, true, String(r.saveResult.error || 'save failed'));
   assert.equal(countSection(r.after, 'TECH'), countSection(r.before, 'TECH'),
@@ -893,4 +916,56 @@ test('Add to each section simultaneously in one save call', (t) => {
     assert.equal(biqHasKey(after, sectionCode, newKeys[sectionCode]), true,
       `expected new key in ${sectionCode}`);
   }
+});
+test('Import Civ into base Conquests BIQ is blocked at the Civ3 32-civ limit', (t) => {
+  const r = runTidesImport(t, 'civilizations', 'RACE', 'RACE_',
+    (b) => b.tabs.civilizations.entries.find((e) => e.civilopediaKey === 'RACE_AMAZONIANS')
+      || b.tabs.civilizations.entries[0],
+    BASE_BIQ);
+  if (!r) return;
+  assert.equal(r.saveResult.ok, false, 'expected save to be blocked at the hard civ cap');
+  assert.match(String(r.saveResult.error || ''), /at most 32 civilizations total/i);
+});
+
+test('Delete existing civilizations reindexes GAME playable civs and LEAD civ references', (t) => {
+  const ctx = setupScenario();
+  if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      civilizations: {
+        recordOps: [
+          { op: 'delete', recordRef: 'RACE_AMERICAN' },
+          { op: 'delete', recordRef: 'RACE_ARABIAN' }
+        ]
+      }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'delete save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  assert.equal(biqHasKey(after, 'RACE', 'RACE_AMERICAN'), false, 'America should be deleted');
+  assert.equal(biqHasKey(after, 'RACE', 'RACE_ARABIAN'), false, 'Arabia should be deleted');
+
+  const raceCount = countSection(after, 'RACE');
+  const gameRecord = getGameRecord(after);
+  assert.ok(gameRecord, 'expected GAME record after delete');
+  const playableIds = Array.isArray(gameRecord.playableCivIds) ? gameRecord.playableCivIds : [];
+  const allianceIds = Array.isArray(gameRecord.civPartOfWhichAlliance) ? gameRecord.civPartOfWhichAlliance : [];
+  assert.equal(gameRecord.numPlayableCivs, playableIds.length, 'GAME playable civ count should match playable civ ids');
+  assert.equal(allianceIds.length, playableIds.length, 'GAME alliance membership array should track playable civ ids');
+  playableIds.forEach((id) => {
+    assert.ok(Number.isInteger(id) && id >= 0 && id < raceCount,
+      `playable civ id ${id} must remain within RACE bounds ${raceCount}`);
+  });
+
+  getLeadRecords(after).forEach((record, idx) => {
+    assert.ok(Number.isInteger(record.civ) && record.civ >= 0 && record.civ < raceCount,
+      `LEAD record ${idx} civ index must remain within RACE bounds`);
+  });
 });

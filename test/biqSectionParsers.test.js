@@ -102,6 +102,69 @@ test('TECH parser produces human-readable fields', () => {
   assertNameNotFallback({ index: 0, ...rec }, 'TECH');
 });
 
+test('PRTO serializer preserves Conquests record layout when clearing requirement fields', () => {
+  const reg = SECTION_REGISTRY.PRTO;
+  const io = makeIo();
+  const w = new BiqWriter();
+  w.writeInt(0); // zoneOfControl
+  w.writeBytes(ws('Ronin', 32));
+  w.writeBytes(ws('PRTO_RONIN', 32));
+  // PRTO primary scalars
+  [
+    0, 0, 0, 30, 2, 0, 4,
+    0, 0, 1, 1, 5, 6,
+    7, -1, -1
+  ].forEach((value) => w.writeInt(value));
+  // PRTO mid scalars, including PTWActionsMix as stored on disk
+  [
+    0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0,
+    0, 0, 65536
+  ].forEach((value) => w.writeInt(value));
+  w.writeInt(0); // bombardEffects
+  for (let i = 0; i < 14; i++) w.writeByte(0); // ignoreMovementCost
+  w.writeInt(0); // requiresSupport
+  w.writeInt(7); // useExactCost
+  w.writeInt(0); // telepadRange
+  w.writeInt(1); // questionMark3
+  w.writeInt(0); // numLegalUnitTelepads
+  w.writeInt(-1); // enslaveResultsIn
+  w.writeInt(1); // questionMark5
+  w.writeInt(0); // numStealthTargets
+  w.writeInt(1); // questionMark6
+  w.writeInt(0); // numLegalBuildingTelepads
+  w.writeByte(0); // createsCraters
+  w.writeFloat(0); // workerStrengthFloat
+  w.writeInt(0); // questionMark8
+  w.writeInt(0); // airDefence
+  const original = w.toBuffer();
+
+  const rec = reg.parse(original, io);
+  assert.equal(rec.requiredTech, 5);
+  assert.equal(rec.requiredResource1, 7);
+  assert.equal(rec.requiredResource2, -1);
+  assert.equal(rec.upgradeTo, 6);
+  assert.equal(rec.PTWActionsMix, 0);
+
+  rec.requiredTech = -1;
+  rec.requiredResource1 = -1;
+  rec.upgradeTo = -1;
+
+  const serialized = reg.serialize(rec, io);
+  assert.equal(serialized.length, original.length, 'PRTO byte length must stay stable after edit');
+
+  const reparsed = reg.parse(serialized, io);
+  assert.equal(reparsed.requiredTech, -1);
+  assert.equal(reparsed.requiredResource1, -1);
+  assert.equal(reparsed.requiredResource2, -1);
+  assert.equal(reparsed.upgradeTo, -1);
+  assert.equal(reparsed.PTWActionsMix, 0);
+  assert.equal(reparsed.bombardEffects, 0);
+  assert.equal(reparsed.useExactCost, 7);
+  assert.equal(reparsed.questionMark6, 1);
+  assert.equal(reparsed.airDefence, 0);
+});
+
 // ---------------------------------------------------------------------------
 // BLDG
 // ---------------------------------------------------------------------------

@@ -5517,75 +5517,16 @@ function collectUnsafeReferenceDeleteIssues({ tabs, biqTab }) {
 
   const dependencyRules = {
     TECH: [
-      { sourceSection: 'GOOD', sourceLabel: 'Resources', matcher: ({ canon, field, targetIndex }) => canon === 'prerequisite' && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'RACE', sourceLabel: 'Civilizations', matcher: ({ canon, field, targetIndex }) => /^freetech\d+index?$/.test(canon) && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'PRTO', sourceLabel: 'Units', matcher: ({ canon, field, targetIndex }) => canon === 'requiredtech' && getFieldNumericValue(field) === targetIndex },
       { sourceSection: 'CTZN', sourceLabel: 'Citizens', matcher: ({ canon, field, targetIndex }) => canon === 'prerequisite' && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'GOVT', sourceLabel: 'Governments', matcher: ({ canon, field, targetIndex }) => canon === 'prerequisite' && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'TFRM', sourceLabel: 'Worker Jobs', matcher: ({ canon, field, targetIndex }) => canon === 'requiredadvance' && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'TECH', sourceLabel: 'Technologies', matcher: ({ canon, field, targetIndex }) => /^prerequisite\d+$/.test(canon) && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'BLDG', sourceLabel: 'Improvements & Wonders', matcher: ({ canon, field, targetIndex }) => (canon === 'reqadvance' || canon === 'obsoleteby') && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'LEAD', sourceLabel: 'Players', matcher: ({ canon, field, targetIndex }) => /^startingtechnology\d+$/.test(canon) && getFieldNumericValue(field) === targetIndex }
+      { sourceSection: 'TFRM', sourceLabel: 'Worker Jobs', matcher: ({ canon, field, targetIndex }) => canon === 'requiredadvance' && getFieldNumericValue(field) === targetIndex }
     ],
     GOOD: [
-      { sourceSection: 'PRTO', sourceLabel: 'Units', matcher: ({ canon, field, targetIndex }) => /^requiredresource\d+$/.test(canon) && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'BLDG', sourceLabel: 'Improvements & Wonders', matcher: ({ canon, field, targetIndex }) => /^reqresource\d+$/.test(canon) && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'TFRM', sourceLabel: 'Worker Jobs', matcher: ({ canon, field, targetIndex }) => /^requiredresource\d+$/.test(canon) && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'RULE', sourceLabel: 'Rules', matcher: ({ canon, field, targetIndex }) => canon === 'defaultmoneyresource' && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'TILE', sourceLabel: 'Map Tiles', matcher: ({ canon, field, targetIndex }) => canon === 'resource' && getFieldNumericValue(field) === targetIndex },
-      {
-        sourceSection: 'TERR',
-        sourceLabel: 'Terrain',
-        matcher: ({ canon, field, targetIndex }) => {
-          if (canon !== 'possibleresourcesmask') return false;
-          const values = getFieldValuesAsInts(field);
-          return values[targetIndex] === 1;
-        }
-      }
+      { sourceSection: 'TFRM', sourceLabel: 'Worker Jobs', matcher: ({ canon, field, targetIndex }) => /^requiredresource\d+$/.test(canon) && getFieldNumericValue(field) === targetIndex }
     ],
-    BLDG: [
-      { sourceSection: 'BLDG', sourceLabel: 'Improvements & Wonders', matcher: ({ canon, field, targetIndex }) => canon === 'reqimprovement' && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'CITY', sourceLabel: 'Cities', matcher: ({ canon, field, targetIndex }) => (canon === 'building' || canon === 'buildings') && getFieldValuesAsInts(field).includes(targetIndex) },
-      { sourceSection: 'PRTO', sourceLabel: 'Units', matcher: ({ canon, field, targetIndex }) => canon.startsWith('legalbuildingtelepad') && getFieldNumericValue(field) === targetIndex }
-    ],
-    GOVT: [
-      { sourceSection: 'RACE', sourceLabel: 'Civilizations', matcher: ({ canon, field, targetIndex }) => (canon === 'favoritegovernment' || canon === 'shunnedgovernment') && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'BLDG', sourceLabel: 'Improvements & Wonders', matcher: ({ canon, field, targetIndex }) => canon === 'reqgovernment' && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'LEAD', sourceLabel: 'Players', matcher: ({ canon, field, targetIndex }) => canon === 'government' && getFieldNumericValue(field) === targetIndex }
-    ],
-    PRTO: [
-      { sourceSection: 'RACE', sourceLabel: 'Civilizations', matcher: ({ canon, field, targetIndex }) => canon === 'kingunit' && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'PRTO', sourceLabel: 'Units', matcher: ({ canon, field, targetIndex }) => (canon === 'upgradeto' || canon === 'enslaveresultsin' || canon.startsWith('legalunittelepad')) && getFieldNumericValue(field) === targetIndex },
-      { sourceSection: 'BLDG', sourceLabel: 'Improvements & Wonders', matcher: ({ canon, field, targetIndex }) => canon === 'unitproduced' && getFieldNumericValue(field) === targetIndex },
-      {
-        sourceSection: 'RULE',
-        sourceLabel: 'Rules',
-        matcher: ({ canon, field, targetIndex }) => ['advancedbarbarian', 'basicbarbarian', 'barbarianseaunit', 'battlecreatedunit', 'buildarmyunit', 'scout', 'slave', 'startunit1', 'startunit2', 'flagunit'].includes(canon) && getFieldNumericValue(field) === targetIndex
-      },
-      {
-        sourceSection: 'LEAD',
-        sourceLabel: 'Players',
-        matcher: ({ canon, field, targetIndex }) => {
-          const match = canon.match(/^startingunitsoftype(\d+)$/);
-          if (!match) return false;
-          const unitIndex = Number.parseInt(match[1], 10);
-          return unitIndex === targetIndex && getFieldNumericValue(field, 0) > 0;
-        }
-      },
-      { sourceSection: 'UNIT', sourceLabel: 'Map Units', matcher: ({ canon, field, targetIndex }) => canon === 'prtonumber' && getFieldNumericValue(field) === targetIndex }
-    ],
-    RACE: [
-      {
-        sourceSection: 'GAME',
-        sourceLabel: 'Scenario Settings',
-        matcher: ({ canon, field, targetIndex }) => {
-          if (canon === 'playablecivids') return getFieldValuesAsInts(field).includes(targetIndex);
-          if (!canon.startsWith('playableciv')) return false;
-          return getFieldNumericValue(field) === targetIndex;
-        }
-      },
-      { sourceSection: 'LEAD', sourceLabel: 'Players', matcher: ({ canon, field, targetIndex }) => canon === 'civ' && getFieldNumericValue(field) === targetIndex }
-    ]
+    BLDG: [],
+    GOVT: [],
+    PRTO: [],
+    RACE: []
   };
 
   const issues = [];

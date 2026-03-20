@@ -314,6 +314,7 @@ const el = {
   fileDiffClose: document.getElementById('file-diff-close'),
   saveToast: document.getElementById('save-toast'),
   saveToastButton: document.getElementById('save-toast-button'),
+  saveToastDismiss: document.getElementById('save-toast-dismiss'),
   saveToastIcon: document.getElementById('save-toast-icon'),
   saveToastTitle: document.getElementById('save-toast-title'),
   saveToastBody: document.getElementById('save-toast-body'),
@@ -391,6 +392,14 @@ const REFERENCE_PREFIX_BY_TAB = {
   governments: 'GOVT_',
   units: 'PRTO_',
   gameConcepts: 'GCON_'
+};
+const REFERENCE_SECTION_BY_TAB = {
+  civilizations: 'RACE',
+  technologies: 'TECH',
+  resources: 'GOOD',
+  improvements: 'BLDG',
+  governments: 'GOVT',
+  units: 'PRTO'
 };
 const ALL_REFERENCE_PREFIXES = Array.from(
   new Set(Object.values(REFERENCE_PREFIX_BY_TAB).filter(Boolean).map((v) => String(v).toUpperCase()))
@@ -14655,18 +14664,20 @@ function createBiqTextEditorBlock({ editorKey, titleText, sourceInfo, value, onC
   return block;
 }
 
-function getPreviewRequestForArtSlot(slot) {
+function getPreviewRequestForArtSlot(slot, entry = null) {
   if (!slot || !slot.path) return null;
+  const resolvedScenarioPath = (entry && entry._importScenarioPath) || state.settings.scenarioPath;
+  const resolvedScenarioPaths = (entry && entry._importScenarioPaths) || getScenarioPreviewPaths();
   return {
     kind: 'civilopediaIcon',
     civ3Path: state.settings.civ3Path,
-    scenarioPath: state.settings.scenarioPath,
-    scenarioPaths: getScenarioPreviewPaths(),
+    scenarioPath: resolvedScenarioPath,
+    scenarioPaths: resolvedScenarioPaths,
     assetPath: slot.path
   };
 }
 
-function loadArtSlotPreview(slot, holder, size = 86) {
+function loadArtSlotPreview(slot, holder, size = 86, entry = null) {
   holder.innerHTML = '';
   const canvas = document.createElement('canvas');
   canvas.width = size;
@@ -14674,7 +14685,7 @@ function loadArtSlotPreview(slot, holder, size = 86) {
   canvas.className = 'entry-thumb-canvas';
   holder.appendChild(canvas);
   if (!slot || !slot.path) return;
-  const request = getPreviewRequestForArtSlot(slot);
+  const request = getPreviewRequestForArtSlot(slot, entry);
   if (!request) return;
   window.c3xManager.getPreview(request)
     .then((res) => {
@@ -14794,13 +14805,13 @@ function setArtFocusZoom(nextZoom) {
   renderArtFocusCanvas();
 }
 
-function openArtFocusPreview(slot) {
+function openArtFocusPreview(slot, entry = null) {
   if (!slot || !slot.path) return;
   const overlay = ensureArtFocusNode();
   if (artFocus.title) artFocus.title.textContent = slot.label || 'Art Preview';
   if (artFocus.meta) artFocus.meta.textContent = slot.path;
   overlay.classList.remove('hidden');
-  const request = getPreviewRequestForArtSlot(slot);
+  const request = getPreviewRequestForArtSlot(slot, entry);
   if (!request) return;
   window.c3xManager.getPreview(request)
     .then((res) => {
@@ -14860,7 +14871,7 @@ function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle =
   const visual = document.createElement('div');
   visual.className = 'art-slot-visual';
   card.appendChild(visual);
-  loadArtSlotPreview(slot, visual, 128);
+  loadArtSlotPreview(slot, visual, 128, entry);
   const meta = document.createElement('div');
   meta.className = 'art-slot-meta';
   meta.textContent = slot.path ? slot.path : 'Click or drop PCX to set';
@@ -14873,7 +14884,7 @@ function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle =
   viewBtn.textContent = 'View';
   viewBtn.addEventListener('click', (ev) => {
     ev.stopPropagation();
-    openArtFocusPreview(slot);
+    openArtFocusPreview(slot, entry);
   });
   actions.appendChild(viewBtn);
   const replaceBtn = document.createElement('button');
@@ -14904,7 +14915,7 @@ function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle =
       setPathAndRefresh(filePath);
     });
     card.addEventListener('click', () => {
-      openArtFocusPreview(slot);
+      openArtFocusPreview(slot, entry);
     });
     card.addEventListener('dragover', (ev) => {
       ev.preventDefault();
@@ -14924,7 +14935,7 @@ function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle =
   } else {
     replaceBtn.disabled = true;
     card.addEventListener('click', () => {
-      openArtFocusPreview(slot);
+      openArtFocusPreview(slot, entry);
     });
   }
   return card;
@@ -15430,6 +15441,84 @@ function getPlayableCivilizationIdSet() {
     if (Number.isFinite(parsed) && parsed >= 0) out.add(parsed);
   });
   return out;
+}
+
+function getBaseBiqSectionCount(sectionCode) {
+  const code = String(sectionCode || '').trim().toUpperCase();
+  const sections = ((((state || {}).bundle || {}).biq || {}).sections) || [];
+  const section = sections.find((candidate) => String(candidate && candidate.code || '').trim().toUpperCase() === code);
+  return Number(section && section.count) || (((section && section.records) || []).length) || 0;
+}
+
+function getPredictedReferenceRecordIndex(tabKey, entryOrKey) {
+  const targetKey = String(
+    typeof entryOrKey === 'string'
+      ? entryOrKey
+      : (entryOrKey && entryOrKey.civilopediaKey) || ''
+  ).trim().toUpperCase();
+  if (!targetKey) return null;
+  const entryIndex = Number(entryOrKey && entryOrKey.biqIndex);
+  if (Number.isFinite(entryIndex) && entryIndex >= 0) return entryIndex;
+
+  const sectionCode = REFERENCE_SECTION_BY_TAB[String(tabKey || '').trim()] || '';
+  if (!sectionCode) return null;
+  const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
+  const existingKeys = new Set((((tab || {}).entries) || [])
+    .filter((entry) => Number.isFinite(Number(entry && entry.biqIndex)))
+    .map((entry) => String(entry && entry.civilopediaKey || '').trim().toUpperCase())
+    .filter(Boolean));
+  const ops = Array.isArray(tab && tab.recordOps) ? tab.recordOps : [];
+  const created = new Set();
+  let currentCount = getBaseBiqSectionCount(sectionCode);
+  for (const op of ops) {
+    const kind = String(op && op.op || '').trim().toLowerCase();
+    if (kind === 'add' || kind === 'copy') {
+      const newRef = String(op && op.newRecordRef || '').trim().toUpperCase();
+      if (!newRef) continue;
+      if (newRef === targetKey) return currentCount;
+      created.add(newRef);
+      currentCount += 1;
+      continue;
+    }
+    if (kind === 'delete') {
+      const recordRef = String(op && op.recordRef || '').trim().toUpperCase();
+      if (!recordRef) continue;
+      if (created.has(recordRef)) {
+        created.delete(recordRef);
+        currentCount = Math.max(0, currentCount - 1);
+        continue;
+      }
+      if (existingKeys.has(recordRef)) {
+        existingKeys.delete(recordRef);
+        currentCount = Math.max(0, currentCount - 1);
+      }
+    }
+  }
+  return null;
+}
+
+function getScenarioGameRecord() {
+  const scenarioTab = getBiqTabByKey('scenarioSettings');
+  const gameSection = getBiqSectionFromTab(scenarioTab, 'GAME');
+  return gameSection && Array.isArray(gameSection.records) ? gameSection.records[0] : null;
+}
+
+function isCivilizationPlayableEntry(entry) {
+  const civIdx = getPredictedReferenceRecordIndex('civilizations', entry);
+  if (!Number.isFinite(civIdx) || civIdx < 0) return false;
+  return getPlayableCivilizationIdSet().has(civIdx);
+}
+
+function setCivilizationPlayableState(entry, nextPlayable) {
+  const gameRecord = getScenarioGameRecord();
+  if (!gameRecord) return false;
+  const civIdx = getPredictedReferenceRecordIndex('civilizations', entry);
+  if (!Number.isFinite(civIdx) || civIdx < 0) return false;
+  const selectedIds = getPlayableCivilizationIdSet();
+  if (nextPlayable) selectedIds.add(civIdx);
+  else selectedIds.delete(civIdx);
+  setGamePlayableCivilizations(gameRecord, Array.from(selectedIds));
+  return true;
 }
 
 function getGamePlayableCivFields(record) {
@@ -16328,6 +16417,9 @@ function renderReferenceTab(tab, tabKey) {
       });
       rememberUndoSnapshot();
       tab.entries.unshift(newEntry);
+      if (tabKey === 'civilizations') {
+        setCivilizationPlayableState(newEntry, true);
+      }
       state.referenceSelection[tabKey] = 0;
       setDirty(true);
       setStatus(`Imported "${result.importedEntry.name || result.importedEntry.civilopediaKey}" into this scenario as a new entry.`);
@@ -16643,7 +16735,7 @@ function renderReferenceTab(tab, tabKey) {
       if (referenceEditable) {
         const nameInput = document.createElement('input');
         nameInput.type = 'text';
-        nameInput.className = 'key-input-inline';
+        nameInput.className = 'key-input-inline top-name-input';
         nameInput.value = String(entry.name || '');
         nameInput.addEventListener('input', () => {
           rememberUndoSnapshot();
@@ -16744,6 +16836,41 @@ function renderReferenceTab(tab, tabKey) {
     }
     if (tabKey === 'improvements') {
       renderImprovementTopControls(entry, identityGrid, referenceEditable);
+    }
+    if (tabKey === 'civilizations') {
+      const playableRow = document.createElement('div');
+      playableRow.className = 'identity-key-row playable-civ-row';
+      const playableLabel = document.createElement('strong');
+      playableLabel.className = 'field-meta';
+      playableLabel.textContent = 'Playable:';
+      const playableControl = document.createElement('div');
+      playableControl.className = 'identity-key-control';
+      const toggle = document.createElement('label');
+      toggle.className = 'bool-toggle bool-row-toggle';
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      check.checked = isCivilizationPlayableEntry(entry);
+      check.disabled = !referenceEditable;
+      const checkText = document.createElement('span');
+      checkText.textContent = check.checked ? 'Playable' : '';
+      check.addEventListener('change', () => {
+        if (!referenceEditable) return;
+        rememberUndoSnapshot();
+        const changed = setCivilizationPlayableState(entry, check.checked);
+        if (!changed) {
+          check.checked = !check.checked;
+          return;
+        }
+        checkText.textContent = check.checked ? 'Playable' : '';
+        setDirty(true);
+      });
+      toggle.appendChild(check);
+      toggle.appendChild(checkText);
+      playableControl.appendChild(toggle);
+      playableRow.appendChild(playableLabel);
+      playableRow.appendChild(playableControl);
+      attachRichTooltip(playableRow, 'Source: BIQ\nFile: Scenario Setup (GAME)\nField: playable_civ_*');
+      identityGrid.appendChild(playableRow);
     }
     const depsLine = document.createElement('div');
     depsLine.className = 'field-meta';
@@ -26849,6 +26976,12 @@ async function init() {
   if (el.saveToastButton) {
     el.saveToastButton.addEventListener('click', () => {
       openSaveProgressModal();
+    });
+  }
+  if (el.saveToastDismiss) {
+    el.saveToastDismiss.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      hideSaveToast();
     });
   }
   if (el.saveProgressClose) {

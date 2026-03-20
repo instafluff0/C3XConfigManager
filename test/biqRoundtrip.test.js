@@ -74,6 +74,19 @@ function biqSectionHasCivilopediaKey(bundle, sectionCode, wantedKey) {
   });
 }
 
+function getBiqSectionRecordIndex(bundle, sectionCode, wantedKey) {
+  const biq = bundle && bundle.biq;
+  const sections = biq && Array.isArray(biq.sections) ? biq.sections : [];
+  const section = sections.find((s) => String(s.code || '').toUpperCase() === String(sectionCode || '').toUpperCase());
+  if (!section || !Array.isArray(section.records)) return -1;
+  const target = String(wantedKey || '').trim().toUpperCase();
+  return section.records.findIndex((record) => {
+    const fields = Array.isArray(record && record.fields) ? record.fields : [];
+    const civField = fields.find((f) => String(f.baseKey || f.key || '').toLowerCase() === 'civilopediaentry');
+    return String(civField && civField.value || '').trim().toUpperCase() === target;
+  });
+}
+
 function getEntryByCivKey(entries, civKey) {
   const target = String(civKey || '').trim().toUpperCase();
   return (Array.isArray(entries) ? entries : []).find((entry) => String(entry.civilopediaKey || '').trim().toUpperCase() === target) || null;
@@ -88,6 +101,12 @@ function getRecordField(record, key) {
   const fields = Array.isArray(record && record.fields) ? record.fields : [];
   const target = String(key || '').trim().toLowerCase();
   return fields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target) || null;
+}
+
+function getRecordFields(record, key) {
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  const target = String(key || '').trim().toLowerCase();
+  return fields.filter((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target);
 }
 
 function getRecordInt(record, key, fallback) {
@@ -353,6 +372,173 @@ test('BIQ round-trip persists deterministic playable civilization list rewrites'
   assert.deepEqual(rePlayable, replacement);
 });
 
+test('BIQ round-trip persists array-backed projected and synthetic BIQ fields', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+
+  const techOptions = ((bundle.tabs.technologies && bundle.tabs.technologies.entries) || [])
+    .filter((entry) => Number.isFinite(Number(entry && entry.biqIndex)));
+  if (techOptions.length < 4) t.skip('Sample BIQ does not expose enough technology references for matrix edits.');
+
+  const civEntry = ((bundle.tabs.civilizations && bundle.tabs.civilizations.entries) || []).find((entry) => findField(entry, 'freetech1index'));
+  assert.ok(civEntry, 'expected civilization entry with free tech fields');
+  const civFreeTech1 = findField(civEntry, 'freetech1index');
+  const civFreeTech2 = findField(civEntry, 'freetech2index');
+  assert.ok(civFreeTech1 && civFreeTech2, 'expected civilization free tech slots');
+  civFreeTech1.value = String(techOptions[1].biqIndex);
+  civFreeTech2.value = String(techOptions[2].biqIndex);
+
+  const techEntry = ((bundle.tabs.technologies && bundle.tabs.technologies.entries) || []).find((entry) => findField(entry, 'prerequisite1'));
+  assert.ok(techEntry, 'expected technology entry with prerequisite fields');
+  const prereq1 = findField(techEntry, 'prerequisite1');
+  const prereq2 = findField(techEntry, 'prerequisite2');
+  assert.ok(prereq1 && prereq2, 'expected prerequisite fields');
+  prereq1.value = String(techOptions[0].biqIndex);
+  prereq2.value = String(techOptions[3].biqIndex);
+
+  const govEntry = ((bundle.tabs.governments && bundle.tabs.governments.entries) || []).find((entry) => findField(entry, 'malerulertitle1'));
+  assert.ok(govEntry, 'expected government entry with ruler title fields');
+  const maleTitle1 = findField(govEntry, 'malerulertitle1');
+  const femaleTitle1 = findField(govEntry, 'femalerulertitle1');
+  assert.ok(maleTitle1 && femaleTitle1, 'expected ruler title fields');
+  maleTitle1.value = 'Chief Tester';
+  femaleTitle1.value = 'Chief Testeress';
+  const canBribeFields = getRecordFields({ fields: govEntry.biqFields }, 'canbribe');
+  const briberyFields = getRecordFields({ fields: govEntry.biqFields }, 'briberymodifier');
+  const resistanceFields = getRecordFields({ fields: govEntry.biqFields }, 'resistancemodifier');
+  if (canBribeFields[0]) canBribeFields[0].value = canBribeFields[0].value === '1' ? '0' : '1';
+  if (briberyFields[0]) briberyFields[0].value = '33';
+  if (resistanceFields[0]) resistanceFields[0].value = '44';
+
+  const gameRecord = getScenarioSettingsRecord(bundle);
+  assert.ok(gameRecord, 'expected GAME record');
+  const gameFields = Array.isArray(gameRecord.fields) ? gameRecord.fields : [];
+  const countField = getRecordField(gameRecord, 'numberofplayablecivs') || getRecordField(gameRecord, 'number_of_playable_civs');
+  assert.ok(countField, 'expected GAME playable civ count field');
+  const originalPlayable = gameFields
+    .filter((field) => /^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()))
+    .map((field) => Number.parseInt(String(field.value || ''), 10))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  if (originalPlayable.length < 2) {
+    t.skip('Sample BIQ does not have enough playable civilizations.');
+    return;
+  }
+  const playableReplacement = Array.from(new Set([originalPlayable[1], originalPlayable[0], 0])).sort((a, b) => a - b);
+  const preservedPlayableFields = gameFields.filter((field) => !/^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()));
+  const insertAt = Math.max(0, preservedPlayableFields.indexOf(countField) + 1);
+  const rewrittenPlayable = playableReplacement.map((id, idx) => ({
+    key: `playable_civ_${idx}`,
+    baseKey: `playable_civ_${idx}`,
+    label: 'Playable Civilization',
+    value: String(id),
+    originalValue: '',
+    editable: true
+  }));
+  preservedPlayableFields.splice(insertAt, 0, ...rewrittenPlayable);
+  gameRecord.fields = preservedPlayableFields;
+  countField.value = String(playableReplacement.length);
+  const turnsField0 = getRecordField(gameRecord, 'turns_in_time_section_0');
+  const perTurnField0 = getRecordField(gameRecord, 'time_per_turn_in_time_section_0');
+  assert.ok(turnsField0 && perTurnField0, 'expected time scale fields');
+  const expectedTurns = String((Number.parseInt(String(turnsField0.value || '0'), 10) || 0) + 5);
+  const expectedPerTurn = String((Number.parseInt(String(perTurnField0.value || '0'), 10) || 0) + 1);
+  turnsField0.value = expectedTurns;
+  perTurnField0.value = expectedPerTurn;
+
+  const terrTab = bundle.tabs.terrain;
+  const terrSection = getSection(terrTab, 'TERR');
+  assert.ok(terrSection && Array.isArray(terrSection.records) && terrSection.records.length > 0, 'expected TERR section');
+  const terrRecord = terrSection.records[0];
+  let terrMaskField = getRecordField(terrRecord, 'possible_resources_mask') || getRecordField(terrRecord, 'possibleResourcesMask');
+  if (!terrMaskField) {
+    terrMaskField = {
+      key: 'possible_resources_mask',
+      baseKey: 'possible_resources_mask',
+      label: 'Possible Resources Mask',
+      value: '1,0,0,0',
+      originalValue: '0,0,0,0',
+      editable: true
+    };
+    terrRecord.fields.push(terrMaskField);
+  }
+  const originalMask = String(terrMaskField.value || '').split(/[,\s]+/).filter(Boolean).map((part) => Number.parseInt(part, 10) ? 1 : 0);
+  while (originalMask.length < 4) originalMask.push(0);
+  originalMask[0] = originalMask[0] ? 0 : 1;
+  originalMask[1] = originalMask[1] ? 0 : 1;
+  const expectedMask = originalMask.join(',');
+  terrMaskField.value = expectedMask;
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+
+  const reloadedCivEntry = getEntryByCivKey(reloaded.tabs.civilizations.entries, civEntry.civilopediaKey);
+  assert.ok(reloadedCivEntry, 'expected reloaded civilization entry');
+  assert.equal(mapCore.parseIntLoose(findField(reloadedCivEntry, 'freetech1index')?.value, -1), Number(techOptions[1].biqIndex));
+  assert.equal(mapCore.parseIntLoose(findField(reloadedCivEntry, 'freetech2index')?.value, -1), Number(techOptions[2].biqIndex));
+
+  const reloadedTechEntry = getEntryByCivKey(reloaded.tabs.technologies.entries, techEntry.civilopediaKey);
+  assert.ok(reloadedTechEntry, 'expected reloaded technology entry');
+  assert.equal(mapCore.parseIntLoose(findField(reloadedTechEntry, 'prerequisite1')?.value, -1), Number(techOptions[0].biqIndex));
+  assert.equal(mapCore.parseIntLoose(findField(reloadedTechEntry, 'prerequisite2')?.value, -1), Number(techOptions[3].biqIndex));
+
+  const reloadedGovEntry = getEntryByCivKey(reloaded.tabs.governments.entries, govEntry.civilopediaKey);
+  assert.ok(reloadedGovEntry, 'expected reloaded government entry');
+  assert.equal(String(findField(reloadedGovEntry, 'malerulertitle1')?.value || ''), 'Chief Tester');
+  assert.equal(String(findField(reloadedGovEntry, 'femalerulertitle1')?.value || ''), 'Chief Testeress');
+  if (canBribeFields[0]) {
+    const reloadedCanBribe = getRecordFields({ fields: reloadedGovEntry.biqFields }, 'canbribe');
+    assert.ok(reloadedCanBribe[0], 'expected reloaded canbribe field');
+    assert.equal(String(reloadedCanBribe[0].value || ''), String(canBribeFields[0].value || ''));
+  }
+  if (briberyFields[0]) {
+    const reloadedBribery = getRecordFields({ fields: reloadedGovEntry.biqFields }, 'briberymodifier');
+    assert.ok(reloadedBribery[0], 'expected reloaded bribery field');
+    assert.equal(String(reloadedBribery[0].value || ''), '33');
+  }
+  if (resistanceFields[0]) {
+    const reloadedResistance = getRecordFields({ fields: reloadedGovEntry.biqFields }, 'resistancemodifier');
+    assert.ok(reloadedResistance[0], 'expected reloaded resistance field');
+    assert.equal(String(reloadedResistance[0].value || ''), '44');
+  }
+
+  const reGameRecord = getScenarioSettingsRecord(reloaded);
+  assert.ok(reGameRecord, 'expected reloaded GAME record');
+  const rePlayable = (Array.isArray(reGameRecord.fields) ? reGameRecord.fields : [])
+    .filter((field) => /^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()))
+    .map((field) => Number.parseInt(String(field.value || ''), 10))
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .sort((a, b) => a - b);
+  assert.deepEqual(rePlayable, playableReplacement);
+  assert.equal(String((getRecordField(reGameRecord, 'turns_in_time_section_0') || {}).value || ''), expectedTurns);
+  assert.equal(String((getRecordField(reGameRecord, 'time_per_turn_in_time_section_0') || {}).value || ''), expectedPerTurn);
+
+  const reTerrSection = getSection(reloaded.tabs.terrain, 'TERR');
+  assert.ok(reTerrSection && reTerrSection.records[0], 'expected reloaded TERR record');
+  const reTerrMaskField = getRecordField(reTerrSection.records[0], 'possibleResourcesMask');
+  assert.ok(reTerrMaskField, 'expected reloaded terrain possible-resources mask field');
+  assert.equal(String(reTerrMaskField.value || ''), expectedMask);
+});
+
 test('BIQ round-trip supports add/copy/delete record ops for technology section', (t) => {
   const sampleBiq = findSampleBiqPath();
   if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
@@ -584,6 +770,94 @@ test('BIQ matrix copy/delete test works for multiple sections', (t) => {
   createdRefs.forEach((item) => {
     assert.equal(biqSectionHasCivilopediaKey(afterDelete, item.section, item.ref), false, `expected deleted ref ${item.ref}`);
   });
+});
+
+test('BIQ delete cascade reindexes supported technology references end-to-end', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const techDeleteRef = 'TECH_C3X_DEL_A';
+  const techShiftRef = 'TECH_C3X_DEL_B';
+
+  const addSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      technologies: {
+        recordOps: [
+          { op: 'add', newRecordRef: techDeleteRef },
+          { op: 'add', newRecordRef: techShiftRef }
+        ]
+      }
+    }
+  });
+  assert.equal(addSave.ok, true, String(addSave.error || 'save add failed'));
+
+  const afterAdd = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const deleteTech = getEntryByCivKey(afterAdd.tabs.technologies.entries, techDeleteRef);
+  const shiftTech = getEntryByCivKey(afterAdd.tabs.technologies.entries, techShiftRef);
+  assert.ok(deleteTech && Number.isFinite(deleteTech.biqIndex), 'expected delete-target tech with BIQ index');
+  assert.ok(shiftTech && Number.isFinite(shiftTech.biqIndex), 'expected shift-target tech with BIQ index');
+
+  const resourceA = (afterAdd.tabs.resources && afterAdd.tabs.resources.entries || []).find((entry) => findField(entry, 'prerequisite'));
+  const resourceB = (afterAdd.tabs.resources && afterAdd.tabs.resources.entries || []).find((entry) => entry !== resourceA && findField(entry, 'prerequisite'));
+  const techHost = (afterAdd.tabs.technologies && afterAdd.tabs.technologies.entries || []).find((entry) =>
+    entry && entry.civilopediaKey !== techDeleteRef && entry.civilopediaKey !== techShiftRef && findField(entry, 'prerequisite1')
+  );
+  if (!(resourceA && resourceB && techHost)) {
+    t.skip('Sample BIQ did not expose enough editable TECH/GOOD references.');
+    return;
+  }
+
+  findField(resourceA, 'prerequisite').value = String(deleteTech.biqIndex);
+  findField(resourceB, 'prerequisite').value = String(shiftTech.biqIndex);
+  findField(techHost, 'prerequisite1').value = String(deleteTech.biqIndex);
+  findField(techHost, 'prerequisite2').value = String(shiftTech.biqIndex);
+
+  const setSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: afterAdd.tabs
+  });
+  assert.equal(setSave.ok, true, String(setSave.error || 'save setup refs failed'));
+
+  const deleteSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      technologies: {
+        recordOps: [{ op: 'delete', recordRef: techDeleteRef }]
+      }
+    }
+  });
+  assert.equal(deleteSave.ok, true, String(deleteSave.error || 'delete cascade save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedShiftTech = getEntryByCivKey(reloaded.tabs.technologies.entries, techShiftRef);
+  assert.ok(reloadedShiftTech && Number.isFinite(reloadedShiftTech.biqIndex), 'expected surviving tech after delete');
+  const reResourceA = getEntryByCivKey(reloaded.tabs.resources.entries, resourceA.civilopediaKey);
+  const reResourceB = getEntryByCivKey(reloaded.tabs.resources.entries, resourceB.civilopediaKey);
+  const reTechHost = getEntryByCivKey(reloaded.tabs.technologies.entries, techHost.civilopediaKey);
+  assert.equal(String(findField(reResourceA, 'prerequisite').value), 'None', 'deleted-tech references should clear to None');
+  assert.equal(Number(String(findField(reResourceB, 'prerequisite').value).match(/-?\d+/)[0]), reloadedShiftTech.biqIndex, 'higher tech references should decrement to the surviving tech index');
+  assert.equal(String(findField(reTechHost, 'prerequisite1').value), 'None', 'deleted self-tech prereq should clear to None');
+  assert.equal(Number(String(findField(reTechHost, 'prerequisite2').value).match(/-?\d+/)[0]), reloadedShiftTech.biqIndex, 'higher self-tech prereq should decrement');
 });
 
 test('BIQ save blocks deleting a unit when the scenario already has map data', (t) => {

@@ -157,13 +157,16 @@
     </div>
 
     <div id="save-toast" class="save-toast hidden" aria-live="polite">
-      <button id="save-toast-button" class="save-toast-button" type="button" aria-label="Show save details">
-        <span id="save-toast-icon" class="save-toast-icon" aria-hidden="true"></span>
-        <span class="save-toast-copy">
-          <span id="save-toast-title" class="save-toast-title">Saving files...</span>
-          <span id="save-toast-body" class="save-toast-body">Preparing write plan</span>
-        </span>
-      </button>
+      <div class="save-toast-shell">
+        <button id="save-toast-button" class="save-toast-button" type="button" aria-label="Show save details">
+          <span id="save-toast-icon" class="save-toast-icon" aria-hidden="true"></span>
+          <span class="save-toast-copy">
+            <span id="save-toast-title" class="save-toast-title">Saving files...</span>
+            <span id="save-toast-body" class="save-toast-body">Preparing write plan</span>
+          </span>
+        </button>
+        <button id="save-toast-dismiss" class="save-toast-dismiss" type="button" aria-label="Dismiss save notification">✕</button>
+      </div>
     </div>
 
     <div id="save-progress-modal-overlay" class="confirm-modal-overlay hidden" aria-hidden="true">
