@@ -2939,6 +2939,25 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
     }
   }
 
+  // PRTO: list fields stored under plural camelCase keys in the rec object,
+  // but edits arrive with singular keys from collapseUnitBiqFields.
+  if (code === 'PRTO') {
+    const prtoListMap = {
+      stealthtarget: 'stealthTargets',
+      legalunittelepad: 'legalUnitTelepads',
+      legalbuildingtelepad: 'legalBuildingTelepads',
+    };
+    if (Object.prototype.hasOwnProperty.call(prtoListMap, ck)) {
+      const arrayKey = prtoListMap[ck];
+      const parts = String(value || '').split(',').filter(Boolean);
+      rec[arrayKey] = parts.map((p) => parseEditInt(p.trim(), NaN)).filter((n) => Number.isFinite(n));
+      return true;
+    }
+    if (ck === 'numstealthtargets' || ck === 'numlegalunittelepads' || ck === 'numlegalbuildingtelepads') {
+      return true; // derived from array length on write; no-op
+    }
+  }
+
   // Generic: set field on rec object
   // Try exact camelCase match first
   for (const key of Object.keys(rec)) {
@@ -3788,6 +3807,7 @@ module.exports = {
   buildBiqBuffer,
   serializeSection,
   applyEdits,
+  applySetToRecord,
   sectionToEnglish,
   sectionWritableKeys,
   sectionRecordName,

@@ -7,6 +7,7 @@ const path = require('node:path');
 
 const { loadBundle, buildSyntheticUnitReferenceEntry, isPrtoStrategyMapRecord } = require('../src/configCore');
 const { projectUnitBiqFields, collapseUnitBiqFields } = require('../src/biq/unitCodec');
+const { applySetToRecord } = require('../src/biq/biqSections');
 
 const CIV3_ROOT = process.env.C3X_CIV3_ROOT || path.resolve(__dirname, '..', '..', '..');
 const TIDES_BIQ = path.join(CIV3_ROOT, 'Conquests', 'Scenarios', 'TIDES OF CRIMSON.biq');
@@ -263,4 +264,72 @@ test('synthetic PRTO entries parse full-record english fields and skip strategy-
   assert.equal(getField(synthetic, 'iconindex').value, '91');
   assert.equal(getField(synthetic, 'useexactcost').value, '7');
   assert.equal(getField(synthetic, 'telepadrange').value, '0');
+});
+
+// ---------------------------------------------------------------------------
+// applySetToRecord PRTO list fields
+// ---------------------------------------------------------------------------
+
+function makeMinimalPrtoRec() {
+  return {
+    stealthTargets: [],
+    legalUnitTelepads: [],
+    legalBuildingTelepads: [],
+    ignoreMovementCost: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    attack: 0,
+    name: 'Test Unit'
+  };
+}
+
+test('applySetToRecord PRTO stealthTarget (singular) sets stealthTargets array', () => {
+  const rec = makeMinimalPrtoRec();
+  const ok = applySetToRecord(rec, 'stealthTarget', '0,2', 'PRTO', null);
+  assert.equal(ok, true);
+  assert.deepEqual(rec.stealthTargets, [0, 2]);
+});
+
+test('applySetToRecord PRTO legalUnitTelepad (singular) sets legalUnitTelepads array', () => {
+  const rec = makeMinimalPrtoRec();
+  const ok = applySetToRecord(rec, 'legalUnitTelepad', '5', 'PRTO', null);
+  assert.equal(ok, true);
+  assert.deepEqual(rec.legalUnitTelepads, [5]);
+});
+
+test('applySetToRecord PRTO legalBuildingTelepad (singular) sets legalBuildingTelepads array', () => {
+  const rec = makeMinimalPrtoRec();
+  const ok = applySetToRecord(rec, 'legalBuildingTelepad', '3,7', 'PRTO', null);
+  assert.equal(ok, true);
+  assert.deepEqual(rec.legalBuildingTelepads, [3, 7]);
+});
+
+test('applySetToRecord PRTO legalBuildingTelepad empty string clears array', () => {
+  const rec = makeMinimalPrtoRec();
+  rec.legalBuildingTelepads = [14];
+  const ok = applySetToRecord(rec, 'legalBuildingTelepad', '', 'PRTO', null);
+  assert.equal(ok, true);
+  assert.deepEqual(rec.legalBuildingTelepads, []);
+});
+
+test('applySetToRecord PRTO count keys are no-ops', () => {
+  const rec = makeMinimalPrtoRec();
+  rec.stealthTargets = [0, 1];
+  assert.equal(applySetToRecord(rec, 'numStealthTargets', '99', 'PRTO', null), true);
+  assert.deepEqual(rec.stealthTargets, [0, 1]); // unchanged
+  assert.equal(applySetToRecord(rec, 'numLegalUnitTelepads', '99', 'PRTO', null), true);
+  assert.equal(applySetToRecord(rec, 'numLegalBuildingTelepads', '99', 'PRTO', null), true);
+});
+
+test('applySetToRecord PRTO stealthTarget does not affect other unrelated PRTO fields', () => {
+  const rec = makeMinimalPrtoRec();
+  applySetToRecord(rec, 'stealthTarget', '1', 'PRTO', null);
+  assert.deepEqual(rec.legalUnitTelepads, []);
+  assert.deepEqual(rec.legalBuildingTelepads, []);
+  assert.equal(rec.attack, 0);
+});
+
+test('applySetToRecord PRTO ignoreMovementCost still works via generic handler', () => {
+  const rec = makeMinimalPrtoRec();
+  const ok = applySetToRecord(rec, 'ignoreMovementCost', '1,0,1,0,0,0,0,0,0,0,0,0,0,0', 'PRTO', null);
+  assert.equal(ok, true);
+  assert.deepEqual(rec.ignoreMovementCost, [1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 });

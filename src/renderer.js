@@ -1231,6 +1231,15 @@ function collectPendingWritePathsFromDirtyTabs() {
   })) : []);
   const isEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
+  // Fallback write paths for new/imported entries whose sourceMeta write paths were cleared
+  // (they came from a source entry in a different context).
+  const scenarioCivilopediaFallback = String(
+    ((tabs.civilizations && tabs.civilizations.sourceDetails && tabs.civilizations.sourceDetails.civilopediaScenario) || '')
+  ).trim();
+  const scenarioPediaIconsFallback = String(
+    ((tabs.civilizations && tabs.civilizations.sourceDetails && tabs.civilizations.sourceDetails.pediaIconsScenario) || '')
+  ).trim();
+
   Object.keys(tabs).forEach((tabKey) => {
     if (getTabDirtyCount(tabKey) <= 0) return;
     const tab = tabs[tabKey];
@@ -1253,12 +1262,12 @@ function collectPendingWritePathsFromDirtyTabs() {
       const changedBiq = !isEqual(normalizeBiqFields(entry && entry.biqFields), normalizeBiqFields(cleanEntry && cleanEntry.biqFields));
 
       if (changedOverview || changedDescription) {
-        addPath(meta && meta.overview && meta.overview.writePath);
-        addPath(meta && meta.description && meta.description.writePath);
+        addPath((meta && meta.overview && meta.overview.writePath) || scenarioCivilopediaFallback);
+        addPath((meta && meta.description && meta.description.writePath) || scenarioCivilopediaFallback);
       }
       if (changedIconPaths || changedAnimationName || changedRacePaths) {
-        addPath(meta && meta.iconPaths && meta.iconPaths.writePath);
-        addPath(meta && meta.animationName && meta.animationName.writePath);
+        addPath((meta && meta.iconPaths && meta.iconPaths.writePath) || scenarioPediaIconsFallback);
+        addPath((meta && meta.animationName && meta.animationName.writePath) || scenarioPediaIconsFallback);
       }
       if (changedBiq) {
         addPath(meta && meta.biq && meta.biq.writePath);
@@ -7443,11 +7452,13 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
       typesWrap.innerHTML = '<div class="hint">Set an animation folder key to edit unit INI data.</div>';
       return;
     }
+    const resolvedScenarioPath = (entry && entry._importScenarioPath) || state.settings.scenarioPath;
+    const resolvedScenarioPaths = (entry && entry._importScenarioPaths) || getScenarioPreviewPaths();
     const res = await window.c3xManager.getPreview({
       kind: 'unitAnimationManifest',
       civ3Path: state.settings.civ3Path,
-      scenarioPath: state.settings.scenarioPath,
-      scenarioPaths: getScenarioPreviewPaths(),
+      scenarioPath: resolvedScenarioPath,
+      scenarioPaths: resolvedScenarioPaths,
       animationName
     });
     if (!res || !res.ok) {
@@ -8774,7 +8785,7 @@ const UNIT_BOTTOM_LIST_HIDDEN_KEYS = new Set([
 ]);
 
 const BIQ_STRUCTURE_FIELD_HIDDEN = {
-  all: new Set(['byte_length', 'data_length', 'datalength', 'note', 'civilopediaentry', 'possible_resources_mask']),
+  all: new Set(['byte_length', 'data_length', 'datalength', 'note', 'civilopediaentry', 'possibleresourcesmask']),
   GAME: new Set(['playable_civ_ids', 'numberofplayablecivs']),
   LEAD: new Set([]),
   RULE: new Set(['name']),
@@ -9974,6 +9985,7 @@ function shouldHideBiqField(tabKey, field) {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
   const canon = base.replace(/[^a-z0-9]/g, '');
   if (!base) return true;
+  if (isReadonlyRuleField(tabKey, field)) return true;
   if (tabKey === 'rules' && canon === 'name') return true;
   if ((BIQ_FIELD_HIDDEN.all && (BIQ_FIELD_HIDDEN.all.has(base) || BIQ_FIELD_HIDDEN.all.has(canon)))) return true;
   if (tabKey === 'civilizations' && (/^freetech\d+index$/.test(canon) || isCivilizationNameListItemField(field))) return true;
@@ -12217,7 +12229,10 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
         const labels = selected.map((idx) => civNameByIdx.get(idx) || `Civ ${idx}`).filter(Boolean);
         text.textContent = labels.length ? labels.join(', ') : '(none)';
       } else if (cfg.kind === 'stealthTargets') {
-        text.textContent = stealthState.values.length ? stealthState.values.join(', ') : '(none)';
+        const unitOpts = makeIndexOptionsForTab('units');
+        const unitLabelByIdx = new Map(unitOpts.map((o) => [o.value, o.label]));
+        const labels = stealthState.values.map((v) => unitLabelByIdx.get(v) || v);
+        text.textContent = labels.length ? labels.join(', ') : '(none)';
       } else if (cfg.kind === 'ignoreMovement') {
         const terrainRows = getTerrainFlagRowsForUnits();
         const labels = terrainRows
@@ -12226,9 +12241,15 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
           .filter(Boolean);
         text.textContent = labels.length ? labels.join(', ') : '(none)';
       } else if (cfg.kind === 'legalUnitTelepads') {
-        text.textContent = legalUnitTelepadState.values.length ? legalUnitTelepadState.values.join(', ') : '(none)';
+        const unitOpts = makeIndexOptionsForTab('units');
+        const unitLabelByIdx = new Map(unitOpts.map((o) => [o.value, o.label]));
+        const labels = legalUnitTelepadState.values.map((v) => unitLabelByIdx.get(v) || v);
+        text.textContent = labels.length ? labels.join(', ') : '(none)';
       } else if (cfg.kind === 'legalBuildingTelepads') {
-        text.textContent = legalBuildingTelepadState.values.length ? legalBuildingTelepadState.values.join(', ') : '(none)';
+        const improvOpts = makeIndexOptionsForTab('improvements');
+        const improvLabelByIdx = new Map(improvOpts.map((o) => [o.value, o.label]));
+        const labels = legalBuildingTelepadState.values.map((v) => improvLabelByIdx.get(v) || v);
+        text.textContent = labels.length ? labels.join(', ') : '(none)';
       } else {
         text.textContent = '(none)';
       }
@@ -12271,7 +12292,7 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
       controlWrap.appendChild(editor);
     } else if (cfg.kind === 'stealthTargets') {
       const editor = makeNamedListTokenEditor({
-        tabKey: 'units',
+        options: makeIndexOptionsForTab('units'),
         values: stealthState.values,
         onValuesChange: (values) => {
           rememberUndoSnapshot();
@@ -12289,7 +12310,7 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
       controlWrap.appendChild(editor);
     } else if (cfg.kind === 'legalUnitTelepads') {
       const editor = makeNamedListTokenEditor({
-        tabKey: 'units',
+        options: makeIndexOptionsForTab('units'),
         values: legalUnitTelepadState.values,
         onValuesChange: (values) => {
           rememberUndoSnapshot();
@@ -12300,7 +12321,7 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
       controlWrap.appendChild(editor);
     } else if (cfg.kind === 'legalBuildingTelepads') {
       const editor = makeNamedListTokenEditor({
-        tabKey: 'improvements',
+        options: makeIndexOptionsForTab('improvements'),
         values: legalBuildingTelepadState.values,
         onValuesChange: (values) => {
           rememberUndoSnapshot();
@@ -15861,6 +15882,19 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
   entry.originalIconPaths = [];
   entry.originalRacePaths = [];
   entry.originalAnimationName = '';
+  // Clear inherited write paths from source — they point to the wrong file context.
+  // collectPendingWritePathsFromDirtyTabs will fall back to the current scenario's paths.
+  if (entry.sourceMeta) {
+    const clearWritePath = (meta) => {
+      if (meta && typeof meta === 'object' && 'writePath' in meta) meta.writePath = '';
+    };
+    clearWritePath(entry.sourceMeta.overview);
+    clearWritePath(entry.sourceMeta.description);
+    clearWritePath(entry.sourceMeta.iconPaths);
+    clearWritePath(entry.sourceMeta.animationName);
+    clearWritePath(entry.sourceMeta.racePaths);
+    clearWritePath(entry.sourceMeta.biq);
+  }
   return entry;
 }
 
@@ -15878,6 +15912,8 @@ function renameReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw, { allowExist
   entry.civilopediaKey = nextKey;
   const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
   entry.id = prefix && nextKey.startsWith(prefix) ? nextKey.slice(prefix.length) : nextKey;
+  const civField = Array.isArray(entry.biqFields) && entry.biqFields.find((f) => String(f && (f.baseKey || f.key) || '').toLowerCase() === 'civilopediaentry');
+  if (civField) civField.value = nextKey;
   const ops = ensureReferenceRecordOps(tab);
   if (entry.isNew) {
     ops.forEach((op) => {
@@ -17418,6 +17454,18 @@ function renderReferenceTab(tab, tabKey) {
   window.requestAnimationFrame(() => {
     listPane.scrollTop = savedListTop;
     detailPane.scrollTop = savedDetailTop;
+    window.requestAnimationFrame(() => {
+      if (!listPane.isConnected) return;
+      const activeBtn = listPane.querySelector('.entry-list-item.active');
+      if (activeBtn) {
+        const paneRect = listPane.getBoundingClientRect();
+        const btnRect = activeBtn.getBoundingClientRect();
+        if (btnRect.bottom > paneRect.bottom || btnRect.top < paneRect.top) {
+          const relativeTop = btnRect.top - paneRect.top + listPane.scrollTop;
+          listPane.scrollTo({ top: Math.max(0, relativeTop - (listPane.clientHeight - btnRect.height) / 2), behavior: 'smooth' });
+        }
+      }
+    });
     if (state.referenceSearchFocusedTab === tabKey) {
       const caret = state.referenceSearchCaret[tabKey];
       search.focus({ preventScroll: true });
@@ -25899,6 +25947,17 @@ async function loadBundleAndRender(options = {}) {
     } else {
       state.tabContentScrollTop = 0;
     }
+    if (options.referenceSelectionKeys && typeof options.referenceSelectionKeys === 'object') {
+      Object.entries(options.referenceSelectionKeys).forEach(([tabKey, key]) => {
+        const tab = bundle.tabs[tabKey];
+        if (tab && Array.isArray(tab.entries)) {
+          const idx = tab.entries.findIndex((e) => String(e.civilopediaKey || '').toUpperCase() === key);
+          if (idx >= 0) {
+            state.referenceSelection[tabKey] = idx;
+          }
+        }
+      });
+    }
     state.baseFilter = '';
     state.biqMapArtCache = {};
     state.biqMapArtLoading = {};
@@ -25912,8 +25971,12 @@ async function loadBundleAndRender(options = {}) {
     state.biqMapZoomAnchor = null;
     state.biqMapSuppressClickUntilTs = 0;
     el.workspace.classList.remove('hidden');
+    if (!preserveDirtyState) {
+      state.cleanSnapshot = cleanSnapshotForLoadedBundle;
+      state.cleanTabsCache = parseSnapshotTabs(cleanSnapshotForLoadedBundle);
+    }
     renderTabs();
-    renderActiveTab();
+    renderActiveTab(shouldUsePersistedView ? { preserveTabScroll: true } : {});
     resetNavigationHistory();
     window.setTimeout(() => {
       if (preserveDirtyState) {
@@ -26489,8 +26552,21 @@ async function saveCurrentBundle() {
 
     const paths = res.saveReport.map((r) => r.path).join(' | ');
     const biqReport = res.saveReport.find((r) => r.kind === 'biq');
+    const referenceSelectionKeys = {};
+    if (state.bundle && state.bundle.tabs) {
+      Object.entries(state.referenceSelection).forEach(([tabKey, idx]) => {
+        const tab = state.bundle.tabs[tabKey];
+        if (tab && tab.type === 'reference' && Array.isArray(tab.entries)) {
+          const entry = tab.entries[Number(idx) || 0];
+          if (entry && entry.civilopediaKey) {
+            referenceSelectionKeys[tabKey] = String(entry.civilopediaKey).toUpperCase();
+          }
+        }
+      });
+    }
     await loadBundleAndRender({
       usePersistedView: true,
+      referenceSelectionKeys,
       loadingText: 'Refreshing saved data...'
     });
     if (biqReport && (Number(biqReport.skipped || 0) > 0 || String(biqReport.warning || '').trim())) {
