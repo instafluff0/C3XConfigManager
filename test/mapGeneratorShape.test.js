@@ -108,6 +108,22 @@ test('continents maps produce multiple major landmasses without a blocker superc
   assert.ok((summary.coastline / summary.land) >= 0.40, `coastline too sparse relative to land: ${summary.coastline}/${summary.land}`);
 });
 
+test('polar ice caps reserve ocean-only bands at both poles', () => {
+  const seeds = [1, 7, 17, 29, 101];
+  for (const seed of seeds) {
+    const world = mapGeneratorCore.generate(makeSpec({ selectedLandform: 1, mapSeed: seed, polarIceCaps: true }));
+    const halfWidth = world.width / 2;
+    for (const row of [0, 1, 2, world.height - 3, world.height - 2, world.height - 1]) {
+      let landCount = 0;
+      for (let col = 0; col < halfWidth; col += 1) {
+        const tile = world.tiles[(row * halfWidth) + col];
+        if (tile.baseTerrain < 11 || tile.realTerrain < 11) landCount += 1;
+      }
+      assert.equal(landCount, 0, `seed ${seed} left land in polar band row ${row}`);
+    }
+  }
+});
+
 test('archipelago maps break land into many islands instead of one dominant blob', () => {
   const world = mapGeneratorCore.generate(makeSpec({ selectedLandform: 0, mapSeed: 1 }));
   const summary = summarizeWorld(world);

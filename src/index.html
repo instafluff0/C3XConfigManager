@@ -197,6 +197,28 @@
       </div>
     </div>
 
+    <div id="scenario-search-folder-modal-overlay" class="confirm-modal-overlay hidden" aria-hidden="true">
+      <div class="confirm-modal scenario-search-folder-modal" role="dialog" aria-modal="true" aria-labelledby="scenario-search-folder-modal-title" aria-describedby="scenario-search-folder-modal-body">
+        <div class="scenario-search-folder-modal-hero">
+          <div class="scenario-search-folder-modal-icon" aria-hidden="true">⚠</div>
+          <div class="scenario-search-folder-modal-head">
+            <h3 id="scenario-search-folder-modal-title">Change Scenario Search Folder</h3>
+            <p id="scenario-search-folder-modal-body">This repoints the scenario to a different content root.</p>
+          </div>
+        </div>
+        <div id="scenario-search-folder-modal-target" class="scenario-search-folder-modal-target"></div>
+        <ul class="scenario-search-folder-modal-list">
+          <li>The scenario reloads immediately.</li>
+          <li>Civs, Techs, Resources, text, art, and save targets rebuild from the new folder.</li>
+          <li>Other unsaved edits may be lost.</li>
+        </ul>
+        <div class="confirm-modal-actions">
+          <button id="scenario-search-folder-modal-cancel" class="ghost" type="button"><span class="btn-icon">✕</span>Keep Current Folder</button>
+          <button id="scenario-search-folder-modal-confirm" class="danger" type="button"><span class="btn-icon">↻</span>Reload Scenario</button>
+        </div>
+      </div>
+    </div>
+
     <div id="entity-modal-overlay" class="confirm-modal-overlay hidden" aria-hidden="true">
       <div class="confirm-modal entity-modal" role="dialog" aria-modal="true" aria-labelledby="entity-modal-title" aria-describedby="entity-modal-body">
         <h3 id="entity-modal-title">Manage Entry</h3>

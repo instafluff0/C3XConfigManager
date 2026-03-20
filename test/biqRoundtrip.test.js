@@ -193,7 +193,7 @@ test('BIQ round-trip persists tech tree coordinate edits on scenario copy', (t) 
   assert.equal(Number(String(reX.value || '').replace(/[^\d-]+/g, '')), original + 9);
 });
 
-test('BIQ round-trip ignores Scenario Search Folders edits from UI payload', (t) => {
+test('BIQ round-trip persists Scenario Search Folder edits from UI payload', (t) => {
   const sampleBiq = findSampleBiqPath();
   if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
 
@@ -228,7 +228,55 @@ test('BIQ round-trip ignores Scenario Search Folders edits from UI payload', (t)
   const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
   const afterField = getScenarioSettingsField(reloaded, 'scenariosearchfolders');
   assert.ok(afterField, 'expected Scenario Search Folders field after reload');
-  assert.equal(String(afterField.value || ''), originalValue);
+  assert.notEqual(String(afterField.value || ''), originalValue);
+  assert.equal(String(afterField.value || ''), '__C3X_SHOULD_NOT_PERSIST__');
+});
+
+test('scenario save auto-creates a sibling search folder for BIQs under shared Scenarios root', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+
+  const tmp = mkTmpDir();
+  const civ3Root = path.join(tmp, 'Civ3');
+  const scenariosRoot = path.join(civ3Root, 'Conquests', 'Scenarios');
+  fs.mkdirSync(scenariosRoot, { recursive: true });
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(scenariosRoot, 'AutoFolderScenario.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const searchField = getScenarioSettingsField(bundle, 'scenariosearchfolders');
+  if (!searchField) {
+    t.skip('Sample BIQ has no Scenario Search Folder field.');
+    return;
+  }
+  searchField.value = '';
+  const flag = bundle.tabs.base.rows.find((row) => String(row && row.key || '').trim().toLowerCase() === 'flag');
+  assert.ok(flag, 'expected base flag field');
+  flag.value = 'false';
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const inferredDir = path.join(scenariosRoot, 'AutoFolderScenario');
+  assert.equal(fs.existsSync(inferredDir), true);
+  assert.equal(fs.statSync(inferredDir).isDirectory(), true);
+  assert.equal(fs.existsSync(path.join(inferredDir, 'scenario.c3x_config.ini')), true);
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const field = getScenarioSettingsField(reloaded, 'scenariosearchfolders');
+  assert.ok(field, 'expected Scenario Search Folder field after auto-localize save');
+  assert.equal(String(field.value || '').trim(), 'AutoFolderScenario');
 });
 
 test('BIQ round-trip persists deterministic playable civilization list rewrites', (t) => {
@@ -363,6 +411,47 @@ test('BIQ round-trip supports add/copy/delete record ops for technology section'
   assert.equal(biqSectionHasCivilopediaKey(afterDelete, 'TECH', copiedRef), false);
 });
 
+test('BIQ save blocks deleting a technology that is still referenced elsewhere', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const resourceEntries = (bundle.tabs.resources && bundle.tabs.resources.entries) || [];
+  const techEntries = (bundle.tabs.technologies && bundle.tabs.technologies.entries) || [];
+  const targetResource = resourceEntries.find((entry) => mapCore.parseIntLoose(findField(entry, 'prerequisite')?.value, -1) >= 0);
+  if (!targetResource) return t.skip('Sample BIQ has no resource with a technology prerequisite.');
+
+  const targetTechIndex = mapCore.parseIntLoose(findField(targetResource, 'prerequisite')?.value, -1);
+  const targetTech = techEntries.find((entry) => Number(entry && entry.biqIndex) === targetTechIndex);
+  if (!targetTech) return t.skip('Could not resolve the referenced technology in the sample BIQ.');
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      technologies: {
+        recordOps: [{ op: 'delete', recordRef: String(targetTech.civilopediaKey || '').toUpperCase() }]
+      }
+    }
+  });
+
+  assert.equal(saveResult.ok, false);
+  assert.match(String(saveResult.error || ''), /Cannot save yet because deleted items are still in use\./);
+  assert.match(String(saveResult.error || ''), /Resources:/);
+});
+
 test('BIQ matrix set test persists edits across core reference sections', (t) => {
   const sampleBiq = findSampleBiqPath();
   if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
@@ -495,6 +584,50 @@ test('BIQ matrix copy/delete test works for multiple sections', (t) => {
   createdRefs.forEach((item) => {
     assert.equal(biqSectionHasCivilopediaKey(afterDelete, item.section, item.ref), false, `expected deleted ref ${item.ref}`);
   });
+});
+
+test('BIQ save blocks deleting a unit when the scenario already has map data', (t) => {
+  const sampleBiq = findSampleMapBiqPath();
+  if (!sampleBiq) t.skip('No sample map BIQ available. Set C3X_TEST_MAP_BIQ to run map BIQ integration tests.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-map-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const mapTab = bundle.tabs.map;
+  const unitSection = getSection(mapTab, 'UNIT');
+  const mapUnit = Array.isArray(unitSection && unitSection.records) ? unitSection.records[0] : null;
+  if (!mapUnit) return t.skip('Sample BIQ has no map units.');
+
+  const prtoIndex = getRecordInt(mapUnit, 'prtonumber', -1);
+  if (prtoIndex < 0) return t.skip('Sample BIQ map unit does not reference a unit type.');
+
+  const unitEntries = (bundle.tabs.units && bundle.tabs.units.entries) || [];
+  const targetUnit = unitEntries.find((entry) => Number(entry && entry.biqIndex) === prtoIndex);
+  if (!targetUnit) return t.skip('Could not resolve the unit type used by the map unit.');
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      units: {
+        recordOps: [{ op: 'delete', recordRef: String(targetUnit.civilopediaKey || '').toUpperCase() }]
+      }
+    }
+  });
+
+  assert.equal(saveResult.ok, false);
+  assert.match(String(saveResult.error || ''), /Cannot save yet because deleted items are still in use\./);
+  assert.match(String(saveResult.error || ''), /This scenario has map data, so deleting a unit could break placed units or other map links\./);
 });
 
 test('BIQ map round-trip supports map painting + adding city/unit records', (t) => {

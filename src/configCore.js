@@ -612,7 +612,7 @@ function applyFieldLabelOverrides(sectionCode, field) {
       startyear: 'Start Year',
       minutetimelimit: 'Minute Time Limit',
       turntimelimit: 'Turn Time Limit',
-      scenariosearchfolders: 'Scenario Search Folders',
+      scenariosearchfolders: 'Scenario Search Folder',
       alliancevictorytype: 'Alliance Victory Type',
       plaugename: 'Plague Name',
       permitplagues: 'Permit Plagues',
@@ -1348,17 +1348,49 @@ function resolveScenarioDir(scenarioPath) {
   return trimmed;
 }
 
-function resolveScenarioSearchDirsFromBiq({ scenarioPath, civ3Path, biqTab }) {
+function getSharedScenariosRoot(civ3Path) {
+  const root = resolveCiv3RootPath(civ3Path);
+  return root ? path.join(root, 'Conquests', 'Scenarios') : '';
+}
+
+function isSharedScenariosRootDir(dirPath, civ3Path) {
+  const dir = String(dirPath || '').trim();
+  const sharedRoot = getSharedScenariosRoot(civ3Path);
+  if (!dir || !sharedRoot) return false;
+  return canonicalizeForPathFence(dir) === canonicalizeForPathFence(sharedRoot);
+}
+
+function getScenarioStemFromPath(scenarioPath) {
+  const trimmed = String(scenarioPath || '').trim();
+  if (!trimmed) return '';
+  const baseName = path.basename(trimmed);
+  return sanitizeScenarioStem(baseName);
+}
+
+function splitScenarioSearchFolderValue(value) {
+  return String(value || '')
+    .split(';')
+    .map((v) => v.trim())
+    .filter((v) => v && v !== '(none)' && v !== '(truncated)');
+}
+
+function normalizeScenarioSearchFolderOverride(value) {
+  if (Array.isArray(value)) {
+    return value.map((v) => String(v || '').trim()).filter((v) => v && v !== '(none)' && v !== '(truncated)');
+  }
+  return splitScenarioSearchFolderValue(value);
+}
+
+function resolveScenarioSearchDirs({ scenarioPath, civ3Path, folders, includeMissing = false }) {
   const biqDir = resolveScenarioDir(scenarioPath);
-  const searchFolders = extractScenarioSearchFolders(biqTab);
   const root = resolveCiv3RootPath(civ3Path);
   const ordered = [];
   const seen = new Set();
-  const pushIfDir = (candidate) => {
+  const pushCandidate = (candidate) => {
     const p = String(candidate || '').trim();
     if (!p || seen.has(p)) return;
     try {
-      if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
+      if (includeMissing || (fs.existsSync(p) && fs.statSync(p).isDirectory())) {
         seen.add(p);
         ordered.push(p);
       }
@@ -1367,23 +1399,82 @@ function resolveScenarioSearchDirsFromBiq({ scenarioPath, civ3Path, biqTab }) {
     }
   };
 
-  // Default scenario folder (directory containing the .biq file) has highest precedence.
-  pushIfDir(biqDir);
-
-  searchFolders.forEach((folder) => {
+  (Array.isArray(folders) ? folders : []).forEach((folder) => {
     const normalizedFolder = String(folder).replace(/\\/g, '/').trim();
     if (!normalizedFolder) return;
     if (path.isAbsolute(folder) || /^[A-Za-z]:\//.test(normalizedFolder)) {
-      pushIfDir(normalizedFolder);
+      pushCandidate(normalizedFolder);
       return;
     }
-    pushIfDir(path.join(biqDir, normalizedFolder));
+    pushCandidate(path.join(biqDir, normalizedFolder));
     if (root) {
-      pushIfDir(path.join(root, 'Conquests', 'Scenarios', normalizedFolder));
-      pushIfDir(path.join(root, 'Conquests', normalizedFolder));
+      pushCandidate(path.join(root, 'Conquests', 'Scenarios', normalizedFolder));
+      pushCandidate(path.join(root, 'Conquests', normalizedFolder));
     }
   });
   return ordered;
+}
+
+function pickPreferredScenarioContentRoot(roots) {
+  const list = dedupePathList(roots);
+  return list.find((root) => {
+    try {
+      return fs.existsSync(path.join(root, 'Art')) || fs.existsSync(path.join(root, 'Text'));
+    } catch (_err) {
+      return false;
+    }
+  }) || list[0] || '';
+}
+
+function allocateScenarioSearchFolderPath({ scenarioPath, civ3Path }) {
+  const biqDir = resolveScenarioDir(scenarioPath);
+  if (!biqDir) return '';
+  const preferred = getScenarioStemFromPath(scenarioPath) || 'Scenario';
+  let candidate = path.join(biqDir, preferred);
+  let suffix = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(biqDir, `${preferred} ${suffix}`);
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function toScenarioSearchFolderValue(targetDir, scenarioPath) {
+  const absoluteTarget = String(targetDir || '').trim();
+  const biqDir = resolveScenarioDir(scenarioPath);
+  if (!absoluteTarget || !biqDir) return '';
+  const rel = path.relative(biqDir, absoluteTarget).replace(/\\/g, '/').trim();
+  if (!rel || rel === '.') return '';
+  return rel;
+}
+
+function getPendingScenarioSearchFolderOverride(tabs) {
+  const tab = tabs && tabs.scenarioSettings;
+  if (!tab || !Array.isArray(tab.sections)) return null;
+  for (const section of tab.sections) {
+    const sectionCode = String(section && section.code || '').trim().toUpperCase();
+    if (sectionCode !== 'GAME' || !Array.isArray(section.records)) continue;
+    for (const record of section.records) {
+      if (!record || !Array.isArray(record.fields)) continue;
+      const field = record.fields.find((entry) => {
+        const key = canonicalFieldKey(entry && (entry.baseKey || entry.key));
+        return key === 'scenariosearchfolders' || key === 'scenariosearchfolder';
+      });
+      if (field) {
+        return splitScenarioSearchFolderValue(field.value);
+      }
+    }
+  }
+  return null;
+}
+
+function resolveScenarioSearchDirsFromBiq({ scenarioPath, civ3Path, biqTab }) {
+  return resolveScenarioSearchDirs({
+    scenarioPath,
+    civ3Path,
+    folders: extractScenarioSearchFolders(biqTab),
+    includeMissing: false
+  });
 }
 
 function extractScenarioSearchFolders(biqTab) {
@@ -1399,10 +1490,7 @@ function extractScenarioSearchFolders(biqTab) {
       label.includes('scenario search folders');
   });
   if (!field || !field.value || field.value === '(none)' || field.value === '(truncated)') return [];
-  return String(field.value)
-    .split(';')
-    .map((v) => v.trim())
-    .filter(Boolean);
+  return splitScenarioSearchFolderValue(field.value);
 }
 
 function getScenarioSearchFieldMeta(biqTab) {
@@ -1698,24 +1786,58 @@ function isPathWithinAnyRoot(targetPath, roots) {
   return list.some((root) => isPathWithinRoot(targetPath, root));
 }
 
-function deriveScenarioPathContext({ scenarioPath, civ3Path, biqTab }) {
+function deriveScenarioPathContext({
+  scenarioPath,
+  civ3Path,
+  biqTab,
+  searchFolderOverride = null,
+  includeMissingSearchRoots = false,
+  ensureLocalSearchRoot = false
+}) {
   const biqRoot = resolveScenarioDir(scenarioPath);
-  const searchRoots = resolveScenarioSearchDirsFromBiq({ scenarioPath, civ3Path, biqTab });
-  const writableRoots = dedupePathList([biqRoot, ...searchRoots]);
-  const contentWriteRoot = dedupePathList(
-    searchRoots.filter((root) => {
+  const explicitSearchRoots = resolveScenarioSearchDirs({
+    scenarioPath,
+    civ3Path,
+    folders: searchFolderOverride != null ? searchFolderOverride : extractScenarioSearchFolders(biqTab),
+    includeMissing: includeMissingSearchRoots
+  });
+  const biqInSharedScenarios = isSharedScenariosRootDir(biqRoot, civ3Path);
+  let autoCreatedSearchRoot = '';
+  let autoCreatedSearchValue = '';
+  let searchRoots = dedupePathList(explicitSearchRoots);
+
+  if (searchRoots.length === 0) {
+    if (biqInSharedScenarios) {
+      const sibling = path.join(biqRoot, getScenarioStemFromPath(scenarioPath));
       try {
-        return fs.existsSync(path.join(root, 'Art')) || fs.existsSync(path.join(root, 'Text'));
+        if (fs.existsSync(sibling) && fs.statSync(sibling).isDirectory()) {
+          searchRoots = [path.resolve(sibling)];
+        } else if (ensureLocalSearchRoot) {
+          autoCreatedSearchRoot = allocateScenarioSearchFolderPath({ scenarioPath, civ3Path });
+          autoCreatedSearchValue = toScenarioSearchFolderValue(autoCreatedSearchRoot, scenarioPath);
+          if (autoCreatedSearchRoot) searchRoots = [path.resolve(autoCreatedSearchRoot)];
+        }
       } catch (_err) {
-        return false;
+        if (ensureLocalSearchRoot) {
+          autoCreatedSearchRoot = allocateScenarioSearchFolderPath({ scenarioPath, civ3Path });
+          autoCreatedSearchValue = toScenarioSearchFolderValue(autoCreatedSearchRoot, scenarioPath);
+          if (autoCreatedSearchRoot) searchRoots = [path.resolve(autoCreatedSearchRoot)];
+        }
       }
-    })
-  )[0] || writableRoots[0] || biqRoot;
+    } else if (biqRoot) {
+      searchRoots = [path.resolve(biqRoot)];
+    }
+  }
+
+  const writableRoots = dedupePathList([biqRoot, ...searchRoots]);
+  const contentWriteRoot = pickPreferredScenarioContentRoot(searchRoots);
   return {
     biqRoot,
     searchRoots,
     writableRoots,
-    contentWriteRoot
+    contentWriteRoot,
+    autoCreatedSearchRoot,
+    autoCreatedSearchValue
   };
 }
 
@@ -1801,11 +1923,12 @@ function createScenario(payload = {}) {
         civ3Path: civ3Root,
         scenarioPath: sourceScenarioPath
       });
-      sourceSearchRoots = resolveScenarioSearchDirsFromBiq({
+      const sourceScenarioContext = deriveScenarioPathContext({
         scenarioPath: sourceScenarioPath,
         civ3Path: civ3Root,
         biqTab: sourceBiqTab
       });
+      sourceSearchRoots = sourceScenarioContext.searchRoots;
       sourceSearchField = getScenarioSearchFieldMeta(sourceBiqTab);
     } else {
       copyPlan.push({
@@ -1876,13 +1999,25 @@ function createScenario(payload = {}) {
     let tempCreated = false;
     try {
       if (template === 'copy') {
-        fs.cpSync(sourceScenarioDir, tempDir, { recursive: true, force: false, errorOnExist: true });
+        const sourceScenarioContext = deriveScenarioPathContext({
+          scenarioPath: sourceScenarioPath,
+          civ3Path: civ3Root,
+          biqTab: sourceBiqTab
+        });
+        const sourceContentRoot = sourceScenarioContext.contentWriteRoot || '';
+        fs.mkdirSync(tempDir, { recursive: true });
         tempCreated = true;
-        copiedFiles.push({ kind: 'scenario', from: sourceScenarioDir, to: scenarioDir });
+        if (sourceContentRoot && path.resolve(sourceContentRoot) === path.resolve(sourceScenarioDir)) {
+          fs.cpSync(sourceScenarioDir, tempDir, { recursive: true, force: false, errorOnExist: true });
+          copiedFiles.push({ kind: 'scenario', from: sourceScenarioDir, to: scenarioDir });
+        } else if (sourceContentRoot) {
+          fs.cpSync(sourceContentRoot, tempDir, { recursive: true, force: false, errorOnExist: true });
+          copiedFiles.push({ kind: 'scenarioContent', from: sourceContentRoot, to: scenarioDir });
+        }
         const sourceBiqInTemp = path.join(tempDir, path.basename(sourceScenarioPath));
         const targetBiqInTemp = path.join(tempDir, `${scenarioStem}.biq`);
         const copiedSearchRootMap = new Map();
-        copiedSearchRootMap.set(path.resolve(sourceScenarioDir), path.resolve(tempDir));
+        if (sourceContentRoot) copiedSearchRootMap.set(path.resolve(sourceContentRoot), path.resolve(tempDir));
         if (path.normalize(sourceBiqInTemp) !== path.normalize(targetBiqInTemp)) {
           if (fs.existsSync(sourceBiqInTemp)) {
             fs.renameSync(sourceBiqInTemp, targetBiqInTemp);
@@ -1891,7 +2026,7 @@ function createScenario(payload = {}) {
           }
         }
         const externalRoots = dedupePathList(sourceSearchRoots)
-          .filter((root) => path.resolve(root) !== path.resolve(sourceScenarioDir));
+          .filter((root) => !sourceContentRoot || path.resolve(root) !== path.resolve(sourceContentRoot));
         externalRoots.forEach((sourceRoot, idx) => {
           const safeTail = path.basename(sourceRoot)
             .replace(/[^A-Za-z0-9._-]/g, '_')
@@ -3034,7 +3169,7 @@ function buildReferenceTabs(civ3Path, options = {}) {
           : '';
         const thumbPath =
           tabSpec.key === 'civilizations'
-            ? (pedia.racePaths[0] || pedia.iconPaths[pedia.iconPaths.length - 1] || '')
+            ? (pedia.iconPaths[0] || pedia.racePaths[0] || pedia.iconPaths[pedia.iconPaths.length - 1] || '')
             : (pedia.iconPaths[pedia.iconPaths.length - 1] || pedia.iconPaths[0] || '');
 
         const overviewSourcePath = findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, entry.civilopediaKey, layerOrder);
@@ -3497,6 +3632,34 @@ function normalizeDocLine(line) {
   return line.replace(/\s+/g, ' ').trim();
 }
 
+function parseInlineDocBlock(commentLines) {
+  const docs = {};
+  let currentKey = null;
+  let sawExplicitKey = false;
+
+  for (const rawLine of commentLines) {
+    const body = normalizeDocLine(rawLine.replace(/^;\s?/, ''));
+    if (!body) {
+      currentKey = null;
+      continue;
+    }
+
+    const match = body.match(/^([A-Za-z0-9_]*_[A-Za-z0-9_]+)\s*:\s*(.*)$/);
+    if (match) {
+      currentKey = match[1];
+      docs[currentKey] = match[2].trim();
+      sawExplicitKey = true;
+      continue;
+    }
+
+    if (sawExplicitKey && currentKey) {
+      docs[currentKey] = `${docs[currentKey]} ${body}`.trim();
+    }
+  }
+
+  return sawExplicitKey ? docs : null;
+}
+
 function parseIniFieldDocs(text) {
   const docs = {};
   if (!text) {
@@ -3508,10 +3671,7 @@ function parseIniFieldDocs(text) {
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith(';')) {
-      const body = normalizeDocLine(trimmed.replace(/^;\s?/, ''));
-      if (body) {
-        commentBuffer.push(body);
-      }
+      commentBuffer.push(trimmed);
       continue;
     }
 
@@ -3519,7 +3679,18 @@ function parseIniFieldDocs(text) {
     if (keyMatch) {
       const key = keyMatch[1];
       if (commentBuffer.length > 0 && !docs[key]) {
-        docs[key] = commentBuffer.join(' ');
+        const inlineDocs = parseInlineDocBlock(commentBuffer);
+        if (inlineDocs) {
+          Object.keys(inlineDocs).forEach((inlineKey) => {
+            if (!docs[inlineKey]) docs[inlineKey] = inlineDocs[inlineKey];
+          });
+        } else {
+          const joined = commentBuffer
+            .map((body) => normalizeDocLine(body.replace(/^;\s?/, '')))
+            .filter(Boolean)
+            .join(' ');
+          if (joined) docs[key] = joined;
+        }
       }
     }
 
@@ -3908,10 +4079,17 @@ function loadBundle(payload) {
   const c3xPath = payload.c3xPath || '';
   const civ3Path = payload.civ3Path || '';
   const scenarioPath = payload.scenarioPath || '';
+  const scenarioSearchFolderOverride = normalizeScenarioSearchFolderOverride(payload.scenarioSearchFolderOverride);
   try {
     const biqTab = loadBiqTab({ mode, civ3Path, scenarioPath });
     const scenarioContext = mode === 'scenario'
-      ? deriveScenarioPathContext({ scenarioPath, civ3Path, biqTab })
+      ? deriveScenarioPathContext({
+        scenarioPath,
+        civ3Path,
+        biqTab,
+        searchFolderOverride: scenarioSearchFolderOverride.length > 0 ? scenarioSearchFolderOverride : null,
+        includeMissingSearchRoots: scenarioSearchFolderOverride.length > 0
+      })
       : {
         biqRoot: resolveScenarioDir(scenarioPath),
         searchRoots: [],
@@ -3934,13 +4112,26 @@ function loadBundle(payload) {
     };
 
     bundle.biq = biqTab;
+    if (mode === 'scenario' && scenarioSearchFolderOverride.length > 0 && biqTab && Array.isArray(biqTab.sections)) {
+      const game = biqTab.sections.find((section) => String(section && section.code || '').trim().toUpperCase() === 'GAME');
+      const record = game && Array.isArray(game.records) ? game.records[0] : null;
+      const field = record && Array.isArray(record.fields)
+        ? record.fields.find((entry) => {
+          const key = String(entry && (entry.baseKey || entry.key) || '').toLowerCase();
+          return key.includes('scenariosearchfolder');
+        })
+        : null;
+      if (field) {
+        field.value = scenarioSearchFolderOverride.join('; ') || '(none)';
+      }
+    }
     if (biqTab && biqTab.sourcePath) {
       readPaths.add(path.resolve(String(biqTab.sourcePath)));
     }
 
     const referenceTabs = buildReferenceTabs(civ3Path, {
       mode,
-      scenarioPath: scenarioDir,
+      scenarioPath: mode === 'scenario' ? (scenarioContext.contentWriteRoot || scenarioDir) : scenarioDir,
       scenarioPaths: scenarioSearchPaths,
       biqTab
     });
@@ -4383,8 +4574,18 @@ function buildSavePlan(payload) {
   const civ3Path = payload.civ3Path || '';
   const scenarioPath = payload.scenarioPath || '';
   const biqTab = loadBiqTab({ mode, civ3Path, scenarioPath });
+  const pendingSearchFolderOverride = mode === 'scenario'
+    ? getPendingScenarioSearchFolderOverride(payload.tabs || {})
+    : null;
   const scenarioContext = mode === 'scenario'
-    ? deriveScenarioPathContext({ scenarioPath, civ3Path, biqTab })
+    ? deriveScenarioPathContext({
+      scenarioPath,
+      civ3Path,
+      biqTab,
+      searchFolderOverride: pendingSearchFolderOverride,
+      includeMissingSearchRoots: true,
+      ensureLocalSearchRoot: true
+    })
     : {
       biqRoot: resolveScenarioDir(scenarioPath),
       searchRoots: [],
@@ -4394,6 +4595,9 @@ function buildSavePlan(payload) {
   const scenarioDir = scenarioContext.biqRoot;
 
   const filePaths = resolvePaths({ c3xPath, scenarioPath: mode === 'scenario' ? scenarioContext.contentWriteRoot : scenarioContext.biqRoot, mode });
+  if (mode === 'scenario' && scenarioContext.autoCreatedSearchRoot && !scenarioContext.autoCreatedSearchValue) {
+    return { ok: false, error: 'Could not derive a valid scenario search folder path for this BIQ.' };
+  }
   const failIfProtected = (candidatePath, label) => {
     if (!candidatePath) return null;
     if (mode === 'scenario') {
@@ -4484,13 +4688,34 @@ function buildSavePlan(payload) {
     const biqEdits = collectBiqReferenceEdits(payload.tabs || {});
     const structureEdits = collectBiqStructureEdits(payload.tabs || {});
     const mapEdits = collectBiqMapEdits(payload.tabs || {});
+    const autoSearchField = !pendingSearchFolderOverride || pendingSearchFolderOverride.length === 0
+      ? getScenarioSearchFieldMeta(biqTab)
+      : null;
+    if (scenarioContext.autoCreatedSearchValue && !autoSearchField) {
+      return { ok: false, error: 'This BIQ does not expose a writable Scenario Search Folder field.' };
+    }
+    const autoSearchEdits = (scenarioContext.autoCreatedSearchValue && autoSearchField && autoSearchField.fieldKey)
+      ? [{
+        sectionCode: 'GAME',
+        recordRef: '@INDEX:0',
+        fieldKey: autoSearchField.fieldKey,
+        value: scenarioContext.autoCreatedSearchValue
+      }]
+      : [];
     const allBiqEdits = biqRecordOps
       .concat(biqStructureRecordOps)
       .concat(biqMapStructureOps)
       .concat(biqMapRecordOps)
       .concat(biqEdits)
       .concat(structureEdits)
-      .concat(mapEdits);
+      .concat(mapEdits)
+      .concat(autoSearchEdits);
+    const currentBundle = loadBundle({ mode, c3xPath, civ3Path, scenarioPath });
+    const validationTabs = mergeTabsForDeleteValidation((currentBundle && currentBundle.tabs) || {}, payload.tabs || {});
+    const unsafeDeleteIssues = collectUnsafeReferenceDeleteIssues({ tabs: validationTabs, biqTab });
+    if (unsafeDeleteIssues.length > 0) {
+      return { ok: false, error: formatUnsafeReferenceDeleteError(unsafeDeleteIssues) };
+    }
     if (allBiqEdits.length > 0) {
       const biqSave = applyBiqReferenceEdits({
         biqPath: scenarioPath,
@@ -4625,7 +4850,10 @@ function buildSavePlan(payload) {
     ok: true,
     plannedWrites,
     saveReport,
-    scenarioWriteRoots: mode === 'scenario' ? scenarioContext.writableRoots : []
+    scenarioWriteRoots: mode === 'scenario' ? scenarioContext.writableRoots : [],
+    ensureDirs: mode === 'scenario' && scenarioContext.autoCreatedSearchRoot
+      ? [scenarioContext.autoCreatedSearchRoot]
+      : []
   };
 }
 
@@ -4642,6 +4870,11 @@ function saveBundle(payload) {
       rollback: committed.rollback || null
     };
   }
+
+  (Array.isArray(plan.ensureDirs) ? plan.ensureDirs : []).forEach((dirPath) => {
+    if (!dirPath) return;
+    fs.mkdirSync(dirPath, { recursive: true });
+  });
 
   return {
     ok: true,
@@ -4878,13 +5111,327 @@ function getSectionCodeForReferenceTabKey(tabKey) {
   return spec ? getSectionCodeForReferencePrefix(spec.prefix) : '';
 }
 
+function getReferenceTabKeyForSectionCode(sectionCode) {
+  const code = String(sectionCode || '').trim().toUpperCase();
+  const spec = REFERENCE_TAB_SPECS.find((entry) => getSectionCodeForReferencePrefix(entry.prefix) === code);
+  return spec ? spec.key : '';
+}
+
 function isLockedBiqField(sectionCode, fieldKey) {
-  const section = String(sectionCode || '').trim().toUpperCase();
-  const key = canonicalFieldKey(fieldKey);
-  if (section === 'GAME') {
-    return key === 'scenariosearchfolders' || key === 'scenariosearchfolder';
-  }
   return false;
+}
+
+const BIQ_SECTION_TITLE_BY_CODE = new Map(BIQ_SECTION_DEFS.map((def) => [String(def.code || '').toUpperCase(), String(def.title || def.code || '').trim()]));
+
+function getBiqSectionTitle(sectionCode) {
+  const code = String(sectionCode || '').trim().toUpperCase();
+  return BIQ_SECTION_TITLE_BY_CODE.get(code) || code || 'Records';
+}
+
+function getFieldCanonicalKey(field) {
+  return canonicalFieldKey(field && (field.baseKey || field.key) || '');
+}
+
+function getFieldNumericValue(field, fallback = NaN) {
+  return parseIntLoose(cleanDisplayText(field && field.value), fallback);
+}
+
+function getFieldValuesAsInts(field) {
+  const raw = cleanDisplayText(field && field.value);
+  if (!raw || raw.toLowerCase() === '(none)') return [];
+  return raw.split(/[,\s]+/)
+    .map((part) => parseIntLoose(part, NaN))
+    .filter((value) => Number.isFinite(value));
+}
+
+function getBiqRecordListForSection(biqTab, sectionCode) {
+  const target = String(sectionCode || '').trim().toUpperCase();
+  if (!biqTab || !Array.isArray(biqTab.sections) || !target) return [];
+  const section = biqTab.sections.find((entry) => String(entry && entry.code || '').trim().toUpperCase() === target);
+  if (!section) return [];
+  if (Array.isArray(section.fullRecords) && section.fullRecords.length > 0) return section.fullRecords;
+  return Array.isArray(section.records) ? section.records : [];
+}
+
+function getBiqRecordCivilopediaKey(record) {
+  if (!record) return '';
+  const direct = cleanDisplayText(record.civilopediaEntry);
+  if (direct) return direct.toUpperCase();
+  const fields = Array.isArray(record.fields) ? record.fields : [];
+  const match = fields.find((field) => getFieldCanonicalKey(field) === 'civilopediaentry');
+  return cleanDisplayText(match && match.value).toUpperCase();
+}
+
+function getBiqRecordDisplayName(record, fallback = 'Record') {
+  if (!record) return fallback;
+  const directName = cleanDisplayText(
+    record.civilizationName
+    || record.leaderName
+    || record.eraName
+    || record.name
+    || record.english
+  );
+  if (directName) return directName;
+  const fields = Array.isArray(record.fields) ? record.fields : [];
+  const candidates = ['civilizationname', 'name', 'leadertitle', 'townname'];
+  for (const key of candidates) {
+    const match = fields.find((field) => getFieldCanonicalKey(field) === key);
+    const value = cleanDisplayText(match && match.value);
+    if (value) return value;
+  }
+  return fallback;
+}
+
+function getOriginalReferenceRecordInfo(biqTab, sectionCode, recordRef) {
+  const targetRef = String(recordRef || '').trim().toUpperCase();
+  if (!targetRef) return null;
+  const records = getBiqRecordListForSection(biqTab, sectionCode);
+  for (const record of records) {
+    const civKey = getBiqRecordCivilopediaKey(record);
+    if (civKey !== targetRef) continue;
+    const idx = Number(record && record.index);
+    return {
+      index: Number.isFinite(idx) ? idx : -1,
+      name: getBiqRecordDisplayName(record, targetRef)
+    };
+  }
+  return null;
+}
+
+function getCurrentReferenceRecordInfo(tabs, sectionCode, recordRef) {
+  const tabKey = getReferenceTabKeyForSectionCode(sectionCode);
+  const tab = tabKey ? tabs && tabs[tabKey] : null;
+  const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
+  const targetRef = String(recordRef || '').trim().toUpperCase();
+  const entry = entries.find((item) => String(item && item.civilopediaKey || '').trim().toUpperCase() === targetRef);
+  if (!entry) return null;
+  const idx = Number(entry && entry.biqIndex);
+  return {
+    index: Number.isFinite(idx) ? idx : -1,
+    name: cleanDisplayText(entry && (entry.name || entry.civilopediaKey)) || targetRef
+  };
+}
+
+function hasScenarioMapData(tabs) {
+  const mapTab = tabs && tabs.map;
+  const sections = Array.isArray(mapTab && mapTab.sections) ? mapTab.sections : [];
+  return sections.some((section) => {
+    const code = String(section && section.code || '').trim().toUpperCase();
+    if (!['TILE', 'CITY', 'UNIT'].includes(code)) return false;
+    return Array.isArray(section.records) && section.records.length > 0;
+  });
+}
+
+function matchesDeletedReference(field, targetIndex, matcher) {
+  if (!field || !Number.isFinite(targetIndex) || typeof matcher !== 'function') return false;
+  const canon = getFieldCanonicalKey(field);
+  if (!canon) return false;
+  return !!matcher({ canon, field, targetIndex });
+}
+
+function collectUnsafeReferenceDeleteIssues({ tabs, biqTab }) {
+  if (!tabs || !biqTab) return [];
+
+  const deleteOps = collectBiqReferenceRecordOps(tabs).filter((op) => String(op && op.op || '').toLowerCase() === 'delete');
+  if (deleteOps.length === 0) return [];
+
+  const dependencyRules = {
+    TECH: [
+      { sourceSection: 'GOOD', sourceLabel: 'Resources', matcher: ({ canon, field, targetIndex }) => canon === 'prerequisite' && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'RACE', sourceLabel: 'Civilizations', matcher: ({ canon, field, targetIndex }) => /^freetech\d+index?$/.test(canon) && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'PRTO', sourceLabel: 'Units', matcher: ({ canon, field, targetIndex }) => canon === 'requiredtech' && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'CTZN', sourceLabel: 'Citizens', matcher: ({ canon, field, targetIndex }) => canon === 'prerequisite' && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'GOVT', sourceLabel: 'Governments', matcher: ({ canon, field, targetIndex }) => canon === 'prerequisite' && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'TFRM', sourceLabel: 'Worker Jobs', matcher: ({ canon, field, targetIndex }) => canon === 'requiredadvance' && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'TECH', sourceLabel: 'Technologies', matcher: ({ canon, field, targetIndex }) => /^prerequisite\d+$/.test(canon) && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'BLDG', sourceLabel: 'Improvements & Wonders', matcher: ({ canon, field, targetIndex }) => (canon === 'reqadvance' || canon === 'obsoleteby') && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'LEAD', sourceLabel: 'Players', matcher: ({ canon, field, targetIndex }) => /^startingtechnology\d+$/.test(canon) && getFieldNumericValue(field) === targetIndex }
+    ],
+    GOOD: [
+      { sourceSection: 'PRTO', sourceLabel: 'Units', matcher: ({ canon, field, targetIndex }) => /^requiredresource\d+$/.test(canon) && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'BLDG', sourceLabel: 'Improvements & Wonders', matcher: ({ canon, field, targetIndex }) => /^reqresource\d+$/.test(canon) && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'TFRM', sourceLabel: 'Worker Jobs', matcher: ({ canon, field, targetIndex }) => /^requiredresource\d+$/.test(canon) && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'RULE', sourceLabel: 'Rules', matcher: ({ canon, field, targetIndex }) => canon === 'defaultmoneyresource' && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'TILE', sourceLabel: 'Map Tiles', matcher: ({ canon, field, targetIndex }) => canon === 'resource' && getFieldNumericValue(field) === targetIndex },
+      {
+        sourceSection: 'TERR',
+        sourceLabel: 'Terrain',
+        matcher: ({ canon, field, targetIndex }) => {
+          if (canon !== 'possibleresourcesmask') return false;
+          const values = getFieldValuesAsInts(field);
+          return values[targetIndex] === 1;
+        }
+      }
+    ],
+    BLDG: [
+      { sourceSection: 'BLDG', sourceLabel: 'Improvements & Wonders', matcher: ({ canon, field, targetIndex }) => canon === 'reqimprovement' && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'CITY', sourceLabel: 'Cities', matcher: ({ canon, field, targetIndex }) => (canon === 'building' || canon === 'buildings') && getFieldValuesAsInts(field).includes(targetIndex) },
+      { sourceSection: 'PRTO', sourceLabel: 'Units', matcher: ({ canon, field, targetIndex }) => canon.startsWith('legalbuildingtelepad') && getFieldNumericValue(field) === targetIndex }
+    ],
+    GOVT: [
+      { sourceSection: 'RACE', sourceLabel: 'Civilizations', matcher: ({ canon, field, targetIndex }) => (canon === 'favoritegovernment' || canon === 'shunnedgovernment') && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'BLDG', sourceLabel: 'Improvements & Wonders', matcher: ({ canon, field, targetIndex }) => canon === 'reqgovernment' && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'LEAD', sourceLabel: 'Players', matcher: ({ canon, field, targetIndex }) => canon === 'government' && getFieldNumericValue(field) === targetIndex }
+    ],
+    PRTO: [
+      { sourceSection: 'RACE', sourceLabel: 'Civilizations', matcher: ({ canon, field, targetIndex }) => canon === 'kingunit' && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'PRTO', sourceLabel: 'Units', matcher: ({ canon, field, targetIndex }) => (canon === 'upgradeto' || canon === 'enslaveresultsin' || canon.startsWith('legalunittelepad')) && getFieldNumericValue(field) === targetIndex },
+      { sourceSection: 'BLDG', sourceLabel: 'Improvements & Wonders', matcher: ({ canon, field, targetIndex }) => canon === 'unitproduced' && getFieldNumericValue(field) === targetIndex },
+      {
+        sourceSection: 'RULE',
+        sourceLabel: 'Rules',
+        matcher: ({ canon, field, targetIndex }) => ['advancedbarbarian', 'basicbarbarian', 'barbarianseaunit', 'battlecreatedunit', 'buildarmyunit', 'scout', 'slave', 'startunit1', 'startunit2', 'flagunit'].includes(canon) && getFieldNumericValue(field) === targetIndex
+      },
+      {
+        sourceSection: 'LEAD',
+        sourceLabel: 'Players',
+        matcher: ({ canon, field, targetIndex }) => {
+          const match = canon.match(/^startingunitsoftype(\d+)$/);
+          if (!match) return false;
+          const unitIndex = Number.parseInt(match[1], 10);
+          return unitIndex === targetIndex && getFieldNumericValue(field, 0) > 0;
+        }
+      },
+      { sourceSection: 'UNIT', sourceLabel: 'Map Units', matcher: ({ canon, field, targetIndex }) => canon === 'prtonumber' && getFieldNumericValue(field) === targetIndex }
+    ],
+    RACE: [
+      {
+        sourceSection: 'GAME',
+        sourceLabel: 'Scenario Settings',
+        matcher: ({ canon, field, targetIndex }) => {
+          if (canon === 'playablecivids') return getFieldValuesAsInts(field).includes(targetIndex);
+          if (!canon.startsWith('playableciv')) return false;
+          return getFieldNumericValue(field) === targetIndex;
+        }
+      },
+      { sourceSection: 'LEAD', sourceLabel: 'Players', matcher: ({ canon, field, targetIndex }) => canon === 'civ' && getFieldNumericValue(field) === targetIndex }
+    ]
+  };
+
+  const issues = [];
+  const mapDataExists = hasScenarioMapData(tabs);
+
+  const recordsBySection = new Map();
+  const pushRecord = (sectionCode, sourceLabel, recordName, fields) => {
+    const code = String(sectionCode || '').trim().toUpperCase();
+    if (!code || !Array.isArray(fields) || fields.length === 0) return;
+    if (!recordsBySection.has(code)) recordsBySection.set(code, []);
+    recordsBySection.get(code).push({
+      sourceLabel: sourceLabel || getBiqSectionTitle(code),
+      recordName: cleanDisplayText(recordName) || 'Unnamed',
+      fields
+    });
+  };
+
+  for (const spec of REFERENCE_TAB_SPECS) {
+    const sectionCode = getSectionCodeForReferenceTabKey(spec.key);
+    const tab = tabs[spec.key];
+    if (!sectionCode || !tab || !Array.isArray(tab.entries)) continue;
+    tab.entries.forEach((entry) => {
+      pushRecord(sectionCode, spec.title, entry && (entry.name || entry.civilopediaKey), entry && entry.biqFields);
+    });
+  }
+
+  for (const spec of BIQ_STRUCTURE_TAB_SPECS) {
+    const tab = tabs[spec.key];
+    if (!tab || !Array.isArray(tab.sections)) continue;
+    tab.sections.forEach((section) => {
+      const sectionCode = String(section && section.code || '').trim().toUpperCase();
+      const sourceLabel = cleanDisplayText(section && section.title) || getBiqSectionTitle(sectionCode);
+      (Array.isArray(section && section.records) ? section.records : []).forEach((record) => {
+        pushRecord(sectionCode, sourceLabel, getBiqRecordDisplayName(record, `${sourceLabel} Record`), record && record.fields);
+      });
+    });
+  }
+
+  const mapTab = tabs.map;
+  if (mapTab && Array.isArray(mapTab.sections)) {
+    mapTab.sections.forEach((section) => {
+      const sectionCode = String(section && section.code || '').trim().toUpperCase();
+      const sourceLabel = getBiqSectionTitle(sectionCode);
+      (Array.isArray(section && section.records) ? section.records : []).forEach((record, idx) => {
+        pushRecord(sectionCode, sourceLabel, getBiqRecordDisplayName(record, `${sourceLabel} ${idx + 1}`), record && record.fields);
+      });
+    });
+  }
+
+  deleteOps.forEach((op) => {
+    const sectionCode = String(op && op.sectionCode || '').trim().toUpperCase();
+    const recordRef = String(op && op.recordRef || '').trim().toUpperCase();
+    const ruleSet = dependencyRules[sectionCode];
+    if (!sectionCode || !recordRef || !Array.isArray(ruleSet) || ruleSet.length === 0) return;
+
+    const original = getCurrentReferenceRecordInfo(tabs, sectionCode, recordRef)
+      || getOriginalReferenceRecordInfo(biqTab, sectionCode, recordRef);
+    if (!original || !Number.isFinite(original.index) || original.index < 0) return;
+
+    if ((sectionCode === 'PRTO' || sectionCode === 'RACE') && mapDataExists) {
+      issues.push({
+        title: `${original.name} (${getBiqSectionTitle(sectionCode).replace(/s$/, '')})`,
+        reason: sectionCode === 'PRTO'
+          ? 'This scenario has map data, so deleting a unit could break placed units or other map links.'
+          : 'This scenario has map data, so deleting a civilization could break ownership, players, or other map links.'
+      });
+      return;
+    }
+
+    const matches = [];
+    ruleSet.forEach((rule) => {
+      const sourceRecords = recordsBySection.get(String(rule.sourceSection || '').trim().toUpperCase()) || [];
+      sourceRecords.forEach((record) => {
+        if (!Array.isArray(record.fields)) return;
+        if (!record.fields.some((field) => matchesDeletedReference(field, original.index, rule.matcher))) return;
+        matches.push(`${record.sourceLabel}: ${record.recordName}`);
+      });
+    });
+
+    if (matches.length > 0) {
+      const uniqueMatches = Array.from(new Set(matches));
+      issues.push({
+        title: `${original.name} (${getBiqSectionTitle(sectionCode).replace(/s$/, '')})`,
+        references: uniqueMatches
+      });
+    }
+  });
+
+  return issues;
+}
+
+function formatUnsafeReferenceDeleteError(issues) {
+  if (!Array.isArray(issues) || issues.length === 0) return '';
+  const lines = ['Cannot save yet because deleted items are still in use.'];
+  issues.forEach((issue) => {
+    if (!issue) return;
+    if (issue.reason) {
+      lines.push(`${issue.title}: ${issue.reason}`);
+      return;
+    }
+    const refs = Array.isArray(issue.references) ? issue.references : [];
+    const preview = refs.slice(0, 6).join('; ');
+    const suffix = refs.length > 6 ? `; and ${refs.length - 6} more` : '';
+    lines.push(`${issue.title}: still used by ${preview}${suffix}. Remove or replace those links, then try saving again.`);
+  });
+  return lines.join(' ');
+}
+
+function mergeTabsForDeleteValidation(baseTabs, payloadTabs) {
+  const merged = { ...(baseTabs || {}) };
+  Object.entries(payloadTabs || {}).forEach(([tabKey, payloadTab]) => {
+    const baseTab = merged[tabKey];
+    if (
+      baseTab
+      && typeof baseTab === 'object'
+      && !Array.isArray(baseTab)
+      && payloadTab
+      && typeof payloadTab === 'object'
+      && !Array.isArray(payloadTab)
+    ) {
+      merged[tabKey] = { ...baseTab, ...payloadTab };
+      return;
+    }
+    merged[tabKey] = payloadTab;
+  });
+  return merged;
 }
 
 function collectBiqReferenceEdits(tabs) {

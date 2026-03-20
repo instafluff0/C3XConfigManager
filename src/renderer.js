@@ -1,20 +1,13 @@
-let vanillaMapParity = null;
-if (typeof require === 'function') {
-  try {
-    vanillaMapParity = require('./vanillaMapParity');
-  } catch (_err) {
-    vanillaMapParity = null;
-  }
-}
-
 const state = {
   settings: null,
   bundle: null,
   activeTab: 'base',
   baseFilter: '',
+  baseRowElementsByKey: new Map(),
   previewSize: 220,
   tabContentScrollTop: 0,
   isDirty: false,
+  isSaving: false,
   isRendering: false,
   trackDirty: false,
   suppressDirtyUntilInteraction: true,
@@ -73,6 +66,8 @@ const state = {
   biqMapColoredUnitIconCache: new Map(),
   biqMapColoredStartLocCache: new Map(),
   previewCache: new Map(),
+  mapGenerationRuleBundleCache: null,
+  mapGenerationRuleBundleCacheKey: '',
   districtRepresentativePreviewPending: new Map(),
   unitAnimationUiByKey: {},
   isLoading: false,
@@ -91,6 +86,10 @@ const state = {
   dirtyReferenceKeysByTab: {},
   dirtySectionIndexesByTab: {},
   unsavedModal: {
+    open: false,
+    resolve: null
+  },
+  scenarioSearchFolderModal: {
     open: false,
     resolve: null
   },
@@ -283,6 +282,11 @@ const el = {
   unsavedSaveContinue: document.getElementById('unsaved-save-continue'),
   unsavedDiscard: document.getElementById('unsaved-discard'),
   unsavedCancel: document.getElementById('unsaved-cancel'),
+  scenarioSearchFolderModalOverlay: document.getElementById('scenario-search-folder-modal-overlay'),
+  scenarioSearchFolderModalBody: document.getElementById('scenario-search-folder-modal-body'),
+  scenarioSearchFolderModalTarget: document.getElementById('scenario-search-folder-modal-target'),
+  scenarioSearchFolderModalCancel: document.getElementById('scenario-search-folder-modal-cancel'),
+  scenarioSearchFolderModalConfirm: document.getElementById('scenario-search-folder-modal-confirm'),
   entityModalOverlay: document.getElementById('entity-modal-overlay'),
   entityModalTitle: document.getElementById('entity-modal-title'),
   entityModalBody: document.getElementById('entity-modal-body'),
@@ -481,14 +485,28 @@ const BASE_STRUCTURED_LIST_FIELDS = new Set([
   'ai_multi_start_extra_palaces'
 ]);
 
-const BASE_FIELD_DETAILS = {
+const BASE_FIELD_DETAILS = Object.freeze({
+  enable_stack_bombard: 'Adds stack-bombard controls so eligible units can bombard a target one after another from the selected stack.',
+  enable_stack_unit_commands: 'Lets you issue supported worker and unit-management commands to an entire stack by holding Ctrl.',
+  enable_disorder_warning: 'Warns you before ending the turn if any city is in disorder.',
   enable_districts: 'Master toggle for district systems.',
   enable_wonder_districts: 'Enables the wonder district layer.',
   enable_natural_wonders: 'Enables natural wonder systems and placement.',
   enable_custom_animations: 'Enables tile animation configs.',
+  expand_water_tile_checks_to_city_work_area: 'Uses the full city work radius for water-adjacency checks.',
+  workers_can_enter_coast: 'Lets workers move onto coast tiles without embarking.',
+  max_contiguous_bridge_districts: 'Sets the maximum number of bridge districts that can be contiguous in a line.',
+  max_contiguous_canal_districts: 'Sets the maximum number of canal districts that can be contiguous in a line.',
+  ai_canal_eval_min_bisected_land_tiles: 'Sets the minimum land tiles on each side for the AI to consider a canal site.',
+  ai_bridge_canal_eval_block_size: 'Sets the map block size the AI scans for bridge and canal sites.',
+  ai_bridge_eval_lake_tile_threshold: 'Treats water bodies at or below this size as lakes for AI bridge evaluation.',
+  ai_can_replace_existing_districts_with_canals: 'Lets the AI replace existing non-wonder districts with canals.',
+  ai_builds_bridges: 'Lets the AI construct bridge districts.',
+  ai_builds_canals: 'Lets the AI construct canal districts.',
+  enable_city_work_radii_highlights: 'Highlights city work radii while holding Ctrl with a worker selected.',
   minimum_natural_wonder_separation: 'Minimum tile distance between natural wonders.',
   draw_lines_using_gdi_plus: 'Line rendering strategy.'
-};
+});
 const C3X_RELEASE_BY_KEY = Object.freeze({
   city_limit: 'R25',
   allow_multipage_civilopedia_descriptions: 'R25',
@@ -1862,7 +1880,9 @@ function openFilesReadModal() {
 
 function updateSaveButtonLabel() {
   if (!el.saveBtn) return;
-  el.saveBtn.innerHTML = '<span class="btn-icon">💾</span>Save';
+  el.saveBtn.innerHTML = state.isSaving
+    ? '<span class="btn-icon">⏳</span>Saving...'
+    : '<span class="btn-icon">💾</span>Save';
 }
 
 function closeFilesReadModal() {
@@ -1923,7 +1943,7 @@ function refreshDirtyUi() {
   if (el.saveBtn) el.saveBtn.classList.toggle('dirty', state.isDirty);
   updateSaveButtonLabel();
   if (el.saveBtn) {
-    el.saveBtn.disabled = !state.isDirty || state.isLoading || !!state.sectionValidationError;
+    el.saveBtn.disabled = !state.isDirty || state.isLoading || state.isSaving || !!state.sectionValidationError;
     el.saveBtn.title = state.sectionValidationError || '';
   }
   if (el.dirtyIndicator) el.dirtyIndicator.classList.toggle('hidden', !state.isDirty);
@@ -1933,9 +1953,14 @@ function refreshDirtyUi() {
 
 function snapshotTabs() {
   if (!state.bundle || !state.bundle.tabs) return 'null';
+  return snapshotEditableTabsFromBundle(state.bundle);
+}
+
+function snapshotEditableTabsFromBundle(bundle) {
+  if (!bundle || !bundle.tabs) return 'null';
   const editableTabs = {};
   EDITABLE_TAB_KEYS.forEach((key) => {
-    if (state.bundle.tabs[key]) editableTabs[key] = state.bundle.tabs[key];
+    if (bundle.tabs[key]) editableTabs[key] = bundle.tabs[key];
   });
   return JSON.stringify(editableTabs);
 }
@@ -2487,9 +2512,142 @@ function getScenarioPreviewPathsKey() {
   return getScenarioPreviewPaths().join('|');
 }
 
-function isLockedGameField(baseKey) {
+function isScenarioSearchFolderField(baseKey) {
   const key = String(baseKey || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   return key === 'scenariosearchfolders' || key === 'scenariosearchfolder';
+}
+
+function getScenarioBiqDirectory() {
+  const scenarioInputPath = (state.bundle && state.bundle.scenarioInputPath) || (state.settings && state.settings.scenarioPath) || '';
+  const trimmed = String(scenarioInputPath || '').trim();
+  if (!trimmed) return '';
+  return /\.biq$/i.test(trimmed) ? trimmed.replace(/[\\/][^\\/]+$/u, '') : trimmed;
+}
+
+function toScenarioSearchFolderFieldValue(selectedDir) {
+  const dir = String(selectedDir || '').trim();
+  const biqDir = getScenarioBiqDirectory();
+  if (!dir || !biqDir) return dir;
+  if (pathIsSameOrChild(dir, biqDir)) {
+    const rel = normalizeSlashes(dir).slice(normalizeSlashes(biqDir).length).replace(/^\/+/, '').trim();
+    return rel || '';
+  }
+  return normalizeSlashes(dir);
+}
+
+function normalizeScenarioSearchFolderFieldValue(value) {
+  return String(value || '')
+    .split(';')
+    .map((v) => v.trim())
+    .filter((v) => v && v !== '(none)' && v !== '(truncated)')
+    .join('; ');
+}
+
+function hideScenarioSearchFolderModal() {
+  state.scenarioSearchFolderModal.open = false;
+  if (el.scenarioSearchFolderModalOverlay) {
+    el.scenarioSearchFolderModalOverlay.classList.add('hidden');
+    el.scenarioSearchFolderModalOverlay.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function resolveScenarioSearchFolderModal(choice) {
+  const resolver = state.scenarioSearchFolderModal.resolve;
+  state.scenarioSearchFolderModal.resolve = null;
+  hideScenarioSearchFolderModal();
+  if (typeof resolver === 'function') resolver(!!choice);
+}
+
+function confirmScenarioSearchFolderChange(nextValue) {
+  if (!el.scenarioSearchFolderModalOverlay) return Promise.resolve(false);
+  const normalized = normalizeScenarioSearchFolderFieldValue(nextValue);
+  const targetLabel = normalized || '(none)';
+  if (el.scenarioSearchFolderModalBody) {
+    el.scenarioSearchFolderModalBody.textContent = 'This repoints the scenario to a different content root and rebuilds the loaded data immediately.';
+  }
+  if (el.scenarioSearchFolderModalTarget) {
+    el.scenarioSearchFolderModalTarget.textContent = `New folder: ${targetLabel}`;
+  }
+  state.scenarioSearchFolderModal.open = true;
+  el.scenarioSearchFolderModalOverlay.classList.remove('hidden');
+  el.scenarioSearchFolderModalOverlay.setAttribute('aria-hidden', 'false');
+  window.setTimeout(() => {
+    if (el.scenarioSearchFolderModalConfirm) {
+      el.scenarioSearchFolderModalConfirm.focus({ preventScroll: true });
+    }
+  }, 0);
+  return new Promise((resolve) => {
+    state.scenarioSearchFolderModal.resolve = resolve;
+  });
+}
+
+function applyScenarioSearchFolderValueToBundle(bundle, value) {
+  const normalized = normalizeScenarioSearchFolderFieldValue(value);
+  const tab = bundle && bundle.tabs && bundle.tabs.scenarioSettings;
+  if (!tab || !Array.isArray(tab.sections)) return;
+  tab.sections.forEach((section) => {
+    if (String(section && section.code || '').trim().toUpperCase() !== 'GAME' || !Array.isArray(section.records)) return;
+    section.records.forEach((record) => {
+      if (!record || !Array.isArray(record.fields)) return;
+      record.fields.forEach((field) => {
+        if (isScenarioSearchFolderField(field && (field.baseKey || field.key))) {
+          field.value = normalized || '(none)';
+        }
+      });
+    });
+  });
+}
+
+async function reloadScenarioFromEditedSearchFolder(value) {
+  const normalized = normalizeScenarioSearchFolderFieldValue(value);
+  const preservedUndoSnapshot = state.undoSnapshot || state.cleanSnapshot || null;
+  const preservedCleanSnapshot = state.cleanSnapshot || 'null';
+  await loadBundleAndRender({
+    loadingText: 'Reloading scenario from updated search folder...',
+    scenarioSearchFolderOverride: normalized,
+    preserveDirtyState: {
+      cleanSnapshot: preservedCleanSnapshot,
+      undoSnapshot: preservedUndoSnapshot
+    }
+  });
+  if (state.bundle) {
+    applyScenarioSearchFolderValueToBundle(state.bundle, normalized);
+    refreshDirtyUi();
+    refreshTabDirtyBadges();
+    refreshActiveReferenceListDirtyBadges();
+    renderActiveTab({ preserveTabScroll: true });
+    setStatus('Reloaded scenario from updated search folder preview. Save to persist the change.');
+  }
+}
+
+function didScenarioSearchFolderChangeInTabs(tabs) {
+  const tab = tabs && tabs.scenarioSettings;
+  if (!tab || !Array.isArray(tab.sections)) return false;
+  for (const section of tab.sections) {
+    if (String(section && section.code || '').trim().toUpperCase() !== 'GAME' || !Array.isArray(section.records)) continue;
+    for (const record of section.records) {
+      if (!record || !Array.isArray(record.fields)) continue;
+      const field = record.fields.find((entry) => isScenarioSearchFolderField(entry && (entry.baseKey || entry.key)));
+      if (field && String(field.value || '') !== String(field.originalValue || '')) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function getScenarioSearchFolderValueFromTabs(tabs) {
+  const tab = tabs && tabs.scenarioSettings;
+  if (!tab || !Array.isArray(tab.sections)) return '';
+  for (const section of tab.sections) {
+    if (String(section && section.code || '').trim().toUpperCase() !== 'GAME' || !Array.isArray(section.records)) continue;
+    for (const record of section.records) {
+      if (!record || !Array.isArray(record.fields)) continue;
+      const field = record.fields.find((entry) => isScenarioSearchFolderField(entry && (entry.baseKey || entry.key)));
+      if (field) return normalizeScenarioSearchFolderFieldValue(field.value);
+    }
+  }
+  return '';
 }
 
 function getPathTail(anyPath) {
@@ -3500,7 +3658,7 @@ function collectGlobalSearchItems() {
         const rawKey = String(row && row.key || '').trim();
         if (!rawKey) return;
         const friendlyName = toFriendlyKey(rawKey);
-        const docs = String((tab.fieldDocs && tab.fieldDocs[rawKey]) || '').trim();
+        const docs = getBaseFieldDescription(rawKey, tab.fieldDocs);
         const rowValue = String(row && row.value || '').trim();
         const releaseLabel = getC3xReleaseInfo(rawKey).label;
         items.push({
@@ -3766,10 +3924,28 @@ function getC3xBaseCustomPath() {
   return `${root.replace(/[\\/]+$/, '')}/custom.c3x_config.ini`;
 }
 
+function getInferredScenarioContentRoot() {
+  const scenarioSearchPaths = (state.bundle && Array.isArray(state.bundle.scenarioSearchPaths))
+    ? state.bundle.scenarioSearchPaths.map((p) => String(p || '').trim()).filter(Boolean)
+    : [];
+  if (scenarioSearchPaths.length > 0) return scenarioSearchPaths[0];
+
+  const scenarioInputPath = String((state.bundle && state.bundle.scenarioInputPath) || (state.settings && state.settings.scenarioPath) || '').trim();
+  if (!scenarioInputPath) return '';
+  const normalizedInput = normalizeSlashes(scenarioInputPath);
+  const biqDir = normalizedInput.replace(/\/[^/]+$/u, '');
+  if (!/\.biq$/i.test(normalizedInput) || !biqDir) return String((state.bundle && state.bundle.scenarioPath) || '').trim();
+  if (/\/conquests\/scenarios$/i.test(biqDir)) {
+    const stem = getPathBaseName(normalizedInput).replace(/\.biq$/i, '').trim();
+    if (stem) return `${biqDir}/${stem}`;
+  }
+  return biqDir;
+}
+
 function getC3xBaseScenarioPath() {
-  const scenarioDir = String((state.bundle && state.bundle.scenarioPath) || '').trim();
-  if (!scenarioDir) return '';
-  return `${scenarioDir.replace(/[\\/]+$/, '')}/scenario.c3x_config.ini`;
+  const contentRoot = String(getInferredScenarioContentRoot() || '').trim();
+  if (!contentRoot) return '';
+  return `${contentRoot.replace(/[\\/]+$/, '')}/scenario.c3x_config.ini`;
 }
 
 function getActiveBaseTargetName() {
@@ -3796,6 +3972,134 @@ function getBaseFieldSource(row) {
   if (row.source === 'custom') return 'custom.c3x_config.ini';
   if (row.source === 'scenario') return 'scenario.c3x_config.ini';
   return String(row.source);
+}
+
+function normalizeBaseFieldDoc(text) {
+  return String(text || '')
+    .replace(/\s+/g, ' ')
+    .replace(/^This (option|setting|feature|field)\s+/i, '')
+    .trim();
+}
+
+function humanizeBaseFieldKeyPart(part) {
+  const token = String(part || '').trim();
+  if (!token) return '';
+  const lower = token.toLowerCase();
+  if (['ai', 'ui', 'hp', 'mp', 'ocn', 'ptw', 'sam', 'zoc', 'flc', 'pcx', 'ini', 'biq'].includes(lower)) {
+    return lower.toUpperCase();
+  }
+  return lower;
+}
+
+function humanizeBaseFieldKey(key) {
+  return String(key || '')
+    .split('_')
+    .filter(Boolean)
+    .map((part) => humanizeBaseFieldKeyPart(part))
+    .join(' ');
+}
+
+function describeBaseFieldFromKey(key) {
+  const rawKey = String(key || '').trim();
+  if (!rawKey) return '';
+  const lower = rawKey.toLowerCase();
+  const phrase = humanizeBaseFieldKey(rawKey);
+  const tail = phrase.replace(/^(AI|UI|HP|MP|OCN|PTW|SAM|ZOC|FLC|PCX|INI|BIQ)\s+/i, '').trim() || phrase;
+
+  if (lower.startsWith('do_not_')) return `Prevents ${tail}.`;
+  if (lower.startsWith('dont_')) return `Prevents ${tail}.`;
+  if (lower.startsWith('no_')) return `Prevents ${tail}.`;
+  if (lower.startsWith('enable_')) return `Enables ${tail}.`;
+  if (lower.startsWith('disable_')) return `Disables ${tail}.`;
+  if (lower.startsWith('allow_')) return `Allows ${tail}.`;
+  if (lower.startsWith('prevent_')) return `Prevents ${tail}.`;
+  if (lower.startsWith('remove_')) return `Removes ${tail}.`;
+  if (lower.startsWith('show_')) return `Shows ${tail}.`;
+  if (lower.startsWith('hide_')) return `Hides ${tail}.`;
+  if (lower.startsWith('warn_')) return `Warns about ${tail}.`;
+  if (lower.startsWith('replace_')) return `Replaces ${tail}.`;
+  if (lower.startsWith('patch_') || lower.startsWith('fix_')) return `Fixes ${tail}.`;
+  if (lower.startsWith('measure_')) return `Measures ${tail}.`;
+  if (lower.startsWith('optimize_')) return `Improves ${tail}.`;
+  if (lower.startsWith('use_')) return `Uses ${tail}.`;
+  if (lower.startsWith('share_')) return `Shares ${tail}.`;
+  if (lower.startsWith('toggle_')) return `Toggles ${tail}.`;
+  if (lower.startsWith('cut_')) return `Reduces ${tail}.`;
+  if (lower.startsWith('convert_')) return `Converts ${tail}.`;
+  if (lower.startsWith('include_')) return `Includes ${tail}.`;
+  if (lower.startsWith('exclude_')) return `Excludes ${tail}.`;
+  if (lower.startsWith('minimum_')) return `Sets the minimum ${tail.replace(/^minimum\s+/i, '')}.`;
+  if (lower.startsWith('max_')) return `Sets the maximum ${tail.replace(/^max\s+/i, '')}.`;
+  if (lower.endsWith('_percent')) return `Sets ${tail}.`;
+  if (lower.endsWith('_ratio')) return `Sets ${tail}.`;
+  if (lower.endsWith('_duration')) return `Sets how long ${tail} lasts.`;
+  if (lower.endsWith('_threshold')) return `Sets the threshold for ${tail}.`;
+  if (lower.endsWith('_limit')) return `Sets the limit for ${tail}.`;
+  if (lower.endsWith('_mode')) return `Chooses the mode for ${tail}.`;
+  if (lower.endsWith('_strategy')) return `Chooses the strategy for ${tail}.`;
+  if (lower.endsWith('_rules')) return `Chooses the rules for ${tail}.`;
+  if (lower.endsWith('_count')) return `Sets the count for ${tail}.`;
+  if (lower.includes('_count_')) return `Sets the count for ${tail}.`;
+  if (lower.includes('_number_')) return `Sets the number for ${tail}.`;
+  if (lower.startsWith('ai_')) return `Controls ${tail}.`;
+  return `Controls ${tail}.`;
+}
+
+function getBaseFieldDescription(key, fieldDocs) {
+  const cleanKey = String(key || '').trim();
+  if (!cleanKey) return '';
+  if (Object.prototype.hasOwnProperty.call(BASE_FIELD_DETAILS, cleanKey)) {
+    return BASE_FIELD_DETAILS[cleanKey];
+  }
+  const doc = normalizeBaseFieldDoc((fieldDocs && fieldDocs[cleanKey]) || '');
+  return doc || describeBaseFieldFromKey(cleanKey);
+}
+
+function escapeRegex(text) {
+  return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function appendBaseFieldDescriptionText(parent, text, knownKeys) {
+  const desc = String(text || '');
+  if (!desc) return;
+  const keys = Array.from(knownKeys || [])
+    .map((key) => String(key || '').trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  if (keys.length === 0) {
+    parent.appendChild(document.createTextNode(desc));
+    return;
+  }
+
+  const pattern = new RegExp('(`[^`]+?`)|\\b(' + keys.map(escapeRegex).join('|') + ')\\b', 'g');
+  let lastIndex = 0;
+  let match;
+  while ((match = pattern.exec(desc)) !== null) {
+    if (match.index > lastIndex) {
+      parent.appendChild(document.createTextNode(desc.slice(lastIndex, match.index)));
+    }
+    const key = (match[1] ? match[1].slice(1, -1) : match[2]).trim();
+    const isKnownRef = knownKeys instanceof Set && knownKeys.has(key.toLowerCase());
+    if (isKnownRef) {
+      const ref = document.createElement('button');
+      ref.type = 'button';
+      ref.className = 'field-ref-link';
+      ref.textContent = key;
+      ref.title = `Jump to ${toFriendlyKey(key)}`;
+      ref.dataset.baseRefKey = key.toLowerCase();
+      parent.appendChild(ref);
+    } else {
+      const code = document.createElement('code');
+      code.textContent = key;
+      parent.appendChild(code);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < desc.length) {
+    parent.appendChild(document.createTextNode(desc.slice(lastIndex)));
+  }
 }
 
 function toFriendlyKey(key) {
@@ -3842,18 +4146,31 @@ function getC3xReleaseInfo(rawKey) {
   };
 }
 
-function createBaseMeta(row, fieldDocs) {
+function createBaseMeta(row, fieldDocs, knownKeys, onFieldRefClick) {
   const meta = document.createElement('div');
   meta.className = 'field-meta-block';
-  const desc = (fieldDocs && fieldDocs[row.key]) || BASE_FIELD_DETAILS[row.key] || '';
+  const desc = getBaseFieldDescription(row.key, fieldDocs);
   const source = document.createElement('div');
   source.className = 'field-meta source';
-  source.textContent = getBaseFieldSource(row);
+  const key = document.createElement('span');
+  key.className = 'field-meta-key';
+  key.textContent = row.key;
+  source.appendChild(key);
+  const file = document.createElement('span');
+  file.textContent = getBaseFieldSource(row);
+  source.appendChild(file);
   meta.appendChild(source);
-  const line = document.createElement('div');
-  line.className = 'field-meta';
-  line.textContent = desc ? `${row.key} - ${desc}` : row.key;
-  meta.appendChild(line);
+  if (desc) {
+    const line = document.createElement('div');
+    line.className = 'field-meta field-description';
+    appendBaseFieldDescriptionText(line, desc, knownKeys);
+    line.querySelectorAll('.field-ref-link').forEach((ref) => {
+      ref.addEventListener('click', () => {
+        if (typeof onFieldRefClick === 'function') onFieldRefClick(ref.dataset.baseRefKey || '');
+      });
+    });
+    meta.appendChild(line);
+  }
   return meta;
 }
 
@@ -5276,6 +5593,54 @@ function renderBaseTab(tab) {
   table.className = 'base-table';
   const rowElements = [];
   const groups = new Map();
+  const baseFieldKeys = new Set((tab.rows || []).map((row) => String(row && row.key || '').trim()).filter(Boolean));
+  state.baseRowElementsByKey = new Map();
+  const focusBaseRowByKey = (rawKey) => {
+    const key = String(rawKey || '').trim().toLowerCase();
+    if (!key) return;
+    const rowEl = state.baseRowElementsByKey.get(key);
+    if (!rowEl) return;
+    const currentNeedle = filterInput.value.trim().toLowerCase();
+    const visibleMatch = !currentNeedle || String(rowEl.textContent || '').toLowerCase().includes(currentNeedle);
+    if (!visibleMatch) {
+      filterInput.value = key;
+      applyFilter();
+    }
+    window.requestAnimationFrame(() => {
+      const scroller = el.tabContent;
+      const scrollerRect = scroller ? scroller.getBoundingClientRect() : null;
+      const rowRect = rowEl.getBoundingClientRect();
+      let targetTop = null;
+      if (scroller && scrollerRect) {
+        const currentTop = scroller.scrollTop || 0;
+        targetTop = Math.max(0, currentTop + (rowRect.top - scrollerRect.top) - Math.max(24, (scrollerRect.height * 0.35)));
+        scroller.scrollTo({ top: targetTop, behavior: 'smooth' });
+      } else {
+        rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      const startPulse = () => {
+        rowEl.classList.add('nav-jump-highlight');
+        window.clearTimeout(rowEl._fieldFocusPulseTimer);
+        rowEl._fieldFocusPulseTimer = window.setTimeout(() => {
+          rowEl.classList.remove('nav-jump-highlight');
+        }, 1500);
+      };
+      if (targetTop == null || !scroller) {
+        startPulse();
+        return;
+      }
+      const settlePulse = () => {
+        const currentTop = scroller.scrollTop || 0;
+        if (Math.abs(currentTop - targetTop) <= 2) {
+          startPulse();
+          return;
+        }
+        rowEl._fieldFocusPulseRaf = window.requestAnimationFrame(settlePulse);
+      };
+      window.cancelAnimationFrame(rowEl._fieldFocusPulseRaf || 0);
+      rowEl._fieldFocusPulseRaf = window.requestAnimationFrame(settlePulse);
+    });
+  };
   for (const row of tab.rows) {
     const sectionName = (tab.sectionByKey && tab.sectionByKey[row.key]) || 'General';
     if (!groups.has(sectionName)) {
@@ -5354,7 +5719,7 @@ function renderBaseTab(tab) {
     keyHead.appendChild(overrideBadge);
     keyTitle.appendChild(keyHead);
     keyWrap.appendChild(keyTitle);
-    keyWrap.appendChild(createBaseMeta(row, tab.fieldDocs));
+    keyWrap.appendChild(createBaseMeta(row, tab.fieldDocs, baseFieldKeys, focusBaseRowByKey));
 
     r.appendChild(keyWrap);
 
@@ -5375,8 +5740,9 @@ function renderBaseTab(tab) {
     groupInfo.rowsWrap.appendChild(r);
     groupInfo.rowCount += 1;
     const rawKey = String(row && row.key || '').trim();
+    state.baseRowElementsByKey.set(rawKey.toLowerCase(), r);
     const friendlyName = toFriendlyKey(rawKey);
-    const docs = String((tab.fieldDocs && tab.fieldDocs[rawKey]) || '').trim();
+    const docs = getBaseFieldDescription(rawKey, tab.fieldDocs);
     const searchText = `${rawKey} ${friendlyName} ${docs}`.toLowerCase();
     rowElements.push({ key: rawKey.toLowerCase(), searchText, el: r, group: groupInfo.group });
   }
@@ -6475,19 +6841,27 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
             holder.appendChild(canvas);
           })
           .catch(() => {});
+        return;
       }
+      return;
     }
-    return;
+    if (tabKey !== 'civilizations') {
+      return;
+    }
   }
-  const key = JSON.stringify({
-    kind: 'list-thumb',
-    tabKey,
-    entry: entry.civilopediaKey,
-    assetPath,
-    civ3Path: state.settings.civ3Path,
-    scenarioPath: state.settings.scenarioPath,
-    scenarioPaths: getScenarioPreviewPathsKey()
-  });
+  const candidatePaths = [];
+  const addCandidate = (value) => {
+    const candidate = String(value || '').trim();
+    if (!candidate || candidatePaths.includes(candidate)) return;
+    candidatePaths.push(candidate);
+  };
+  if (tabKey === 'civilizations') {
+    (Array.isArray(entry && entry.iconPaths) ? entry.iconPaths : []).forEach(addCandidate);
+    (Array.isArray(entry && entry.racePaths) ? entry.racePaths : []).forEach(addCandidate);
+  }
+  addCandidate(assetPath);
+  if (candidatePaths.length === 0) return;
+
   const paint = (preview) => {
     const canvas = document.createElement('canvas');
     canvas.width = 28;
@@ -6498,24 +6872,47 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
     holder.appendChild(canvas);
   };
 
-  if (state.previewCache.has(key)) {
-    paint(state.previewCache.get(key));
-    return;
-  }
+  const tryCandidate = (index) => {
+    if (index >= candidatePaths.length) return;
+    const candidatePath = candidatePaths[index];
+    const key = JSON.stringify({
+      kind: 'list-thumb',
+      tabKey,
+      entry: entry.civilopediaKey,
+      civilopediaKey: tabKey === 'civilizations' ? String(entry.civilopediaKey || '') : '',
+      assetPath: candidatePath,
+      civ3Path: state.settings.civ3Path,
+      scenarioPath: state.settings.scenarioPath,
+      scenarioPaths: getScenarioPreviewPathsKey()
+    });
 
-  window.c3xManager.getPreview({
-    kind: 'civilopediaIcon',
-    civ3Path: state.settings.civ3Path,
-    scenarioPath: state.settings.scenarioPath,
-    scenarioPaths: getScenarioPreviewPaths(),
-    assetPath
-  })
-    .then((res) => {
-      if (!res || !res.ok) return;
-      setPreviewCache(key, res);
-      if (holder.isConnected) paint(res);
+    if (state.previewCache.has(key)) {
+      paint(state.previewCache.get(key));
+      return;
+    }
+
+    window.c3xManager.getPreview({
+      kind: 'civilopediaIcon',
+      civ3Path: state.settings.civ3Path,
+      scenarioPath: state.settings.scenarioPath,
+      scenarioPaths: getScenarioPreviewPaths(),
+      assetPath: candidatePath,
+      civilopediaKey: tabKey === 'civilizations' ? String(entry.civilopediaKey || '') : ''
     })
-    .catch(() => {});
+      .then((res) => {
+        if (!res || !res.ok) {
+          tryCandidate(index + 1);
+          return;
+        }
+        setPreviewCache(key, res);
+        if (holder.isConnected) paint(res);
+      })
+      .catch(() => {
+        tryCandidate(index + 1);
+      });
+  };
+
+  tryCandidate(0);
 }
 
 function renderUnitAnimationPanel(tabKey, entry, host, editable) {
@@ -8305,7 +8702,7 @@ const BIQ_STRUCTURE_FIELD_HIDDEN = {
   all: new Set(['byte_length', 'data_length', 'datalength', 'note', 'civilopediaentry', 'possible_resources_mask']),
   GAME: new Set(['playable_civ_ids', 'numberofplayablecivs']),
   LEAD: new Set([]),
-  RULE: new Set([]),
+  RULE: new Set(['name']),
   TERR: new Set([]),
   TFRM: new Set([]),
   WSIZ: new Set([]),
@@ -8404,7 +8801,7 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
     fields: {
       title: { group: 'Scenario', control: 'text' },
       description: { group: 'Scenario', control: 'text' },
-      scenariosearchfolders: { group: 'Scenario', control: 'text', label: 'Scenario Search Folders' },
+      scenariosearchfolders: { group: 'Scenario', control: 'text', label: 'Scenario Search Folder' },
       usedefaultrules: { group: 'Game Options', control: 'bool', label: 'Use Default Rules' },
       debugmode: { group: 'Map Options', control: 'bool' },
       numberofplayablecivs: { group: 'Player Options', control: 'number', min: 1, max: 32, label: 'Number of Players' },
@@ -8511,7 +8908,7 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       'chancetointerceptairmissions', 'chancetointerceptstealthmissions', 'citiesforarmy',
       'citizenvalueinshields', 'shieldcostingold', 'basecapitalizationrate', 'forestvalueinshields', 'shieldvalueingold',
       'numspaceshipparts',
-      'roadmovementrate', 'upgradecost', 'foodconsumptionpercitizen', 'startingtreasury', 'goldenageduration', 'defaultdifficultylevel', 'defaultmoneyresource',
+      'roadmovementrate', 'upgradecost', 'foodconsumptionpercitizen', 'startingtreasury', 'goldenageduration', 'defaultdifficultylevel', 'defaultmoneyresource', 'borderexpansionmultiplier', 'borderfactor',
       'towndefencebonus', 'citydefencebonus', 'metropolisdefencebonus', 'fortressdefencebonus', 'riverdefensivebonus', 'fortificationsdefencebonus', 'citizendefensivebonus', 'buildingdefensivebonus',
       'questionmark1', 'questionmark2', 'questionmark3', 'questionmark4'
     ],
@@ -8555,6 +8952,8 @@ const BIQ_STRUCTURE_RULE_SCHEMAS = {
       goldenageduration: { group: 'Other', control: 'number', label: 'Golden Age Duration' },
       defaultdifficultylevel: { group: 'Other', control: 'reference', label: 'Default AI Difficulty' },
       defaultmoneyresource: { group: 'Other', control: 'reference', label: 'Default Money Resource' },
+      borderexpansionmultiplier: { group: 'Other', control: 'number', label: 'Level Multiplier' },
+      borderfactor: { group: 'Other', control: 'number', label: 'Border Factor' },
       town_defence_bonus: { group: 'Defensive Bonuses', control: 'number', label: 'Town' },
       towndefencebonus: { group: 'Defensive Bonuses', control: 'number', label: 'Town' },
       city_defence_bonus: { group: 'Defensive Bonuses', control: 'number', label: 'City' },
@@ -9500,6 +9899,7 @@ function shouldHideBiqField(tabKey, field) {
   const base = String(field && (field.baseKey || field.key) || '').toLowerCase();
   const canon = base.replace(/[^a-z0-9]/g, '');
   if (!base) return true;
+  if (tabKey === 'rules' && canon === 'name') return true;
   if ((BIQ_FIELD_HIDDEN.all && (BIQ_FIELD_HIDDEN.all.has(base) || BIQ_FIELD_HIDDEN.all.has(canon)))) return true;
   if (tabKey === 'civilizations' && (/^freetech\d+index$/.test(canon) || isCivilizationNameListItemField(field))) return true;
   if (tabKey === 'units' && (UNIT_BOTTOM_LIST_HIDDEN_KEYS.has(base) || UNIT_BOTTOM_LIST_HIDDEN_KEYS.has(canon))) return true;
@@ -9778,30 +10178,36 @@ function renderTerrainValuesTable(groupCard, groupFields, tab) {
   return pairDefs.flatMap(([regularKey, landmarkKey]) => [byKey.get(regularKey), byKey.get(landmarkKey)]).filter(Boolean);
 }
 
-function renderRuleCitySizeLimitsTable(groupCard, groupFields, entry, referenceEditable) {
+function renderRuleCitySizeLimitsTable(groupCard, groupFields, entry, referenceEditable, options = {}) {
   const byKey = new Map(groupFields.map((field) => [normalizeRuleLookupKey(field && (field.baseKey || field.key)), field]));
+  const showInlineLabel = options.showInlineLabel !== false;
   const tableRow = document.createElement('div');
   tableRow.className = 'rule-row';
-  const label = document.createElement('label');
-  label.className = 'field-meta';
-  label.textContent = 'City Size Limits';
-  tableRow.appendChild(label);
+  if (showInlineLabel) {
+    const label = document.createElement('label');
+    label.className = 'field-meta';
+    label.textContent = 'City Size Limits';
+    tableRow.appendChild(label);
+  } else {
+    const spacer = document.createElement('div');
+    spacer.className = 'field-meta';
+    spacer.setAttribute('aria-hidden', 'true');
+    tableRow.appendChild(spacer);
+  }
 
   const controlWrap = document.createElement('div');
   controlWrap.className = 'rule-control';
-  const table = document.createElement('table');
-  table.className = 'time-progression-table rule-city-size-table';
-  table.style.tableLayout = 'fixed';
-  const thead = document.createElement('thead');
-  const headRow = document.createElement('tr');
-  ['', 'Name', 'Maximum Size'].forEach((title) => {
-    const th = document.createElement('th');
-    th.textContent = title;
-    headRow.appendChild(th);
+  const panel = document.createElement('div');
+  panel.className = 'rule-city-size-panel';
+  const grid = document.createElement('div');
+  grid.className = 'rule-city-size-grid';
+
+  ['', 'Name', 'Maximum Size'].forEach((title, index) => {
+    const header = document.createElement('div');
+    header.className = index === 0 ? 'rule-city-size-corner' : 'rule-city-size-header';
+    header.textContent = title;
+    grid.appendChild(header);
   });
-  thead.appendChild(headRow);
-  table.appendChild(thead);
-  const tbody = document.createElement('tbody');
 
   const rows = [
     { level: 'Level One', nameKey: 'townname', sizeKey: 'maxcity1size' },
@@ -9809,15 +10215,17 @@ function renderRuleCitySizeLimitsTable(groupCard, groupFields, entry, referenceE
     { level: 'Level Three', nameKey: 'metropolisname', sizeKey: null }
   ];
   const makeNameCell = (field, placeholder) => {
-    const td = document.createElement('td');
+    const cell = document.createElement('div');
+    cell.className = 'rule-city-size-cell';
     const spec = getBiqStructureFieldSpec('RULE', field) || {};
     if (!field) {
-      td.textContent = '(n/a)';
-      return td;
+      cell.textContent = '(n/a)';
+      return cell;
     }
     if (referenceEditable) {
       const input = document.createElement('input');
       input.type = 'text';
+      input.className = 'rule-city-size-input';
       input.value = String(field.value || '');
       input.placeholder = placeholder || '';
       input.addEventListener('input', () => {
@@ -9825,50 +10233,51 @@ function renderRuleCitySizeLimitsTable(groupCard, groupFields, entry, referenceE
         field.value = String(input.value || '');
         setDirty(true);
       });
-      td.appendChild(input);
-      return td;
+      cell.appendChild(input);
+      return cell;
     }
-    td.textContent = String(field.value || '');
-    if (spec.label) td.title = spec.label;
-    return td;
+    cell.textContent = String(field.value || '');
+    if (spec.label) cell.title = spec.label;
+    return cell;
   };
   const makeSizeCell = (field) => {
-    const td = document.createElement('td');
+    const cell = document.createElement('div');
+    cell.className = 'rule-city-size-cell';
     if (!field) {
+      cell.classList.add('rule-city-size-cell-empty');
       const none = document.createElement('span');
       none.className = 'hint';
       none.textContent = '—';
-      td.appendChild(none);
-      return td;
+      cell.appendChild(none);
+      return cell;
     }
     if (referenceEditable) {
       const input = document.createElement('input');
       input.type = 'number';
+      input.className = 'rule-city-size-input';
       input.value = String(parseIntFromDisplayValue(field.value) ?? '');
       input.addEventListener('input', () => {
         rememberUndoSnapshot();
         field.value = input.value;
         setDirty(true);
       });
-      td.appendChild(input);
-      return td;
+      cell.appendChild(input);
+      return cell;
     }
-    td.textContent = String(field.value || '0');
-    return td;
+    cell.textContent = String(field.value || '0');
+    return cell;
   };
 
   rows.forEach((rowDef) => {
-    const tr = document.createElement('tr');
-    const rowHead = document.createElement('th');
-    rowHead.scope = 'row';
-    rowHead.textContent = rowDef.level;
-    tr.appendChild(rowHead);
-    tr.appendChild(makeNameCell(byKey.get(rowDef.nameKey), rowDef.level));
-    tr.appendChild(makeSizeCell(byKey.get(rowDef.sizeKey)));
-    tbody.appendChild(tr);
+    const rowHead = document.createElement('div');
+    rowHead.className = 'rule-city-size-level';
+    rowHead.textContent = `${rowDef.level}:`;
+    grid.appendChild(rowHead);
+    grid.appendChild(makeNameCell(byKey.get(rowDef.nameKey), rowDef.level));
+    grid.appendChild(makeSizeCell(byKey.get(rowDef.sizeKey)));
   });
-  table.appendChild(tbody);
-  controlWrap.appendChild(table);
+  panel.appendChild(grid);
+  controlWrap.appendChild(panel);
   tableRow.appendChild(controlWrap);
   groupCard.appendChild(tableRow);
 
@@ -13583,7 +13992,7 @@ function openGenerateMapModal(tab) {
     generateMapModal.body.appendChild(form);
     if (generateMapModal.confirmBtn) {
       generateMapModal.confirmBtn.textContent = hasMapData(tab) ? 'Generate New Map' : 'Generate';
-      generateMapModal.confirmBtn.onclick = () => {
+      generateMapModal.confirmBtn.onclick = async () => {
         try {
           const hadMap = hasMapData(tab);
           const mapOverlay = ensureMapModalNode();
@@ -13610,7 +14019,7 @@ function openGenerateMapModal(tab) {
             mapSeed: mapSeedInput ? mapSeedInput.value : modalSeed
           };
           rememberUndoSnapshot();
-          const generatedSections = buildGeneratedMapSections(tab, generation);
+          const generatedSections = await buildGeneratedMapSections(tab, generation);
           applyGeneratedMapSectionsToTab(tab, generatedSections, 'set');
           setDirty(true);
           closeGenerateMapModal();
@@ -15633,9 +16042,15 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
 
 async function promptReferenceDeleteAction({ tab, selectedEntry }) {
   if (!el.entityModalOverlay || !selectedEntry) return false;
-  if (el.entityModalTitle) el.entityModalTitle.textContent = `Delete ${String((tab && tab.title) || 'Entry').replace(/s$/, '')}`;
+  const singular = String((tab && tab.title) || 'Entry').replace(/s$/, '');
+  const name = String(selectedEntry.name || selectedEntry.civilopediaKey || '').trim() || 'this item';
+  if (el.entityModalTitle) el.entityModalTitle.textContent = `Delete ${singular}`;
   if (el.entityModalBody) {
-    el.entityModalBody.textContent = `Delete "${selectedEntry.name || selectedEntry.civilopediaKey}"? Related BIQ references will be relinked on save when supported by the BIQ format.`;
+    if (String(tab && tab.key || '').trim() === 'units' || String(tab && tab.title || '').trim().toLowerCase() === 'units') {
+      el.entityModalBody.textContent = `Delete "${name}" from this scenario? This can affect players, rules, buildings, or units already placed on the map. If anything still depends on it, saving will stop and tell you what still needs to be changed first.`;
+    } else {
+      el.entityModalBody.textContent = `Delete "${name}" from this scenario? If anything else still uses it, saving will stop and tell you what still needs to be changed first.`;
+    }
   }
   if (el.entityModalConfirm) {
     el.entityModalConfirm.textContent = 'Delete';
@@ -18095,7 +18510,7 @@ function renderBiqTab(tab) {
           timeProgressionModel.rows.forEach((timeRow, idx) => {
             const tr = document.createElement('tr');
             const secTd = document.createElement('td');
-            secTd.textContent = 'Next';
+            secTd.textContent = idx === 0 ? 'First' : 'Next';
             tr.appendChild(secTd);
             const turnsTd = document.createElement('td');
             const perTurnTd = document.createElement('td');
@@ -18149,6 +18564,10 @@ function renderBiqTab(tab) {
           tableRow.appendChild(tableWrap);
           groupCard.appendChild(tableRow);
         }
+        if (selected.code === 'RULE' && groupName === 'City Size Limits') {
+          renderRuleCitySizeLimitsTable(groupCard, groupFields, record, !tab.readOnly, { showInlineLabel: false })
+            .forEach((field) => consumedSpecialFields.add(field));
+        }
         if (selected.code === 'TERR' && groupName === 'Terrain Values') {
           renderTerrainValuesTable(groupCard, groupFields, tab).forEach((terrainField) => consumedSpecialFields.add(terrainField));
         }
@@ -18180,8 +18599,8 @@ function renderBiqTab(tab) {
           }
           label.textContent = displayLabel;
           const biqFieldKey = String(field.baseKey || field.key || '');
-          const lockNote = (selected.code === 'GAME' && isLockedGameField(baseKeyRaw))
-            ? '\nLock: Managed by Add/Copy Scenario. Editing is locked to prevent broken search paths.'
+          const lockNote = (selected.code === 'GAME' && isScenarioSearchFolderField(baseKeyRaw))
+            ? '\nBrowse to change the scenario search folder. Reload happens after save so paths and content stay in sync.'
             : '';
           attachRichTooltip(
             label,
@@ -18240,15 +18659,6 @@ function renderBiqTab(tab) {
               text.textContent = selectedLabels.length ? selectedLabels.join(', ') : '(none)';
               controlWrap.appendChild(text);
             }
-            row.appendChild(controlWrap);
-            groupCard.appendChild(row);
-            return;
-          }
-          if (selected.code === 'GAME' && isLockedGameField(baseKey)) {
-            const locked = document.createElement('div');
-            locked.className = 'key-display-chip';
-            locked.textContent = String(field.value || '(none)');
-            controlWrap.appendChild(locked);
             row.appendChild(controlWrap);
             groupCard.appendChild(row);
             return;
@@ -18466,7 +18876,39 @@ function renderBiqTab(tab) {
                 maybeSyncRecordNameFromField(field, input.value);
                 setDirty(true);
               });
+              if (selected.code === 'GAME' && isScenarioSearchFolderField(baseKey)) {
+                input.addEventListener('change', async () => {
+                  const normalized = normalizeScenarioSearchFolderFieldValue(input.value);
+                  if (!await confirmScenarioSearchFolderChange(normalized)) {
+                    input.value = normalizeScenarioSearchFolderFieldValue(field.value) || '';
+                    return;
+                  }
+                  if (String(field.value || '') === (normalized || '(none)')) {
+                    field.value = normalized || '(none)';
+                  }
+                  await reloadScenarioFromEditedSearchFolder(normalized);
+                });
+              }
               controlWrap.appendChild(input);
+              if (selected.code === 'GAME' && isScenarioSearchFolderField(baseKey)) {
+                const browseBtn = document.createElement('button');
+                browseBtn.type = 'button';
+                browseBtn.className = 'secondary';
+                browseBtn.textContent = 'Browse...';
+                browseBtn.addEventListener('click', async () => {
+                  if (!window.c3xManager || typeof window.c3xManager.pickDirectory !== 'function') return;
+                  const selectedDir = await window.c3xManager.pickDirectory();
+                  if (!selectedDir) return;
+                  const nextValue = toScenarioSearchFolderFieldValue(selectedDir);
+                  if (!await confirmScenarioSearchFolderChange(nextValue)) return;
+                  rememberUndoSnapshot();
+                  input.value = nextValue;
+                  field.value = nextValue;
+                  setDirty(true);
+                  await reloadScenarioFromEditedSearchFolder(nextValue);
+                });
+                controlWrap.appendChild(browseBtn);
+              }
             }
           } else {
             const text = document.createElement('div');
@@ -18683,7 +19125,124 @@ function getMapGenerationWorldSizeSpec(tab, preferredIndex = MAP_GENERATION_DEFA
   return preferred || fallback;
 }
 
-function buildGeneratedMapSections(tab, generation = {}) {
+function normalizeMapGenerationResourceType(rawValue) {
+  const direct = parseIntLoose(rawValue, NaN);
+  if (direct === 0 || direct === 1 || direct === 2) return direct;
+  const text = String(rawValue || '').trim().toLowerCase();
+  if (text.includes('lux')) return 1;
+  if (text.includes('strateg')) return 2;
+  return 0;
+}
+
+function getMapGenerationResourceEntries(bundle = state.bundle) {
+  const tab = bundle && bundle.tabs && bundle.tabs.resources;
+  return tab && Array.isArray(tab.entries) ? tab.entries : [];
+}
+
+function getMapGenerationTerrainRecords(bundle = state.bundle) {
+  const tab = bundle && bundle.tabs && bundle.tabs.terrain;
+  const sections = tab && Array.isArray(tab.sections) ? tab.sections : [];
+  const terrSection = sections.find((section) => String(section && section.code || '').toUpperCase() === 'TERR');
+  return terrSection && Array.isArray(terrSection.records) ? terrSection.records : [];
+}
+
+function hasUsableMapGenerationRuleData(bundle = state.bundle) {
+  const resourceEntries = getMapGenerationResourceEntries(bundle);
+  const terrainRecords = getMapGenerationTerrainRecords(bundle);
+  const hasIndexedResources = resourceEntries.some((entry) => Number.isFinite(entry && entry.biqIndex));
+  return hasIndexedResources && terrainRecords.length > 0;
+}
+
+async function getMapGenerationRuleBundle() {
+  if (hasUsableMapGenerationRuleData(state.bundle)) return state.bundle;
+  const cacheKey = JSON.stringify({
+    civ3Path: state.settings && state.settings.civ3Path || '',
+    c3xPath: state.settings && state.settings.c3xPath || ''
+  });
+  if (state.mapGenerationRuleBundleCache && state.mapGenerationRuleBundleCacheKey === cacheKey) {
+    return state.mapGenerationRuleBundleCache;
+  }
+  const bundle = await window.c3xManager.loadBundle({
+    mode: 'global',
+    civ3Path: state.settings && state.settings.civ3Path || '',
+    c3xPath: state.settings && state.settings.c3xPath || '',
+    scenarioPath: ''
+  });
+  state.mapGenerationRuleBundleCache = bundle;
+  state.mapGenerationRuleBundleCacheKey = cacheKey;
+  return bundle;
+}
+
+function getMapGenerationResourceDefs(bundle = state.bundle) {
+  const entries = getMapGenerationResourceEntries(bundle);
+  const usingFallbackIds = !entries.some((entry) => Number.isFinite(entry && entry.biqIndex));
+  const idByCivilopediaKey = {};
+  if (usingFallbackIds && state.mapGenerationRuleBundleCache && state.mapGenerationRuleBundleCache !== bundle) {
+    getMapGenerationResourceEntries(state.mapGenerationRuleBundleCache).forEach((entry, idx) => {
+      const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+      const id = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : idx;
+      if (key) idByCivilopediaKey[key] = id;
+    });
+  }
+  return entries
+    .map((entry, fallbackIdx) => {
+      const civilopediaKey = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+      const fallbackId = Object.prototype.hasOwnProperty.call(idByCivilopediaKey, civilopediaKey)
+        ? idByCivilopediaKey[civilopediaKey]
+        : fallbackIdx;
+      const id = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackId;
+      const typeField = getFieldByBaseKey(entry, 'type');
+      const appearanceField = getFieldByBaseKey(entry, 'appearanceratio');
+      const disappearanceField = getFieldByBaseKey(entry, 'disapperanceprobability');
+      return {
+        id,
+        name: String(entry && (entry.name || entry.civilopediaKey) || `Resource ${id + 1}`),
+        type: normalizeMapGenerationResourceType(typeField && typeField.value),
+        appearanceRatio: parseIntLoose(appearanceField && appearanceField.value, 0),
+        disappearanceProbability: parseIntLoose(disappearanceField && disappearanceField.value, 0)
+      };
+    })
+    .sort((a, b) => a.id - b.id);
+}
+
+function getMapResourceIconIndexById() {
+  const iconById = {};
+  const entries = getMapGenerationResourceEntries(state.bundle);
+  const parsedIcons = [];
+  entries.forEach((entry, idx) => {
+    const resourceId = Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : idx;
+    const parsedIcon = parseIntLoose(getFieldByBaseKey(entry, 'icon')?.value, NaN);
+    parsedIcons.push(parsedIcon);
+    iconById[resourceId] = Number.isFinite(parsedIcon) && parsedIcon >= 0 ? parsedIcon : idx;
+  });
+  const distinctIcons = new Set(parsedIcons.filter((value) => Number.isFinite(value) && value >= 0));
+  if (distinctIcons.size <= 1 && entries.length > 1) {
+    entries.forEach((entry, idx) => {
+      const resourceId = Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : idx;
+      iconById[resourceId] = idx;
+    });
+  }
+  return iconById;
+}
+
+function getMapGenerationTerrainResourceMasks(bundle = state.bundle, resourceDefs = getMapGenerationResourceDefs(bundle)) {
+  const entries = getMapGenerationTerrainRecords(bundle);
+  const fallbackMaskRow = new Array(resourceDefs.length).fill(true);
+  const fallbackMasks = new Array(14).fill(null).map((_row, terrainId) => (
+    terrainId <= BIQ_TERRAIN.VOLCANO ? fallbackMaskRow.slice() : new Array(resourceDefs.length).fill(false)
+  ));
+  const byId = new Array(14).fill(null);
+  entries.forEach((entry, fallbackIdx) => {
+    const id = Number.isFinite(entry && entry.biqIndex) ? entry.biqIndex : fallbackIdx;
+    if (id < 0 || id >= byId.length) return;
+    byId[id] = getTerrainResourceMask(entry);
+  });
+  const normalized = byId.map((mask) => Array.isArray(mask) ? mask.map((value) => !!value) : []);
+  const hasAny = normalized.some((mask) => Array.isArray(mask) && mask.some(Boolean));
+  return hasAny ? normalized : fallbackMasks;
+}
+
+async function buildGeneratedMapSections(tab, generation = {}) {
   const worldSizeSpec = getMapGenerationWorldSizeSpec(tab, generation.worldSize);
   const requestedWidth = Number.parseInt(String(generation.width ?? worldSizeSpec.width ?? MAP_GENERATION_DEFAULTS.width), 10);
   const requestedHeight = Number.parseInt(String(generation.height ?? worldSizeSpec.height ?? MAP_GENERATION_DEFAULTS.height), 10);
@@ -18697,6 +19256,9 @@ function buildGeneratedMapSections(tab, generation = {}) {
   const mapFlags = (xWrapping ? 1 : 0) | (yWrapping ? 2 : 0) | (polarIceCaps ? 4 : 0);
   const mapSeedRaw = Number.parseInt(String(generation.mapSeed ?? generateRandomMapSeed()), 10);
   const mapSeed = Number.isFinite(mapSeedRaw) ? mapSeedRaw : generateRandomMapSeed();
+  const ruleBundle = await getMapGenerationRuleBundle();
+  const resourceDefs = getMapGenerationResourceDefs(ruleBundle);
+  const terrainResourceMasks = getMapGenerationTerrainResourceMasks(ruleBundle, resourceDefs);
   const generationSpec = {
     width: evenWidth,
     height,
@@ -18711,12 +19273,13 @@ function buildGeneratedMapSections(tab, generation = {}) {
     selectedOcean: generation.selectedOcean ?? MAP_GENERATION_DEFAULTS.selectedOcean,
     mapSeed,
     numCivs: Math.max(1, Number(worldSizeSpec.numCivs) || 8),
-    distanceBetweenCivs: Math.max(1, Number(worldSizeSpec.distanceBetweenCivs) || 12)
+    distanceBetweenCivs: Math.max(1, Number(worldSizeSpec.distanceBetweenCivs) || 12),
+    resourceDefs,
+    terrainResourceMasks
   };
-  const generatedWorld = (vanillaMapParity && typeof vanillaMapParity.loadVanillaSeed1FixtureMap === 'function')
-    ? (vanillaMapParity.loadVanillaSeed1FixtureMap(generationSpec)
-      || ((mapGeneratorCore && typeof mapGeneratorCore.generate === 'function') ? mapGeneratorCore.generate(generationSpec) : null))
-    : ((mapGeneratorCore && typeof mapGeneratorCore.generate === 'function') ? mapGeneratorCore.generate(generationSpec) : null);
+  const generatedWorld = (mapGeneratorCore && typeof mapGeneratorCore.generate === 'function')
+    ? mapGeneratorCore.generate(generationSpec)
+    : null;
   const actuals = generatedWorld && generatedWorld.actuals ? generatedWorld.actuals : null;
   const tileCount = generatedWorld && Array.isArray(generatedWorld.tiles)
     ? generatedWorld.tiles.length
@@ -18764,7 +19327,7 @@ function buildGeneratedMapSections(tab, generation = {}) {
     tileRecords.push(createGeneratedMapRecord(idx, [
       { baseKey: 'riverconnectioninfo', value: generatedTile ? generatedTile.riverConnectionInfo : 0, label: 'River Connection Info' },
       { baseKey: 'border', value: 0, label: 'Border' },
-      { baseKey: 'resource', value: -1, label: 'Resource' },
+      { baseKey: 'resource', value: generatedTile ? generatedTile.resource : -1, label: 'Resource' },
       { baseKey: 'image', value: generatedTile ? generatedTile.image : 0, label: 'Image' },
       { baseKey: 'file', value: generatedTile ? generatedTile.file : 8, label: 'File' },
       { baseKey: 'questionmark', value: 0, label: 'Question Mark' },
@@ -18783,7 +19346,7 @@ function buildGeneratedMapSections(tab, generation = {}) {
       { baseKey: 'qm3', value: 0, label: 'Question Mark 3' },
       { baseKey: 'c3cbaserealterrain', value: packedTerrain, label: 'C3C Base Real Terrain' },
       { baseKey: 'qm4', value: 0, label: 'Question Mark 4' },
-      { baseKey: 'fogofwar', value: generatedTile ? (generatedTile.fogOfWar ?? 0) : 0, label: 'Fog Of War' },
+      { baseKey: 'fogofwar', value: generatedTile ? (generatedTile.fogOfWar ?? 1) : 1, label: 'Fog Of War' },
       { baseKey: 'c3cbonuses', value: generatedTile ? generatedTile.c3cBonuses : 0, label: 'C3C Bonuses' },
       { baseKey: 'qm5', value: 0, label: 'Question Mark 5' }
     ], `Tile ${idx + 1}`));
@@ -19002,7 +19565,7 @@ function decodeBase64ToUint8(b64) {
 
 function requestBiqMapArtAsset(assetKey, assetPath, previewOptions = null) {
   if (!state.settings || !state.settings.civ3Path) return;
-  if (state.biqMapArtCache[assetKey] || state.biqMapArtLoading[assetKey]) return;
+  if (Object.prototype.hasOwnProperty.call(state.biqMapArtCache, assetKey) || state.biqMapArtLoading[assetKey]) return;
   state.biqMapArtLoading[assetKey] = true;
   appendDebugLog('biq-map:asset-load-start', { assetKey, assetPath });
   window.c3xManager.getPreview({
@@ -19021,12 +19584,15 @@ function requestBiqMapArtAsset(assetKey, assetPath, previewOptions = null) {
         if (res.paletteBase64) state.biqMapArtCache[`${assetKey}Palette`] = decodeBase64ToUint8(res.paletteBase64);
         appendDebugLog('biq-map:asset-load-ok', { assetKey, width: canvas.width, height: canvas.height, sourcePath: res.sourcePath });
       } else {
+        state.biqMapArtCache[assetKey] = null;
         appendDebugLog('biq-map:asset-load-decode-failed', { assetKey });
       }
     } else {
+      state.biqMapArtCache[assetKey] = null;
       appendDebugLog('biq-map:asset-load-error', { assetKey, error: res && res.error });
     }
   }).catch(() => {
+    state.biqMapArtCache[assetKey] = null;
     appendDebugLog('biq-map:asset-load-exception', { assetKey });
   }).finally(() => {
     delete state.biqMapArtLoading[assetKey];
@@ -19987,9 +20553,11 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const worldWrapHeight = height * stepY;
   const xWrapFromField = readBoolField(wmapRecord, ['xwrapping', 'x_wrapping', 'x wrapping', 'xwrap']);
   const yWrapFromField = readBoolField(wmapRecord, ['ywrapping', 'y_wrapping', 'y wrapping', 'ywrap']);
+  const polarFromField = readBoolField(wmapRecord, ['polaricecaps', 'polar_ice_caps', 'polar ice caps', 'polaricecap']);
   const wmapFlags = parseIntLoose(getFieldByBaseKey(wmapRecord, 'flags')?.value, 0);
   const xWrap = xWrapFromField == null ? ((wmapFlags & 0x1) === 0x1) : !!xWrapFromField;
   const yWrap = yWrapFromField == null ? ((wmapFlags & 0x2) === 0x2) : !!yWrapFromField;
+  const polarIceCapsEnabled = polarFromField == null ? ((wmapFlags & 0x4) === 0x4) : !!polarFromField;
   const wrapCopyRadiusX = xWrap ? 1 : 0;
   const wrapCopyRadiusY = yWrap ? 1 : 0;
   const wrapCenterOffset = xWrap ? worldWrapSpan * wrapCopyRadiusX : 0;
@@ -20091,6 +20659,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   requestBiqMapArtAsset('jungleHills', 'Art/Terrain/hill jungle.pcx');
   requestBiqMapArtAsset('mountains', 'Art/Terrain/Mountains.pcx');
   requestBiqMapArtAsset('snowMountains', 'Art/Terrain/Mountains-snow.pcx');
+  requestBiqMapArtAsset('polarIcecaps', 'Art/Terrain/polarICEcaps-final.pcx');
   requestBiqMapArtAsset('lmMountains', 'Art/Terrain/LMMountains.pcx');
   requestBiqMapArtAsset('forestMountains', 'Art/Terrain/mountain forests.pcx');
   requestBiqMapArtAsset('jungleMountains', 'Art/Terrain/mountain jungles.pcx');
@@ -20117,11 +20686,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     requestBiqMapNtpPalette(i, file);
   }
 
-  const goodSection = (tab.sections || []).find((s) => s.code === 'GOOD');
-  const goodIconById = {};
-  (goodSection?.records || []).forEach((record, idx) => {
-    goodIconById[idx] = parseIntLoose(getFieldByBaseKey(record, 'icon')?.value, -1);
-  });
+  const goodIconById = getMapResourceIconIndexById();
   const prtoSection = (tab.sections || []).find((s) => s.code === 'PRTO');
   const prtoIndexByName = {};
   const prtoIconById = {};
@@ -21621,6 +22186,45 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       return (geom.xPos % 2 === 0) ? BIQ_TERRAIN.FOREST : BIQ_TERRAIN.JUNGLE;
     };
 
+    const terrainVariantSeed = () => {
+      const x = Number(geom && geom.xPos) || 0;
+      const y = Number(geom && geom.yPos) || 0;
+      const terrainBias = (Number(realTerrain) || 0) * 2654435761;
+      return Math.abs(((x * 1103515245) ^ (y * 12345) ^ (x * y * 97) ^ terrainBias) >>> 0);
+    };
+
+    const localHillyDensity = () => {
+      const probes = [
+        getTileAtCoord(geom.xPos - 2, geom.yPos),
+        getTileAtCoord(geom.xPos + 2, geom.yPos),
+        getTileAtCoord(geom.xPos, geom.yPos - 2),
+        getTileAtCoord(geom.xPos, geom.yPos + 2),
+        getTileAtCoord(geom.xPos - 1, geom.yPos - 1),
+        getTileAtCoord(geom.xPos + 1, geom.yPos - 1),
+        getTileAtCoord(geom.xPos - 1, geom.yPos + 1),
+        getTileAtCoord(geom.xPos + 1, geom.yPos + 1)
+      ];
+      return probes.reduce((count, neighbor) => (
+        count + ((neighbor && isHillyTerrain(terrainInfo(neighbor).realTerrain)) ? 1 : 0)
+      ), 0);
+    };
+
+    const remapDenseHillyIndex = (idx) => {
+      const density = localHillyDensity();
+      if (density < 4) return idx;
+      const seed = terrainVariantSeed();
+      if (idx === 15) {
+        return [15, 7, 11, 13, 14][seed % 5];
+      }
+      if ([3, 6, 9, 12].includes(idx)) {
+        return [3, 6, 9, 12][seed % 4];
+      }
+      if (idx === 5 || idx === 10) {
+        return [5, 10, 15][seed % 3];
+      }
+      return idx;
+    };
+
     const getMountainIndex = () => {
       let idx = 0;
       const nw = getTileAtCoord(geom.xPos - 1, geom.yPos - 1);
@@ -21648,13 +22252,47 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
           return variantGroups[terrainVariantSeed() % variantGroups.length];
         }
       }
-      return idx;
+      return remapDenseHillyIndex(idx);
     };
 
-    const terrainVariantSeed = () => {
-      const x = Number(geom && geom.xPos) || 0;
-      const y = Number(geom && geom.yPos) || 0;
-      return (Math.abs(((x * 1103515245) ^ (y * 12345) ^ (x * y * 97)) >>> 0));
+    const polarCapBand = () => {
+      if (!polarIceCapsEnabled) return null;
+      if (!isWaterTerrain(realTerrain)) return null;
+      if (geom.yPos === 0) return { hemisphere: 'north', rowType: 'solid' };
+      if (geom.yPos === 1) return { hemisphere: 'north', rowType: 'transition' };
+      if (geom.yPos === (height - 2)) return { hemisphere: 'south', rowType: 'transition' };
+      if (geom.yPos === (height - 1)) return { hemisphere: 'south', rowType: 'solid' };
+      return null;
+    };
+
+    const polarCapImageIndex = (band) => {
+      if (!band) return -1;
+      const neighborRow = band.hemisphere === 'north'
+        ? (band.rowType === 'solid' ? 0 : 1)
+        : (band.rowType === 'solid' ? (height - 1) : (height - 2));
+      const west = getTileAtCoord(geom.xPos - 2, neighborRow);
+      const east = getTileAtCoord(geom.xPos + 2, neighborRow);
+      const westWater = west && isWaterTerrain(terrainInfo(west).realTerrain);
+      const eastWater = east && isWaterTerrain(terrainInfo(east).realTerrain);
+      let rowBase = 0;
+      if (band.hemisphere === 'north') {
+        rowBase = band.rowType === 'solid' ? 0 : 8;
+      } else {
+        rowBase = band.rowType === 'solid' ? 16 : 24;
+      }
+      if (!westWater && !eastWater) return rowBase + 0;
+      if (!westWater) return rowBase + 1;
+      if (!eastWater) return rowBase + 2;
+      return rowBase + 3;
+    };
+
+    const drawPolarIceCaps = () => {
+      const band = polarCapBand();
+      if (!band) return;
+      const sheet = state.biqMapArtCache.polarIcecaps;
+      const imageIdx = polarCapImageIndex(band);
+      if (!sheet || imageIdx < 0) return;
+      drawSheetSprite(sheet, 8, 4, imageIdx, sx, sy);
     };
 
     const drawFallbackHillShape = (fillStyle, peakHeight, baseInset = 0) => {
@@ -21863,6 +22501,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     };
 
     if (pass === 'all' || pass === 'tall') {
+      drawPolarIceCaps();
       drawWoodlandOverlay();
       drawHillyTerrainOverlay();
       // Marsh: drawn at defaultYPosition (midY), same as woodlands/hills in Quint.
@@ -24946,12 +25585,21 @@ async function loadBundleAndRender(options = {}) {
     }
 
     state.trackDirty = false;
+    const scenarioSearchFolderOverride = normalizeScenarioSearchFolderFieldValue(options.scenarioSearchFolderOverride || '');
+    const preserveDirtyState = options && options.preserveDirtyState
+      ? {
+          cleanSnapshot: String(options.preserveDirtyState.cleanSnapshot || 'null'),
+          undoSnapshot: options.preserveDirtyState.undoSnapshot ? String(options.preserveDirtyState.undoSnapshot) : null
+        }
+      : null;
     const bundle = await window.c3xManager.loadBundle({
       mode: state.settings.mode,
       c3xPath: state.settings.c3xPath,
       civ3Path: state.settings.civ3Path,
-      scenarioPath: state.settings.scenarioPath
+      scenarioPath: state.settings.scenarioPath,
+      scenarioSearchFolderOverride
     });
+    const cleanSnapshotForLoadedBundle = snapshotEditableTabsFromBundle(bundle);
     if (bundle && bundle.tabs && bundle.tabs.districts && bundle.tabs.districts.model && Array.isArray(bundle.tabs.districts.model.sections)) {
       const districtEffectiveSource = String(bundle.tabs.districts.effectiveSource || '').toLowerCase();
       if (districtEffectiveSource === 'default') {
@@ -25012,8 +25660,28 @@ async function loadBundleAndRender(options = {}) {
     renderActiveTab();
     resetNavigationHistory();
     window.setTimeout(() => {
-      captureCleanSnapshot();
-      state.trackDirty = true;
+      if (preserveDirtyState) {
+        state.cleanSnapshot = preserveDirtyState.cleanSnapshot;
+        state.cleanTabsCache = parseSnapshotTabs(preserveDirtyState.cleanSnapshot);
+        state.undoSnapshot = preserveDirtyState.undoSnapshot;
+        clearDirtyTabCounts();
+        state.isDirty = snapshotTabs() !== state.cleanSnapshot;
+        if (state.isDirty) {
+          updateActiveDirtyCaches();
+        }
+        refreshDirtyUi();
+        refreshTabDirtyBadges();
+        refreshActiveReferenceListDirtyBadges();
+        state.trackDirty = true;
+      } else if (state.settings.mode === 'scenario' && scenarioSearchFolderOverride) {
+        state.cleanSnapshot = cleanSnapshotForLoadedBundle;
+        state.cleanTabsCache = parseSnapshotTabs(cleanSnapshotForLoadedBundle);
+        state.undoSnapshot = cleanSnapshotForLoadedBundle;
+        state.trackDirty = true;
+      } else {
+        captureCleanSnapshot();
+        state.trackDirty = true;
+      }
     }, 0);
     if (!state.hasAutoCollapsedPaths) {
       setPathsCollapsed(true);
@@ -25503,6 +26171,9 @@ function closeSaveProgressModal() {
 }
 
 async function saveCurrentBundle() {
+  if (state.isSaving) {
+    return false;
+  }
   if (!state.bundle) {
     setStatus('Load configs before saving.', true);
     return false;
@@ -25516,9 +26187,15 @@ async function saveCurrentBundle() {
 
   syncSettingsFromInputs();
   await window.c3xManager.setSettings(state.settings);
+  state.isSaving = true;
+  refreshDirtyUi();
 
   const tabsToSave = getTabsForSavePayload();
   const dirtyTabs = Object.keys((state.bundle && state.bundle.tabs) || {}).filter((key) => getTabDirtyCount(key) > 0);
+  const scenarioSearchFolderChanged = didScenarioSearchFolderChangeInTabs(tabsToSave);
+  const shouldReloadForAutoScenarioSearchFolder = state.settings.mode === 'scenario'
+    && Array.isArray(state.bundle && state.bundle.scenarioSearchPaths)
+    && state.bundle.scenarioSearchPaths.length === 0;
   const payload = buildSavePayload({ tabsToSave, dirtyTabs });
   const preparedItems = await previewSaveItems(payload);
   setSaveDetailState({
@@ -25556,15 +26233,19 @@ async function saveCurrentBundle() {
 
     const paths = res.saveReport.map((r) => r.path).join(' | ');
     const biqReport = res.saveReport.find((r) => r.kind === 'biq');
-    markReferenceTabsAsSaved();
-    captureCleanSnapshot();
-    renderActiveTab({ preserveTabScroll: true });
+    await loadBundleAndRender({
+      usePersistedView: true,
+      loadingText: 'Refreshing saved data...'
+    });
     if (biqReport && (Number(biqReport.skipped || 0) > 0 || String(biqReport.warning || '').trim())) {
       const warningText = friendlyBiqWarningText(String(biqReport.warning || ''));
       const suffix = warningText ? ` ${warningText}` : '';
       setStatus(`Saved ${res.saveReport.length} file(s): ${paths} | BIQ applied ${biqReport.applied || 0}, skipped ${biqReport.skipped || 0}.${suffix}`, true);
     } else {
       setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
+    }
+    if ((scenarioSearchFolderChanged || shouldReloadForAutoScenarioSearchFolder) && state.settings.mode === 'scenario') {
+      await loadBundleAndRender({ loadingText: 'Reloading scenario from updated search folder...' });
     }
     return true;
   } catch (err) {
@@ -25583,6 +26264,9 @@ async function saveCurrentBundle() {
     });
     setStatus(`Failed to save: ${err.message}`, true);
     return false;
+  } finally {
+    state.isSaving = false;
+    refreshDirtyUi();
   }
 }
 
@@ -25826,13 +26510,27 @@ async function confirmResolveUnsavedChanges(actionLabel) {
   return false;
 }
 
-function undoOneStep() {
+async function undoOneStep() {
   if (!state.bundle || !state.undoSnapshot) {
     setStatus('No unsaved changes to undo.');
     return;
   }
   try {
     const restoredEditableTabs = JSON.parse(state.undoSnapshot);
+    const restoredSnapshot = String(state.undoSnapshot || 'null');
+    const restoredSearchFolder = getScenarioSearchFolderValueFromTabs(restoredEditableTabs);
+    if (state.settings && state.settings.mode === 'scenario' && state.settings.scenarioPath) {
+      state.previewCache.clear();
+      await loadBundleAndRender({
+        loadingText: 'Restoring scenario...',
+        scenarioSearchFolderOverride: restoredSearchFolder,
+        preserveDirtyState: {
+          cleanSnapshot: restoredSnapshot,
+          undoSnapshot: null
+        },
+        usePersistedView: true
+      });
+    }
     const currentTabs = state.bundle && state.bundle.tabs ? state.bundle.tabs : {};
     const mergedTabs = Object.assign({}, currentTabs);
     EDITABLE_TAB_KEYS.forEach((key) => {
@@ -25843,6 +26541,8 @@ function undoOneStep() {
       }
     });
     state.bundle.tabs = mergedTabs;
+    state.cleanSnapshot = restoredSnapshot;
+    state.cleanTabsCache = parseSnapshotTabs(restoredSnapshot);
     state.undoSnapshot = null;
     state.civilopediaEditorOpen = {};
     state.civilopediaPreviewVisible = {};
@@ -26181,6 +26881,23 @@ async function init() {
       }
     });
   }
+  if (el.scenarioSearchFolderModalConfirm) {
+    el.scenarioSearchFolderModalConfirm.addEventListener('click', () => {
+      resolveScenarioSearchFolderModal(true);
+    });
+  }
+  if (el.scenarioSearchFolderModalCancel) {
+    el.scenarioSearchFolderModalCancel.addEventListener('click', () => {
+      resolveScenarioSearchFolderModal(false);
+    });
+  }
+  if (el.scenarioSearchFolderModalOverlay) {
+    el.scenarioSearchFolderModalOverlay.addEventListener('click', (ev) => {
+      if (ev.target === el.scenarioSearchFolderModalOverlay) {
+        resolveScenarioSearchFolderModal(false);
+      }
+    });
+  }
   if (el.entityModalOverlay) {
     el.entityModalOverlay.addEventListener('click', (ev) => {
       if (ev.target === el.entityModalOverlay) {
@@ -26220,6 +26937,12 @@ async function init() {
     }
     if (state.unsavedModal.open && ev.key === 'Escape') {
       resolveUnsavedChangesModal('cancel');
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+    if (state.scenarioSearchFolderModal.open && ev.key === 'Escape') {
+      resolveScenarioSearchFolderModal(false);
       ev.preventDefault();
       ev.stopPropagation();
       return;

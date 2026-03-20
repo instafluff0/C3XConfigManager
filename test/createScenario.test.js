@@ -137,6 +137,33 @@ test('createScenario can copy an existing scenario and rename BIQ to the new sce
   assert.equal(fs.existsSync(path.join(copiedDir, 'Art', 'Units', 'TestUnit', 'TestUnit.ini')), true);
 });
 
+test('createScenario can copy a BIQ from shared Scenarios root without copying the whole shared folder', () => {
+  const civ3Root = mkTmpDir();
+  const scenariosRoot = path.join(civ3Root, 'Conquests', 'Scenarios');
+  const sourceContentDir = path.join(scenariosRoot, 'Shared Source');
+  fs.mkdirSync(path.join(sourceContentDir, 'Text'), { recursive: true });
+  fs.mkdirSync(path.join(scenariosRoot, 'Unrelated Scenario'), { recursive: true });
+  const sourceBiq = path.join(scenariosRoot, 'Shared Source.biq');
+  fs.writeFileSync(sourceBiq, 'BICX', 'latin1');
+  fs.writeFileSync(path.join(sourceContentDir, 'Text', 'Civilopedia.txt'), '#SOURCE\nline\n', 'latin1');
+  fs.writeFileSync(path.join(scenariosRoot, 'Unrelated Scenario', 'marker.txt'), 'do not copy\n', 'utf8');
+
+  const parentDir = mkTmpDir();
+  const result = createScenario({
+    template: 'copy',
+    civ3Path: civ3Root,
+    sourceScenarioPath: sourceBiq,
+    scenarioName: 'Copied Shared Source',
+    scenarioParentDir: parentDir
+  });
+
+  assert.equal(result.ok, true);
+  const copiedDir = path.join(parentDir, 'Copied Shared Source');
+  assert.equal(fs.existsSync(path.join(copiedDir, 'Copied Shared Source.biq')), true);
+  assert.equal(fs.existsSync(path.join(copiedDir, 'Text', 'Civilopedia.txt')), true);
+  assert.equal(fs.existsSync(path.join(copiedDir, 'Unrelated Scenario')), false);
+});
+
 test('createScenario copy template validates source scenario BIQ path', () => {
   const civ3Root = mkTmpDir();
   const result = createScenario({

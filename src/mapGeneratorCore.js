@@ -33,6 +33,12 @@
     GOODY_HUT: 0x00000020
   };
 
+  var BIQ_RESOURCE_TYPE = {
+    BONUS: 0,
+    LUXURY: 1,
+    STRATEGIC: 2
+  };
+
   var RIVER_MASK = {
     NE: 2,
     SE: 8,
@@ -58,6 +64,10 @@
     var base = clamp(parseIntLoose(baseTerrain, BIQ_TERRAIN.GRASSLAND), 0, 15);
     var real = clamp(parseIntLoose(realTerrain, base), 0, 15);
     return ((real & 0x0f) << 4) | (base & 0x0f);
+  }
+
+  function isWaterTerrain(terrain) {
+    return parseIntLoose(terrain, BIQ_TERRAIN.OCEAN) >= BIQ_TERRAIN.COAST;
   }
 
   function lcgNext(seed) {
@@ -491,6 +501,7 @@
         elevation: 0,
         moisture: 0,
         temperature: 0,
+        resource: -1,
         riverConnectionInfo: 0,
         c3cOverlays: 0,
         c3cBonuses: 0,
@@ -1313,9 +1324,27 @@
     var b = world.tiles[bestB];
     var col = a.col;
     var row = a.row;
+    function fillBridgeCell(centerCol, centerRow) {
+      var deltas = [
+        { dc: 0, dr: 0 },
+        { dc: -1, dr: 0 },
+        { dc: 1, dr: 0 },
+        { dc: 0, dr: -1 },
+        { dc: 0, dr: 1 }
+      ];
+      var k;
+      for (k = 0; k < deltas.length; k += 1) {
+        var nextCol = centerCol + deltas[k].dc;
+        var nextRow = centerRow + deltas[k].dr;
+        if (settings.wrapX) nextCol = wrapCellCoord(nextCol, world.halfWidth);
+        if (settings.wrapY) nextRow = wrapCellCoord(nextRow, world.height);
+        if (nextCol < 0 || nextCol >= world.halfWidth || nextRow < 0 || nextRow >= world.height) continue;
+        var nextIdx = (nextRow * world.halfWidth) + nextCol;
+        if (nextIdx >= 0 && nextIdx < world.tiles.length) world.tiles[nextIdx].isLand = true;
+      }
+    }
     while (col !== b.col || row !== b.row) {
-      var idx = (row * world.halfWidth) + col;
-      if (idx >= 0 && idx < world.tiles.length) world.tiles[idx].isLand = true;
+      fillBridgeCell(col, row);
       if (col !== b.col) {
         var deltaCol = b.col > col ? 1 : -1;
         if (settings.wrapX) {
@@ -1335,8 +1364,7 @@
         row = wrapCellCoord(row + deltaRow, world.height);
       }
     }
-    var lastIdx = (row * world.halfWidth) + col;
-    if (lastIdx >= 0 && lastIdx < world.tiles.length) world.tiles[lastIdx].isLand = true;
+    fillBridgeCell(col, row);
   }
 
   function enforcePangaea(world, settings, rng) {
@@ -1346,7 +1374,7 @@
     var i;
     var attempts = 0;
     for (i = 0; i < continents.length; i += 1) totalLand += continents[i].length;
-    while (attempts < 12 &&
+    while (attempts < 32 &&
            continents.length > 1 &&
            (continents[0].length < Math.floor(totalLand * 0.76) ||
             (continents[1] && continents[1].length > Math.floor(totalLand * 0.14)))) {
@@ -1472,7 +1500,6 @@
       tile.elevation = clamp((elevation * 0.32) + (heightFieldElevation * 0.5) + (tile.landScore * 0.18) + ageRuggedness, 0, 1);
     }
     classifyWaterDepth(world, settings);
-    assignTerrainBiomes(world, settings);
   }
 
   function classifyWaterDepth(world, settings) {
@@ -1534,22 +1561,54 @@
     return maxRadius + 1;
   }
 
-  function biomeTables(settings) {
+  function climateProfile(settings) {
     var temperature = settings.temperatureMode;
     var aridity = settings.climateMode;
-    var tables = {
-      cool: { jungleThreshold: 3, coldBand: 35, polarBand: 45, marshThreshold: 10, coastMarshFactor: 3 },
-      temperate: { jungleThreshold: 4, coldBand: 50, polarBand: 60, marshThreshold: 12, coastMarshFactor: 5 },
-      warm: { jungleThreshold: 5, coldBand: 55, polarBand: 65, marshThreshold: 16, coastMarshFactor: 7 }
+    var profile = {
+      jungleThreshold: 4,
+      coldBand: 0x32,
+      polarBand: 0x3c,
+      marshThreshold: 0x0c,
+      coastMarshFactor: 5,
+      marshChanceJungle: 10,
+      marshChanceGrass: 5,
+      plainsLow: 0x0e,
+      plainsHigh: 0x2a,
+      desertLow: 0x11,
+      desertHigh: 0x1e
     };
-    var rain = {
-      arid: { marshChance: 7, forestChance: 2, plainsLow: 12, plainsHigh: 44, desertLow: 13, desertHigh: 34, wetBias: -0.10, dryBias: 0.12 },
-      normal: { marshChance: 10, forestChance: 5, plainsLow: 14, plainsHigh: 42, desertLow: 17, desertHigh: 30, wetBias: 0.00, dryBias: 0.00 },
-      wet: { marshChance: 15, forestChance: 8, plainsLow: 16, plainsHigh: 40, desertLow: 20, desertHigh: 27, wetBias: 0.12, dryBias: -0.10 }
-    };
-    var tempKey = temperature === 0 ? 'cool' : (temperature === 2 ? 'warm' : 'temperate');
-    var rainKey = aridity === 0 ? 'arid' : (aridity === 2 ? 'wet' : 'normal');
-    return { temp: tables[tempKey], rain: rain[rainKey] };
+    if (temperature === 0) {
+      profile.jungleThreshold = 3;
+      profile.coldBand = 0x23;
+      profile.polarBand = 0x2d;
+      profile.marshThreshold = 0x0a;
+      profile.coastMarshFactor = 3;
+    } else if (temperature === 2) {
+      profile.jungleThreshold = 5;
+      profile.coldBand = 0x37;
+      profile.polarBand = 0x41;
+      profile.marshThreshold = 0x10;
+      profile.coastMarshFactor = 7;
+    }
+    if (aridity === 0) {
+      profile.marshChanceJungle = 7;
+      profile.marshChanceGrass = 2;
+      profile.plainsLow = 0x0c;
+      profile.plainsHigh = 0x2c;
+      profile.desertLow = 0x0d;
+      profile.desertHigh = 0x22;
+      profile.jungleThreshold -= 1;
+    } else if (aridity === 2) {
+      profile.marshChanceJungle = 0x0f;
+      profile.marshChanceGrass = 8;
+      profile.plainsLow = 0x10;
+      profile.plainsHigh = 0x28;
+      profile.desertLow = 0x14;
+      profile.desertHigh = 0x1b;
+      profile.jungleThreshold += 2;
+    }
+    profile.coldMid = Math.trunc((profile.coldBand + profile.jungleThreshold) / 2);
+    return profile;
   }
 
   function terrainAgeProfile(ageMode) {
@@ -1562,141 +1621,127 @@
     return { lowA: 20, lowB: 25, midA: 63, highA: 70, highB: 77, nonVolcanoProb: 96 };
   }
 
-  function assignTerrainBiomes(world, settings) {
+  function warmHillPlacementRng(settings, tileCount) {
+    var rng = createRng((settings.seed + 0xd431) >>> 0);
+    var remaining = Math.max(1, parseIntLoose(tileCount, 1));
     var i;
-    var tables = biomeTables(settings);
+    for (i = 0; i < remaining; i += 1) {
+      rng.int(Math.max(1, remaining - i));
+    }
+    return rng;
+  }
+
+  function generateHillsAndMountains(world, settings) {
+    var heightMap = heightMapGenerate(world.width, world.height, 2, 1, (settings.seed + 0x9a2112) >>> 0, null);
     var ageProfile = terrainAgeProfile(settings.ageMode);
-    var landElevations = [];
-    var grassElevations = [];
-    for (i = 0; i < world.tiles.length; i += 1) {
-      if (!world.tiles[i].isLand) continue;
-      landElevations.push(world.tiles[i].elevation);
-    }
-    var ruggedCandidateThreshold = percentileValue(landElevations, 0.55);
-    for (i = 0; i < world.tiles.length; i += 1) {
-      var terrainTile = world.tiles[i];
-      if (!terrainTile.isLand) continue;
-      if (terrainTile.baseTerrain === BIQ_TERRAIN.GRASSLAND || terrainTile.landScore >= ruggedCandidateThreshold) {
-        grassElevations.push(terrainTile.elevation);
-      }
-    }
-    var lowAThreshold = percentileValue(grassElevations, ageProfile.lowA / 100);
-    var lowBThreshold = percentileValue(grassElevations, ageProfile.lowB / 100);
-    var midAThreshold = percentileValue(grassElevations, ageProfile.midA / 100);
-    var highAThreshold = percentileValue(grassElevations, ageProfile.highA / 100);
-    var highBThreshold = percentileValue(grassElevations, ageProfile.highB / 100);
+    var hillLowThreshold = heightMapSeaLevel(heightMap, ageProfile.lowA);
+    var hillHighThreshold = heightMapSeaLevel(heightMap, ageProfile.lowB);
+    var mountainThreshold = heightMapSeaLevel(heightMap, ageProfile.midA);
+    var volcanoThreshold = heightMapSeaLevel(heightMap, ageProfile.highA);
+    var ceilingThreshold = heightMapSeaLevel(heightMap, ageProfile.highB);
+    var rng = warmHillPlacementRng(settings, world.tileCount);
+    var i;
     for (i = 0; i < world.tiles.length; i += 1) {
       var tile = world.tiles[i];
       if (!tile.isLand) continue;
-      var u = (tile.col + 0.5) / world.halfWidth;
-      var v = (tile.row + 0.5) / world.height;
-      var latitudeNorm = Math.abs((v * 2) - 1);
-      var latitudeScore = Math.round(latitudeNorm * 90);
-      var tempNoise = fractalNoise2d(settings.seed + 0x713, u, v, {
-        octaves: 4,
-        persistence: 0.52,
-        lacunarity: 2,
-        freqX: 3.6,
-        freqY: 2.6,
-        wrapY: !!settings.wrapY
-      });
-      var moistureNoise = fractalNoise2d(settings.seed + 0x845, u, v, {
-        octaves: 4,
-        persistence: 0.56,
-        lacunarity: 2,
-        freqX: 4.2,
-        freqY: 3.4,
-        wrapY: !!settings.wrapY
-      });
-      var coastDistance = waterReach(world, tile, settings, 3);
-      var coastCategory = coastDistance <= 1 ? 2 : (coastDistance <= 3 ? 1 : 0);
-      var coastAdjustment = (latitudeScore < 23 || latitudeScore > 47) ? (-coastCategory) : (coastCategory * 2);
-      var noiseAdjustment = Math.trunc((((tempNoise * 255) - 128) * 30) / 256);
-      var climateScore = latitudeScore + noiseAdjustment + coastAdjustment;
-      var dryBias = tables.rain.dryBias + Math.max(0, tile.elevation - 0.74) * 0.24;
-      var wetBias = tables.rain.wetBias + (coastCategory * 0.08);
-      var temperature = clamp(1 - (climateScore / 90), 0, 1);
-      var moisture = clamp(0.48 + ((moistureNoise - 0.5) * 0.72) + wetBias - dryBias, 0, 1);
-      tile.temperature = temperature;
-      tile.moisture = moisture;
+      if (tile.baseTerrain !== BIQ_TERRAIN.GRASSLAND) continue;
+      tile.realTerrain = BIQ_TERRAIN.GRASSLAND;
+      var height = getHeightMapTileHeight(heightMap, tile.xPos, tile.yPos);
+      if (height > ceilingThreshold) continue;
+      if (height >= volcanoThreshold) {
+        tile.realTerrain = rng.int(100) < ageProfile.nonVolcanoProb ? BIQ_TERRAIN.MOUNTAIN : BIQ_TERRAIN.VOLCANO;
+        continue;
+      }
+      if (height >= mountainThreshold) {
+        tile.realTerrain = BIQ_TERRAIN.MOUNTAIN;
+        continue;
+      }
+      if (height >= hillLowThreshold && height <= hillHighThreshold) {
+        tile.realTerrain = BIQ_TERRAIN.HILLS;
+      }
+    }
+  }
+
+  function assignTerrainBiomes(world, settings) {
+    var climateMapFlags = settings.wrapY ? 3 : 9;
+    var climateHeightMap = heightMapGenerate(world.width, world.height, 3, climateMapFlags, (settings.seed + 0x1e1735) >>> 0, null);
+    var forestHeightMap = heightMapGenerate(world.width, world.height, 5, climateMapFlags, (settings.seed + 0x34b59e) >>> 0, null);
+    var forestLowThreshold = heightMapSeaLevel(forestHeightMap, 0x46);
+    var forestHighThreshold = heightMapSeaLevel(forestHeightMap, 100);
+    var profile = climateProfile(settings);
+    var i;
+    for (i = 0; i < world.tiles.length; i += 1) {
+      var tile = world.tiles[i];
+      if (!tile.isLand) continue;
+      var verticalDistance = Math.abs((world.height / 2) - tile.yPos);
+      var latitudeAdjustment = Math.trunc((verticalDistance * 180) / world.height);
+      var climateHeight = getHeightMapTileHeight(climateHeightMap, tile.xPos, tile.yPos);
+      var climateScore = Math.trunc((((climateHeight - 128) * 30) + (((climateHeight - 128) * 30) >> 31 & 0xff)) / 256) + latitudeAdjustment;
+      var coastDistance = waterReach(world, tile, settings, 24);
+      var coastCategory = coastDistance <= 8 ? 2 : (coastDistance <= 24 ? 1 : 0);
+      climateScore += ((climateScore >= 0x17 && climateScore <= 0x2f) ? (coastCategory * 2) : (-coastCategory));
+      var coldForestEligible = climateScore > profile.coldBand;
+      if (!coldForestEligible && climateScore > profile.coldMid && rngChanceFromCoord(settings.seed + 0x1e1735, tile.col, tile.row) < 50) {
+        coldForestEligible = true;
+      }
+      tile.temperature = clamp(1 - (climateScore / 90), 0, 1);
       var baseTerrain = BIQ_TERRAIN.GRASSLAND;
-      if (climateScore > tables.temp.coldBand && latitudeScore > tables.temp.polarBand) {
+      if (climateScore > profile.coldBand && latitudeAdjustment > profile.polarBand) {
         baseTerrain = BIQ_TERRAIN.TUNDRA;
-      } else if (climateScore < tables.temp.jungleThreshold) {
+      } else if (climateScore < profile.jungleThreshold) {
         baseTerrain = BIQ_TERRAIN.JUNGLE;
-      } else if (climateScore > tables.rain.desertLow && climateScore < tables.rain.desertHigh) {
+      } else if (climateScore > profile.desertLow && climateScore < profile.desertHigh) {
         baseTerrain = BIQ_TERRAIN.DESERT;
-      } else if (climateScore > tables.rain.plainsLow && climateScore < tables.rain.plainsHigh) {
+      } else if (climateScore > profile.plainsLow && climateScore < profile.plainsHigh) {
         baseTerrain = BIQ_TERRAIN.PLAINS;
       }
-      if (settings.polarIceCaps && latitudeNorm > 0.84) baseTerrain = BIQ_TERRAIN.TUNDRA;
-      if ((baseTerrain === BIQ_TERRAIN.GRASSLAND || baseTerrain === BIQ_TERRAIN.JUNGLE) &&
-          climateScore < tables.temp.marshThreshold) {
-        var marshChance = tables.rain.marshChance + (coastCategory * tables.temp.coastMarshFactor);
+      if (settings.polarIceCaps && Math.abs(((tile.yPos + 0.5) / world.height * 2) - 1) > 0.84) baseTerrain = BIQ_TERRAIN.TUNDRA;
+      if ((baseTerrain === BIQ_TERRAIN.GRASSLAND || baseTerrain === BIQ_TERRAIN.JUNGLE) && climateScore < profile.marshThreshold) {
+        var marshChance = (baseTerrain === BIQ_TERRAIN.JUNGLE ? profile.marshChanceJungle : profile.marshChanceGrass) +
+          (coastCategory * profile.coastMarshFactor);
         if (rngChanceFromCoord(settings.seed + 0x58f1, tile.col, tile.row) < marshChance) {
           baseTerrain = BIQ_TERRAIN.MARSH;
         }
       }
-      var realTerrain = baseTerrain;
-      var ageDrivenHills = false;
-      if (baseTerrain === BIQ_TERRAIN.GRASSLAND) {
-        if (tile.elevation >= highAThreshold) {
-          realTerrain = BIQ_TERRAIN.MOUNTAIN;
-          if (tile.elevation >= highBThreshold &&
-              rngChanceFromCoord(settings.seed + 0x977, tile.col, tile.row) >= ageProfile.nonVolcanoProb &&
-              temperature > 0.42 && temperature < 0.72 && moisture < 0.48) {
-            realTerrain = BIQ_TERRAIN.VOLCANO;
-          }
-          ageDrivenHills = true;
-        } else if ((tile.elevation >= midAThreshold && tile.elevation < highAThreshold) ||
-                   (tile.elevation >= lowAThreshold && tile.elevation <= lowBThreshold)) {
-          realTerrain = BIQ_TERRAIN.HILLS;
-          ageDrivenHills = true;
-        }
-      }
-      var mountainThreshold = settings.ageMode === 0 ? 0.74 : (settings.ageMode === 2 ? 0.82 : 0.78);
-      var hillThreshold = settings.ageMode === 0 ? 0.58 : (settings.ageMode === 2 ? 0.68 : 0.63);
-      if (!ageDrivenHills && tile.elevation >= mountainThreshold) {
-        realTerrain = BIQ_TERRAIN.MOUNTAIN;
-        if (temperature > 0.42 && temperature < 0.72 && moisture < 0.48 && fractalNoise2d(settings.seed + 0x977, u, v, {
-          octaves: 2,
-          persistence: 0.5,
-          lacunarity: 2,
-          freqX: 7,
-          freqY: 7,
-          wrapY: !!settings.wrapY
-        }) > 0.78) {
-          realTerrain = BIQ_TERRAIN.VOLCANO;
-        }
-      } else if (!ageDrivenHills && tile.elevation >= hillThreshold) {
-        realTerrain = BIQ_TERRAIN.HILLS;
-      } else if (moisture > 0.82 && temperature > 0.58 && tile.elevation < 0.54 && baseTerrain !== BIQ_TERRAIN.TUNDRA) {
-        realTerrain = BIQ_TERRAIN.MARSH;
-      } else if (moisture > 0.68 && temperature > 0.62 && climateScore >= tables.temp.warmBand && tile.elevation < 0.7) {
-        realTerrain = BIQ_TERRAIN.JUNGLE;
-        if (baseTerrain === BIQ_TERRAIN.DESERT) baseTerrain = BIQ_TERRAIN.PLAINS;
-      } else if (moisture > 0.52 && temperature > 0.16 && temperature < 0.80) {
-        realTerrain = BIQ_TERRAIN.FOREST;
-      }
-      if (baseTerrain === BIQ_TERRAIN.DESERT && moisture > 0.34 && climateScore < tables.temp.coldBand) {
-        baseTerrain = BIQ_TERRAIN.PLAINS;
-      }
-      if (baseTerrain === BIQ_TERRAIN.PLAINS && moisture > 0.56 && climateScore >= tables.rain.desertLow && climateScore <= tables.rain.desertHigh + 3) {
+      var realTerrain = tile.realTerrain;
+      if (isHillyTerrain(realTerrain)) {
         baseTerrain = BIQ_TERRAIN.GRASSLAND;
-      }
-      if (baseTerrain === BIQ_TERRAIN.JUNGLE || baseTerrain === BIQ_TERRAIN.MARSH) {
+      } else if (baseTerrain === BIQ_TERRAIN.JUNGLE || baseTerrain === BIQ_TERRAIN.MARSH) {
         realTerrain = baseTerrain;
+      } else if (baseTerrain !== BIQ_TERRAIN.DESERT) {
+        var forestHeight = getHeightMapTileHeight(forestHeightMap, tile.xPos, tile.yPos);
+        if (baseTerrain === BIQ_TERRAIN.PLAINS) forestHeight -= 10;
+        if (forestHeight >= forestLowThreshold && forestHeight <= forestHighThreshold) {
+          realTerrain = BIQ_TERRAIN.FOREST;
+        }
+        tile.moisture = clamp((forestHeight - forestLowThreshold) / Math.max(1, forestHighThreshold - forestLowThreshold), 0, 1);
+      } else {
+        tile.moisture = clamp((coastCategory * 0.15) + (tile.temperature * 0.1), 0, 1);
+      }
+      if (realTerrain === BIQ_TERRAIN.FOREST && tile.moisture === 0) {
+        tile.moisture = clamp(0.45 + (coastCategory * 0.12), 0, 1);
+      }
+      if (realTerrain === BIQ_TERRAIN.FOREST) {
+        realTerrain = BIQ_TERRAIN.FOREST;
       }
       tile.baseTerrain = baseTerrain;
       tile.realTerrain = realTerrain;
       tile.c3cBonuses = 0;
-      if (realTerrain === BIQ_TERRAIN.FOREST && (baseTerrain === BIQ_TERRAIN.TUNDRA || temperature < 0.32)) {
+      if (realTerrain === BIQ_TERRAIN.FOREST && coldForestEligible) {
         tile.c3cBonuses |= BIQ_TILE_BONUS.PINE_FOREST;
       }
-      if (realTerrain === BIQ_TERRAIN.MOUNTAIN && (baseTerrain === BIQ_TERRAIN.TUNDRA || temperature < 0.18)) {
+      if (realTerrain === BIQ_TERRAIN.MOUNTAIN && (
+        coldForestEligible ||
+        latitudeAdjustment > (profile.coldMid - 2) ||
+        (settings.polarIceCaps && latitudeAdjustment > (profile.polarBand - 8))
+      )) {
         tile.c3cBonuses |= BIQ_TILE_BONUS.SNOW_CAPPED_MOUNTAIN;
       }
     }
+  }
+
+  function isHillyTerrain(terrain) {
+    return terrain === BIQ_TERRAIN.HILLS || terrain === BIQ_TERRAIN.MOUNTAIN || terrain === BIQ_TERRAIN.VOLCANO;
   }
 
   function rngChanceFromCoord(seed, x, y) {
@@ -1732,42 +1777,157 @@
     return score;
   }
 
+  function shuffleIndexes(count, rng) {
+    var order = [];
+    var i;
+    for (i = 0; i < count; i += 1) order.push(i);
+    for (i = count - 1; i > 0; i -= 1) {
+      var j = rng.int(i + 1);
+      var tmp = order[i];
+      order[i] = order[j];
+      order[j] = tmp;
+    }
+    return order;
+  }
+
+  function continentRiverQuotas(world, settings) {
+    var continents = identifyLandContinents(world, settings);
+    var quotas = new Array(continents.length).fill(0);
+    var totalTarget = Math.floor((world.tileCount * 24) / 5000);
+    if (totalTarget < 0) totalTarget = 0;
+    if (totalTarget > 96) totalTarget = 96;
+    var i;
+    var largeCount = 0;
+    var remainingArea = 0;
+    for (i = 0; i < continents.length; i += 1) {
+      if (continents[i].length > 72) {
+        quotas[i] = 1;
+        largeCount += 1;
+      } else {
+        remainingArea += continents[i].length;
+      }
+    }
+    var remaining = Math.max(0, totalTarget - largeCount);
+    for (i = continents.length - 1; i >= 1; i -= 1) {
+      if (quotas[i] !== 0 || remainingArea <= 0 || remaining <= 0) continue;
+      var share = Math.trunc((continents[i].length * remaining) / remainingArea);
+      quotas[i] += share;
+      remaining -= share;
+      remainingArea -= continents[i].length;
+    }
+    if (continents.length > 0) quotas[0] += remaining;
+    return quotas;
+  }
+
+  function getTileByMapCoord(world, settings, xPos, yPos) {
+    var wrapped = getWrappedHeightCoord(world, settings, xPos, yPos);
+    if (!wrapped) return null;
+    var idx = indexByCoord(world.width, world.height, wrapped.xPos, wrapped.yPos);
+    if (idx < 0 || idx >= world.tiles.length) return null;
+    return world.tiles[idx];
+  }
+
+  function riverFertilityScore(world, tile, settings) {
+    if (!tile || !tile.isLand || tile.continent < 0) return -Infinity;
+    var coastWater = 0;
+    var i;
+    for (i = 1; i <= 4; i += 1) {
+      var nearOffset = neighborDiffToOffset(i);
+      var nearTile = getTileByMapCoord(world, settings, tile.xPos + nearOffset.dx, tile.yPos + nearOffset.dy);
+      if (nearTile && !nearTile.isLand) coastWater += 1;
+    }
+    var score = 0;
+    for (i = 0; i < 0x31; i += 1) {
+      var offset = neighborDiffToOffset(i);
+      var probe = getTileByMapCoord(world, settings, tile.xPos + offset.dx, tile.yPos + offset.dy);
+      if (!probe || !probe.isLand || probe.continent !== tile.continent) continue;
+      var terrain = probe.realTerrain;
+      if (terrain === BIQ_TERRAIN.FOREST) terrain = probe.baseTerrain;
+      if (terrain === BIQ_TERRAIN.DESERT ||
+          terrain === BIQ_TERRAIN.PLAINS ||
+          terrain === BIQ_TERRAIN.GRASSLAND ||
+          terrain === BIQ_TERRAIN.TUNDRA ||
+          terrain === BIQ_TERRAIN.HILLS ||
+          terrain === BIQ_TERRAIN.MOUNTAIN ||
+          terrain === BIQ_TERRAIN.FOREST ||
+          terrain === BIQ_TERRAIN.VOLCANO) {
+        if (i < 0x19) score += 0x10;
+        if (i < 9) score += 0x10;
+        if (i < 1) score += 0x20;
+      } else if (terrain === BIQ_TERRAIN.JUNGLE) {
+        if (i < 0x19) score += 0x18;
+        if (i < 9) score += 0x20;
+        if (i < 1) score += 0x40;
+      } else if (terrain === BIQ_TERRAIN.MARSH) {
+        if (i < 0x19) score += 0x28;
+        if (i < 9) score += 0x40;
+        if (i < 1) score += 0x40;
+      }
+    }
+    if (coastWater === 1) score += 18;
+    else if (coastWater === 2) score += 10;
+    score -= waterReach(world, tile, settings, 12) * 3;
+    return score;
+  }
+
+  function findUpstreamSourceNearTile(world, basinTile, settings) {
+    var best = null;
+    var i;
+    for (i = 0; i < 0x31; i += 1) {
+      var offset = neighborDiffToOffset(i);
+      var probe = getTileByMapCoord(world, settings, basinTile.xPos + offset.dx, basinTile.yPos + offset.dy);
+      if (!probe || !probe.isLand || probe.continent !== basinTile.continent) continue;
+      var rugged = isHillyTerrain(probe.realTerrain);
+      var score = rugged ? riverSourceScore(world, probe, settings) : -Infinity;
+      if (!Number.isFinite(score) || score === -Infinity) continue;
+      score += riverFertilityScore(world, basinTile, settings) * 0.15;
+      if (!best || score > best.score) best = { tile: probe, score: score };
+    }
+    return best ? best.tile : null;
+  }
+
   function selectRiverSources(world, settings, rng) {
     var continents = identifyLandContinents(world, settings);
+    var quotas = continentRiverQuotas(world, settings);
+    var shuffled = shuffleIndexes(world.tiles.length, rng);
     var sources = [];
-    var c;
-    for (c = 0; c < continents.length; c += 1) {
-      var members = continents[c];
-      if (!members || members.length < 18) continue;
-      var quota = Math.max(1, Math.min(8, Math.floor(members.length / 72)));
-      if (members.length > 220) quota += 1;
-      if (members.length > 420) quota += 1;
-      var candidates = [];
-      var i;
-      for (i = 0; i < members.length; i += 1) {
-        var tile = world.tiles[members[i]];
-        var score = riverSourceScore(world, tile, settings);
-        if (score === -Infinity) continue;
-        candidates.push({ tile: tile, score: score + (rng.float() * 6) });
-      }
-      candidates.sort(function sortRiverCandidates(a, b) { return b.score - a.score; });
-      var chosen = [];
-      for (i = 0; i < candidates.length && chosen.length < quota; i += 1) {
-        var candidate = candidates[i].tile;
+    var candidatesByContinent = quotas.map(function mapQuota() { return []; });
+    var i;
+    for (i = 0; i < shuffled.length; i += 1) {
+      var tile = world.tiles[shuffled[i]];
+      if (!tile.isLand || tile.continent < 0) continue;
+      if (!quotas[tile.continent]) continue;
+      var fertility = riverFertilityScore(world, tile, settings);
+      if (!Number.isFinite(fertility) || fertility <= 0) continue;
+      candidatesByContinent[tile.continent].push({ tile: tile, score: fertility });
+    }
+    for (i = 0; i < candidatesByContinent.length; i += 1) {
+      if (!quotas[i]) continue;
+      candidatesByContinent[i].sort(function sortRiverCandidates(a, b) { return b.score - a.score; });
+      var chosenBasins = [];
+      var j;
+      for (j = 0; j < candidatesByContinent[i].length && chosenBasins.length < quotas[i]; j += 1) {
+        var basinTile = candidatesByContinent[i][j].tile;
         var tooClose = false;
-        var j;
-        for (j = 0; j < chosen.length; j += 1) {
-          if (distanceBetweenTiles(world, candidate, chosen[j], settings) < 6) {
+        var k;
+        for (k = 0; k < chosenBasins.length; k += 1) {
+          if (distanceBetweenTiles(world, basinTile, chosenBasins[k], settings) < 6) {
             tooClose = true;
             break;
           }
         }
         if (tooClose) continue;
-        chosen.push(candidate);
-        sources.push(candidate);
+        chosenBasins.push(basinTile);
+        var sourceTile = findUpstreamSourceNearTile(world, basinTile, settings);
+        if (sourceTile) {
+          sources.push({
+            source: sourceTile,
+            basin: basinTile
+          });
+        }
       }
     }
-    sources.sort(function sortSources(a, b) { return b.elevation - a.elevation; });
+    sources.sort(function sortSources(a, b) { return b.source.elevation - a.source.elevation; });
     return sources;
   }
 
@@ -1780,20 +1940,52 @@
     return false;
   }
 
-  function riverStepScore(world, fromTile, candidate, settings, rng) {
+  function riverStepScore(world, fromTile, candidate, settings, rng, routeState) {
     var wrapOptions = { wrapX: !!settings.wrapX, wrapY: !!settings.wrapY };
+    var basin = routeState && routeState.basin ? routeState.basin : null;
+    var length = routeState && Number.isFinite(routeState.length) ? routeState.length : 0;
+    var minLength = routeState && Number.isFinite(routeState.minLength) ? routeState.minLength : 6;
     var score = 0;
-    if (!candidate.tile.isLand) score -= 180;
-    score += candidate.tile.elevation * 120;
-    score += waterReach(world, candidate.tile, settings, 6) * 5;
+    if (!candidate.tile.isLand) score -= length < minLength ? 40 : 240;
+    score += candidate.tile.elevation * 90;
+    score += waterReach(world, candidate.tile, settings, 8) * 9;
     if (candidate.tile.riverConnectionInfo !== 0) score -= 26;
-    if (candidate.tile.realTerrain === BIQ_TERRAIN.MOUNTAIN || candidate.tile.realTerrain === BIQ_TERRAIN.VOLCANO) score += 18;
-    if (candidate.tile.realTerrain === BIQ_TERRAIN.HILLS) score += 10;
-    if (candidate.tile.baseTerrain === BIQ_TERRAIN.DESERT) score -= 4;
-    if (candidate.tile.elevation > fromTile.elevation) score += (candidate.tile.elevation - fromTile.elevation) * 90;
-    if (neighborTouchesWater(world, candidate.tile, wrapOptions)) score -= 22;
+    if (candidate.tile.realTerrain === BIQ_TERRAIN.MOUNTAIN || candidate.tile.realTerrain === BIQ_TERRAIN.VOLCANO) score += length < 4 ? 8 : 20;
+    if (candidate.tile.realTerrain === BIQ_TERRAIN.HILLS) score += length < 5 ? 4 : 12;
+    if (candidate.tile.baseTerrain === BIQ_TERRAIN.DESERT) score -= 10;
+    if (candidate.tile.baseTerrain === BIQ_TERRAIN.PLAINS) score -= 5;
+    if (candidate.tile.baseTerrain === BIQ_TERRAIN.GRASSLAND) score -= 7;
+    if (candidate.tile.baseTerrain === BIQ_TERRAIN.FLOODPLAIN) score -= 18;
+    if (candidate.tile.elevation > fromTile.elevation) {
+      score += (candidate.tile.elevation - fromTile.elevation) * (length < 4 ? 95 : 150);
+    } else {
+      score -= (fromTile.elevation - candidate.tile.elevation) * 75;
+    }
+    if (neighborTouchesWater(world, candidate.tile, wrapOptions)) {
+      score += length < minLength ? 65 : -18;
+    }
+    if (basin && candidate.tile.isLand) {
+      var currentDistance = distanceBetweenTiles(world, fromTile, basin, settings);
+      var nextDistance = distanceBetweenTiles(world, candidate.tile, basin, settings);
+      score += (nextDistance - currentDistance) * (length < minLength ? 18 : 7);
+      if (nextDistance <= 1) score -= 24;
+    }
     score += rng.float() * 5;
     return score;
+  }
+
+  function applyFloodplains(world) {
+    var i;
+    for (i = 0; i < world.tiles.length; i += 1) {
+      var tile = world.tiles[i];
+      if (!tile.isLand) continue;
+      if (tile.baseTerrain !== BIQ_TERRAIN.DESERT) continue;
+      if (isHillyTerrain(tile.realTerrain)) continue;
+      if (tile.riverConnectionInfo === 0) continue;
+      tile.baseTerrain = BIQ_TERRAIN.FLOODPLAIN;
+      tile.realTerrain = BIQ_TERRAIN.FLOODPLAIN;
+      tile.moisture = Math.max(tile.moisture || 0, 0.85);
+    }
   }
 
   function generateRivers(world, settings, rng) {
@@ -1805,13 +1997,13 @@
     for (i = 0; i < world.tiles.length; i += 1) if (world.tiles[i].isLand) totalLand += 1;
     var minimumRivers = Math.max(3, Math.floor(totalLand / 260));
     for (i = 0; i < candidates.length; i += 1) {
-      var source = candidates[i];
+      var source = candidates[i].source;
       if (source.riverConnectionInfo !== 0) continue;
-      if (traceRiver(world, source, settings, wrapOptions, rng)) riverCount += 1;
+      if (traceRiver(world, candidates[i], settings, wrapOptions, rng)) riverCount += 1;
     }
     if (riverCount < minimumRivers) {
       for (i = 0; i < candidates.length && riverCount < minimumRivers; i += 1) {
-        var fallbackSource = candidates[i];
+        var fallbackSource = candidates[i].source;
         if (!fallbackSource.isLand || fallbackSource.riverConnectionInfo !== 0) continue;
         if (forceRiverToWater(world, fallbackSource, settings, wrapOptions)) riverCount += 1;
       }
@@ -1824,13 +2016,7 @@
         }
       }
     }
-    for (i = 0; i < world.tiles.length; i += 1) {
-      var t = world.tiles[i];
-      if (t.baseTerrain === BIQ_TERRAIN.DESERT && t.riverConnectionInfo !== 0) {
-        t.baseTerrain = BIQ_TERRAIN.FLOODPLAIN;
-        t.realTerrain = BIQ_TERRAIN.FLOODPLAIN;
-      }
-    }
+    applyFloodplains(world);
   }
 
   function generateLakes(world, settings, rng) {
@@ -1877,6 +2063,27 @@
     }
   }
 
+  function applyPolarIceCapBands(world, settings) {
+    if (!settings.polarIceCaps) return;
+    var topCapRows = Math.min(3, world.height);
+    var bottomStart = Math.max(0, world.height - 3);
+    var i;
+    for (i = 0; i < world.tiles.length; i += 1) {
+      var tile = world.tiles[i];
+      var inNorthBand = tile.row < topCapRows;
+      var inSouthBand = tile.row >= bottomStart;
+      if (!inNorthBand && !inSouthBand) continue;
+      tile.isLand = false;
+      tile.continent = -1;
+      tile.riverConnectionInfo = 0;
+      tile.c3cBonuses = 0;
+      tile.c3cOverlays = 0;
+      tile.resource = -1;
+      tile.baseTerrain = BIQ_TERRAIN.OCEAN;
+      tile.realTerrain = BIQ_TERRAIN.OCEAN;
+    }
+  }
+
   function generateBonusGrassland(world, rng) {
     var order = [];
     var i;
@@ -1894,6 +2101,272 @@
       if ((tile.c3cBonuses & BIQ_TILE_BONUS.BONUS_GRASSLAND) !== 0) continue;
       if (rng.int(3) === 0) tile.c3cBonuses |= BIQ_TILE_BONUS.BONUS_GRASSLAND;
     }
+  }
+
+  function normalizeResourceType(rawValue) {
+    var direct = parseIntLoose(rawValue, NaN);
+    if (direct === 0 || direct === 1 || direct === 2) return direct;
+    var label = String(rawValue == null ? '' : rawValue).trim().toLowerCase();
+    if (label.indexOf('lux') >= 0) return BIQ_RESOURCE_TYPE.LUXURY;
+    if (label.indexOf('strateg') >= 0) return BIQ_RESOURCE_TYPE.STRATEGIC;
+    return BIQ_RESOURCE_TYPE.BONUS;
+  }
+
+  function normalizeResourceDefinitions(rawDefs) {
+    if (!Array.isArray(rawDefs)) return [];
+    var defs = rawDefs.map(function mapDef(def, idx) {
+      var type = normalizeResourceType(def && def.type);
+      return {
+        id: Number.isFinite(def && def.id) ? (def.id | 0) : idx,
+        type: type,
+        appearanceRatio: Math.max(0, parseIntLoose(def && def.appearanceRatio, 0)),
+        disappearanceProbability: Math.max(0, parseIntLoose(def && def.disappearanceProbability, 0)),
+        name: String(def && def.name || '')
+      };
+    });
+    defs.sort(function sortById(a, b) { return a.id - b.id; });
+    return defs;
+  }
+
+  function normalizeTerrainResourceMasks(rawMasks, resourceCount) {
+    var masks = new Array(14);
+    var terrainId;
+    for (terrainId = 0; terrainId < masks.length; terrainId += 1) {
+      masks[terrainId] = new Array(resourceCount).fill(false);
+    }
+    if (!Array.isArray(rawMasks)) return masks;
+    for (terrainId = 0; terrainId < rawMasks.length && terrainId < masks.length; terrainId += 1) {
+      var row = Array.isArray(rawMasks[terrainId]) ? rawMasks[terrainId] : [];
+      var resourceId;
+      for (resourceId = 0; resourceId < resourceCount; resourceId += 1) {
+        masks[terrainId][resourceId] = !!row[resourceId];
+      }
+    }
+    return masks;
+  }
+
+  function shuffledTileIndexes(world, rng) {
+    var order = [];
+    var i;
+    for (i = 0; i < world.tiles.length; i += 1) order.push(i);
+    for (i = order.length - 1; i > 0; i -= 1) {
+      var j = rng.int(i + 1);
+      var tmp = order[i];
+      order[i] = order[j];
+      order[j] = tmp;
+    }
+    return order;
+  }
+
+  function getTileAtCell(world, col, row, settings) {
+    var nextCol = col;
+    var nextRow = row;
+    if (settings.wrapX) nextCol = wrapCellCoord(nextCol, world.halfWidth);
+    if (settings.wrapY) nextRow = wrapCellCoord(nextRow, world.height);
+    if (nextCol < 0 || nextCol >= world.halfWidth || nextRow < 0 || nextRow >= world.height) return null;
+    return world.tiles[(nextRow * world.halfWidth) + nextCol];
+  }
+
+  function getTilesWithinRadius(world, origin, radius, settings) {
+    var out = [];
+    var row;
+    for (row = origin.row - radius; row <= origin.row + radius; row += 1) {
+      var col;
+      for (col = origin.col - radius; col <= origin.col + radius; col += 1) {
+        if (col === origin.col && row === origin.row) continue;
+        var tile = getTileAtCell(world, col, row, settings);
+        if (!tile) continue;
+        if (distanceBetweenTiles(world, origin, tile, settings) <= radius + 0.35) out.push(tile);
+      }
+    }
+    return out;
+  }
+
+  function resourceAllowedOnTile(tile, resourceId, terrainMasks) {
+    if (!tile || resourceId < 0) return false;
+    var terrainId = clamp(parseIntLoose(tile.baseTerrain, BIQ_TERRAIN.OCEAN), 0, terrainMasks.length - 1);
+    var mask = terrainMasks[terrainId];
+    return !!(mask && mask[resourceId]);
+  }
+
+  function weightedAllowedTerrainCount(terrainMasks, resourceId) {
+    var total = 0;
+    var terrainId;
+    for (terrainId = 0; terrainId < terrainMasks.length; terrainId += 1) {
+      if (!terrainMasks[terrainId] || !terrainMasks[terrainId][resourceId]) continue;
+      total += terrainId > BIQ_TERRAIN.VOLCANO ? 5 : 1;
+    }
+    return total;
+  }
+
+  function randomAppearanceRatio(resourceDef, rng) {
+    if (!resourceDef) return 0;
+    if (resourceDef.appearanceRatio > 0) return resourceDef.appearanceRatio;
+    return 50 + rng.int(26) + rng.int(26);
+  }
+
+  function adjustedResourceTarget(baseCount, weightedTerrainCount, minimumWhenBroad) {
+    var target = Math.max(0, baseCount | 0);
+    if (weightedTerrainCount <= 0) return 0;
+    if (weightedTerrainCount < 2) target = Math.round(target * 0.5);
+    else if (weightedTerrainCount < 4) target = Math.round(target * 0.75);
+    else target = Math.max(minimumWhenBroad, target);
+    return Math.max(1, target);
+  }
+
+  function currentSameResourceNeighborCount(world, tile, resourceId, settings) {
+    var neighbors = getTilesWithinRadius(world, tile, 1.1, settings);
+    var count = 0;
+    var i;
+    for (i = 0; i < neighbors.length; i += 1) {
+      if (neighbors[i].continent !== tile.continent) continue;
+      if (neighbors[i].resource === resourceId) count += 1;
+    }
+    return count;
+  }
+
+  function canPlaceResourceAt(world, tile, resourceDef, terrainMasks, settings, preferLargeLuxuryContinent) {
+    if (!tile || tile.resource !== -1) return false;
+    if (!resourceAllowedOnTile(tile, resourceDef.id, terrainMasks)) return false;
+    if (tile.continent < 0 && !isWaterTerrain(tile.baseTerrain)) return false;
+    if (resourceDef.type === BIQ_RESOURCE_TYPE.LUXURY) {
+      var continentSize = tile.continent >= 0 && world.continentSizes ? (world.continentSizes[tile.continent] || 0) : 0;
+      var minContinentSize = preferLargeLuxuryContinent ? 75 : 37;
+      if (continentSize < minContinentSize) return false;
+    }
+    var immediateNeighbors = getTilesWithinRadius(world, tile, 1.1, settings);
+    var i;
+    for (i = 0; i < immediateNeighbors.length; i += 1) {
+      var nearby = immediateNeighbors[i];
+      if (nearby.continent !== tile.continent) continue;
+      if (nearby.resource === -1) continue;
+      if (nearby.resource !== resourceDef.id) return false;
+      if (resourceDef.type === BIQ_RESOURCE_TYPE.STRATEGIC) return false;
+    }
+    if (resourceDef.type === BIQ_RESOURCE_TYPE.LUXURY || resourceDef.type === BIQ_RESOURCE_TYPE.STRATEGIC) {
+      var span = Math.floor((world.width + world.height) / 100);
+      var searchRadius = span < 5 ? (span + 2) : 6;
+      var extended = getTilesWithinRadius(world, tile, searchRadius, settings);
+      for (i = 0; i < extended.length; i += 1) {
+        var check = extended[i];
+        if (check.continent !== tile.continent || check.resource === -1) continue;
+        if (resourceDef.type === BIQ_RESOURCE_TYPE.STRATEGIC) {
+          if (check.resource === resourceDef.id) return false;
+        } else if (check.resource !== resourceDef.id) {
+          var otherType = settings.resourceDefsById[check.resource] ? settings.resourceDefsById[check.resource].type : BIQ_RESOURCE_TYPE.BONUS;
+          if (otherType === BIQ_RESOURCE_TYPE.LUXURY) return false;
+        }
+      }
+    }
+    if (isWaterTerrain(tile.baseTerrain)) {
+      var waterBuffer = getTilesWithinRadius(world, tile, 2.1, settings);
+      for (i = 0; i < waterBuffer.length; i += 1) {
+        if (!isWaterTerrain(waterBuffer[i].baseTerrain)) return false;
+      }
+    }
+    return true;
+  }
+
+  function placeResource(world, tile, resourceId, resourceCounts) {
+    tile.resource = resourceId;
+    resourceCounts[resourceId] = (resourceCounts[resourceId] || 0) + 1;
+  }
+
+  function generateResources(world, settings, rng) {
+    var defs = settings.resourceDefs;
+    if (!Array.isArray(defs) || defs.length === 0) return [];
+    var resourceCounts = new Array(defs.length).fill(0);
+    var order = shuffledTileIndexes(world, rng);
+    var totalBonusPlaced = 0;
+    var resourceIdx;
+    for (resourceIdx = 0; resourceIdx < defs.length; resourceIdx += 1) {
+      var luxury = defs[resourceIdx];
+      if (luxury.type !== BIQ_RESOURCE_TYPE.LUXURY) continue;
+      var weightedTerrains = weightedAllowedTerrainCount(settings.terrainResourceMasks, luxury.id);
+      var desired = adjustedResourceTarget(
+        Math.floor((Math.max(1, settings.numCivs) * randomAppearanceRatio(luxury, rng)) / 100),
+        weightedTerrains,
+        2
+      );
+      var anchorTile = null;
+      var anchorContinent = -1;
+      var scanIndex = 0;
+      while (resourceCounts[luxury.id] < desired && scanIndex < order.length) {
+        var candidate = world.tiles[order[scanIndex]];
+        scanIndex += 1;
+        var preferLarge = scanIndex < Math.floor((order.length * 2) / 3);
+        if (anchorContinent >= 0 && candidate.continent !== anchorContinent) continue;
+        if (!canPlaceResourceAt(world, candidate, luxury, settings.terrainResourceMasks, settings, preferLarge)) continue;
+        placeResource(world, candidate, luxury.id, resourceCounts);
+        anchorTile = anchorTile || candidate;
+        anchorContinent = candidate.continent;
+        while (anchorTile && resourceCounts[luxury.id] < desired && rng.int(2) === 0) {
+          var neighbors = getTilesWithinRadius(world, anchorTile, 1.1, settings);
+          var n;
+          var placedCluster = false;
+          for (n = 0; n < neighbors.length; n += 1) {
+            var neighbor = neighbors[n];
+            if (neighbor.continent !== anchorContinent) continue;
+            if (currentSameResourceNeighborCount(world, neighbor, luxury.id, settings) >= 3) continue;
+            if (!canPlaceResourceAt(world, neighbor, luxury, settings.terrainResourceMasks, settings, false)) continue;
+            placeResource(world, neighbor, luxury.id, resourceCounts);
+            placedCluster = true;
+            break;
+          }
+          if (!placedCluster) break;
+        }
+      }
+    }
+    order = shuffledTileIndexes(world, rng);
+    for (resourceIdx = 0; resourceIdx < defs.length; resourceIdx += 1) {
+      var strategic = defs[resourceIdx];
+      if (strategic.type !== BIQ_RESOURCE_TYPE.STRATEGIC) continue;
+      var strategicTerrains = weightedAllowedTerrainCount(settings.terrainResourceMasks, strategic.id);
+      var strategicTarget = adjustedResourceTarget(
+        Math.floor((Math.max(1, settings.numCivs) * randomAppearanceRatio(strategic, rng)) / 100),
+        strategicTerrains,
+        2
+      );
+      var remaining = strategicTarget;
+      var orderIndex;
+      while (remaining > 0) {
+        var placed = false;
+        for (orderIndex = 0; orderIndex < order.length; orderIndex += 1) {
+          var strategicTile = world.tiles[order[orderIndex]];
+          if (!canPlaceResourceAt(world, strategicTile, strategic, settings.terrainResourceMasks, settings, false)) continue;
+          placeResource(world, strategicTile, strategic.id, resourceCounts);
+          remaining -= 1;
+          placed = true;
+          break;
+        }
+        if (!placed) break;
+      }
+    }
+    var bonusLimit = Math.floor(world.tileCount / 32);
+    while (totalBonusPlaced < bonusLimit) {
+      var placedAny = false;
+      order = shuffledTileIndexes(world, rng);
+      for (resourceIdx = 0; resourceIdx < defs.length; resourceIdx += 1) {
+        var bonus = defs[resourceIdx];
+        if (bonus.type !== BIQ_RESOURCE_TYPE.BONUS) continue;
+        var bonusTerrains = weightedAllowedTerrainCount(settings.terrainResourceMasks, bonus.id);
+        if (bonusTerrains <= 0) continue;
+        var odds = bonusTerrains < 2 ? 6 : (bonusTerrains < 4 ? 4 : 2);
+        if (rng.int(odds) >= 2) continue;
+        var orderPos;
+        for (orderPos = 0; orderPos < order.length; orderPos += 1) {
+          var bonusTile = world.tiles[order[orderPos]];
+          if (!canPlaceResourceAt(world, bonusTile, bonus, settings.terrainResourceMasks, settings, false)) continue;
+          placeResource(world, bonusTile, bonus.id, resourceCounts);
+          totalBonusPlaced += 1;
+          placedAny = true;
+          break;
+        }
+        if (totalBonusPlaced >= bonusLimit) break;
+      }
+      if (!placedAny) break;
+    }
+    return resourceCounts;
   }
 
   function canPlaceGoodyHut(world, tile, settings, starts, chosenHuts) {
@@ -1938,11 +2411,15 @@
     }
   }
 
-  function traceRiver(world, source, settings, wrapOptions, rng) {
+  function traceRiver(world, riverPlan, settings, wrapOptions, rng) {
+    var source = riverPlan && riverPlan.source ? riverPlan.source : riverPlan;
+    var basin = riverPlan && riverPlan.basin ? riverPlan.basin : null;
     var pathTile = source;
     var visited = new Set();
     var length = 0;
-    while (length < 40) {
+    var desiredLength = basin ? distanceBetweenTiles(world, source, basin, settings) + 4 : 8;
+    var minLength = clamp(Math.round(desiredLength), 6, 14);
+    while (length < 52) {
       visited.add(pathTile.index);
       var directions = ['NW', 'NE', 'SW', 'SE'];
       var best = null;
@@ -1954,20 +2431,26 @@
         var neighbor = world.tiles[nIdx];
         if (neighbor.index === source.index) continue;
         if (visited.has(neighbor.index) && neighbor.isLand) continue;
-        var score = riverStepScore(world, pathTile, { tile: neighbor, direction: dir }, settings, rng);
+        if (length < minLength && !neighbor.isLand) continue;
+        if (length + 1 < minLength && neighbor.riverConnectionInfo !== 0) continue;
+        var score = riverStepScore(world, pathTile, { tile: neighbor, direction: dir }, settings, rng, {
+          basin: basin,
+          length: length,
+          minLength: minLength
+        });
         if (!best || score < best.score) best = { tile: neighbor, direction: dir, score: score };
       }
       if (!best) break;
       var joinedExistingRiver = best.tile.riverConnectionInfo !== 0;
       markRiverEdge(pathTile, best.tile, best.direction);
       length += 1;
-      if (!best.tile.isLand) return length >= 3;
-      if (joinedExistingRiver && best.tile.index !== pathTile.index && best.tile.index !== source.index && length >= 3) return true;
-      if (neighborTouchesWater(world, best.tile, wrapOptions) && length >= 3 && rng.float() < 0.55) return true;
+      if (!best.tile.isLand) return length >= minLength;
+      if (joinedExistingRiver && best.tile.index !== pathTile.index && best.tile.index !== source.index && length >= minLength) return true;
+      if (neighborTouchesWater(world, best.tile, wrapOptions) && length >= minLength && rng.float() < 0.45) return true;
       if (best.tile.elevation > pathTile.elevation && rng.float() < 0.8) return length >= 4;
       pathTile = best.tile;
     }
-    return length >= 4;
+    return length >= minLength;
   }
 
   function forceRiverToWater(world, source, settings, wrapOptions) {
@@ -2170,24 +2653,50 @@
       oceanMode: getOceanMode(spec.selectedOcean, rng),
       barbarianMode: getBarbarianMode(spec.selectedBarbarian, rng),
       numCivs: parseIntLoose(spec.numCivs, 8),
-      distanceBetweenCivs: parseIntLoose(spec.distanceBetweenCivs, 20)
+      distanceBetweenCivs: parseIntLoose(spec.distanceBetweenCivs, 20),
+      resourceDefs: normalizeResourceDefinitions(spec.resourceDefs),
+      terrainResourceMasks: []
     };
+    settings.resourceDefsById = {};
+    var resourceCount = settings.resourceDefs.length;
+    settings.terrainResourceMasks = normalizeTerrainResourceMasks(spec.terrainResourceMasks, resourceCount);
+    var rd;
+    for (rd = 0; rd < settings.resourceDefs.length; rd += 1) {
+      settings.resourceDefsById[settings.resourceDefs[rd].id] = settings.resourceDefs[rd];
+    }
     var world = createWorld(spec);
     buildLand(world, settings, rng);
     improveContinentShapes(world, settings, rng);
     var continents = identifyLandContinents(world, settings);
     assignWaterAndElevation(world, settings);
+    generateHillsAndMountains(world, settings);
+    assignTerrainBiomes(world, settings);
+    applyPolarIceCapBands(world, settings);
     generateLakes(world, settings, rng);
     continents = identifyLandContinents(world, settings);
+    world.continentSizes = {};
+    var continentIdx;
+    for (continentIdx = 0; continentIdx < continents.length; continentIdx += 1) {
+      if (continents[continentIdx] && continents[continentIdx].length > 0) {
+        world.continentSizes[world.tiles[continents[continentIdx][0]].continent] = continents[continentIdx].length;
+      }
+    }
     classifyWaterDepth(world, settings);
     generateRivers(world, settings, rng);
     continents = identifyLandContinents(world, settings);
+    world.continentSizes = {};
+    for (continentIdx = 0; continentIdx < continents.length; continentIdx += 1) {
+      if (continents[continentIdx] && continents[continentIdx].length > 0) {
+        world.continentSizes[world.tiles[continents[continentIdx][0]].continent] = continents[continentIdx].length;
+      }
+    }
     assignTerrainGraphics(world);
+    var resourceOccurrences = generateResources(world, settings, rng);
+    generateGoodyHuts(world, settings, rng, []);
+    generateBonusGrassland(world, rng);
     var starts = chooseStartingLocations(world, settings);
     var s;
     for (s = 0; s < starts.length; s += 1) starts[s].c3cBonuses |= BIQ_TILE_BONUS.PLAYER_START;
-    generateGoodyHuts(world, settings, rng, starts);
-    generateBonusGrassland(world, rng);
     return {
       width: world.width,
       height: world.height,
@@ -2214,6 +2723,7 @@
           xPos: tile.xPos,
           yPos: tile.yPos,
           continent: tile.continent,
+          resource: tile.resource,
           riverConnectionInfo: tile.riverConnectionInfo >>> 0,
           c3cOverlays: tile.c3cOverlays >>> 0,
           c3cBonuses: tile.c3cBonuses >>> 0,
@@ -2227,6 +2737,7 @@
       continents: continents.map(function mapContinent(members) {
         return { continentClass: 0, numTiles: members.length };
       }),
+      resourceOccurrences: resourceOccurrences,
       startingLocations: starts.map(function mapStart(tile) {
         return { ownerType: 0, owner: -1, x: tile.xPos, y: tile.yPos };
       })
@@ -2235,6 +2746,7 @@
 
   return {
     BIQ_TERRAIN: BIQ_TERRAIN,
+    BIQ_RESOURCE_TYPE: BIQ_RESOURCE_TYPE,
     BIQ_TILE_BONUS: BIQ_TILE_BONUS,
     packTerrain: packTerrain,
     generate: generate,

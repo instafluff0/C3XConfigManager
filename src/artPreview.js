@@ -602,20 +602,77 @@ function normalizeScenarioRoots(scenarioPath, scenarioPaths) {
   return out;
 }
 
-function resolveConquestsAssetPath(civ3Path, rawAssetPath, scenarioPath, scenarioPaths) {
+function resolveConquestsAssetPath(civ3Path, rawAssetPath, scenarioPath, scenarioPaths, civilopediaKey = '') {
   if (!civ3Path || !rawAssetPath) return null;
   const civ3Root = resolveCiv3Root(civ3Path);
   const conquestsRoot = resolveConquestsRoot(civ3Path);
   const ptwRoot = resolvePtwRoot(civ3Path);
   const scenarioRoots = normalizeScenarioRoots(scenarioPath, scenarioPaths);
-  const rel = normalizeAssetPath(rawAssetPath);
-  const candidates = [];
-  if (path.isAbsolute(rel)) candidates.push(rel);
-  scenarioRoots.forEach((root) => candidates.push(path.join(root, rel)));
-  candidates.push(path.join(conquestsRoot, rel));
-  candidates.push(path.join(ptwRoot, rel));
-  candidates.push(path.join(civ3Root, rel));
-  return candidates.find((p) => fileExists(p)) || null;
+  const relCandidates = [];
+  const addRel = (rel) => {
+    const normalized = normalizeAssetPath(rel);
+    if (!normalized || relCandidates.includes(normalized)) return;
+    relCandidates.push(normalized);
+  };
+  addRel(rawAssetPath);
+
+  const civKey = String(civilopediaKey || '').trim().toUpperCase();
+  if (civKey.startsWith('RACE_')) {
+    const short = civKey.slice('RACE_'.length).toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+    const compact = short.replace(/_/g, '');
+    [short, compact].filter(Boolean).forEach((base) => {
+      addRel(path.join('Art', 'Leaderheads', `${base} large.pcx`));
+      addRel(path.join('Art', 'Leaderheads', `${base} lg.pcx`));
+      addRel(path.join('Art', 'Leaderheads', `${base} large.pcx`));
+      addRel(path.join('Art', 'Leaderheads', `${base} small.pcx`));
+      addRel(path.join('Art', 'Leaderheads', `${base} sm.pcx`));
+      addRel(path.join('Art', 'Advisors', `${base}_all.pcx`));
+      addRel(path.join('Art', 'Advisors', `${base} all.pcx`));
+      addRel(path.join('Art', 'Civilopedia', 'Icons', 'Races', `${base}large.pcx`));
+      addRel(path.join('Art', 'Civilopedia', 'Icons', 'Races', `${base}small.pcx`));
+      addRel(path.join('Art', 'Civilopedia', 'Icons', 'Races', `${base} lg.pcx`));
+      addRel(path.join('Art', 'Civilopedia', 'Icons', 'Races', `${base} sm.pcx`));
+    });
+  }
+
+  const roots = [];
+  const addRoot = (root) => {
+    if (!root || roots.includes(root)) return;
+    roots.push(root);
+  };
+  scenarioRoots.forEach(addRoot);
+  addRoot(conquestsRoot);
+  addRoot(ptwRoot);
+  addRoot(civ3Root);
+
+  const directCandidates = [];
+  relCandidates.forEach((rel) => {
+    if (path.isAbsolute(rel)) directCandidates.push(rel);
+    roots.forEach((root) => directCandidates.push(path.join(root, rel)));
+  });
+  const directHit = directCandidates.find((p) => fileExists(p));
+  if (directHit) return directHit;
+
+  // Some official civ art lives in sibling scenario folders rather than the
+  // base Conquests directory. Try one level down before giving up.
+  try {
+    if (conquestsRoot && fs.existsSync(conquestsRoot)) {
+      const childDirs = fs.readdirSync(conquestsRoot, { withFileTypes: true })
+        .filter((dirent) => dirent.isDirectory())
+        .map((dirent) => dirent.name)
+        .sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+      for (const childDir of childDirs) {
+        for (const rel of relCandidates) {
+          const childHit = path.join(conquestsRoot, childDir, rel);
+          if (fileExists(childHit)) return childHit;
+        }
+      }
+    }
+  } catch (_err) {
+    // Best effort only.
+  }
+
+  return null;
 }
 
 function readAnimNameFromPedia(civ3Path, scenarioPath, scenarioPaths, animKey) {
@@ -774,13 +831,13 @@ function getPreview(request) {
   }
 
   if (kind === 'civilopediaIcon') {
-    const iconPath = resolveConquestsAssetPath(civ3Path, request.assetPath, scenarioPath, scenarioPaths);
+    const iconPath = resolveConquestsAssetPath(civ3Path, request.assetPath, scenarioPath, scenarioPaths, request.civilopediaKey);
     if (!iconPath) return { ok: false, error: 'Civilopedia icon not found' };
     return { ok: true, ...decodeByPath(iconPath, null, request.options || {}) };
   }
 
   if (kind === 'pcxPalette') {
-    const iconPath = resolveConquestsAssetPath(civ3Path, request.assetPath, scenarioPath, scenarioPaths);
+    const iconPath = resolveConquestsAssetPath(civ3Path, request.assetPath, scenarioPath, scenarioPaths, request.civilopediaKey);
     if (!iconPath) return { ok: false, error: 'PCX not found' };
     const b = fs.readFileSync(iconPath);
     if (b.length < 769 || b[b.length - 769] !== 12) return { ok: false, error: 'Missing PCX palette' };

@@ -2036,6 +2036,8 @@ function toEnglishRULE(rec, io) {
   for (const sn of RULE_VISIBLE_SCALAR_NAMES) {
     pairs.push([sn, String((rec[sn] != null ? rec[sn] : 0) | 0)]);
   }
+  pairs.push(['borderExpansionMultiplier', String((rec.borderExpansionMultiplier != null ? rec.borderExpansionMultiplier : 0) | 0)]);
+  pairs.push(['borderFactor', String((rec.borderFactor != null ? rec.borderFactor : 10) | 0)]);
   for (const sn of RULE_TRAILING_SCALAR_NAMES) {
     pairs.push([sn, String((rec[sn] != null ? rec[sn] : 0) | 0)]);
   }
@@ -2048,7 +2050,7 @@ function toEnglishRULE(rec, io) {
   return lines(pairs);
 }
 
-const WRITABLE_RULE = ['town_name', 'city_name', 'metropolis_name', 'advanced_barbarian', 'basic_barbarian', 'barbarian_sea_unit', 'cities_for_army', 'chance_of_rioting', 'draft_turn_penalty', 'shield_cost_in_gold', 'fortress_defence_bonus', 'citizens_affected_by_happy_face', 'forest_value_in_shields', 'shield_value_in_gold', 'citizen_value_in_shields', 'default_difficulty_level', 'battle_created_unit', 'build_army_unit', 'building_defensive_bonus', 'citizen_defensive_bonus', 'default_money_resource', 'chance_to_intercept_air_missions', 'chance_to_intercept_stealth_missions', 'starting_treasury', 'food_consumption_per_citizen', 'river_defensive_bonus', 'turn_penalty_for_whip', 'scout', 'slave', 'road_movement_rate', 'start_unit1', 'start_unit2', 'w_l_t_k_d_minimum_pop', 'town_defence_bonus', 'city_defence_bonus', 'metropolis_defence_bonus', 'max_city1_size', 'max_city2_size', 'question_mark_1', 'question_mark_2', 'question_mark_3', 'question_mark_4', 'fortifications_defence_bonus', 'future_tech_cost', 'golden_age_duration', 'maximum_research_time', 'minimum_research_time', 'flag_unit', 'upgrade_cost'];
+const WRITABLE_RULE = ['town_name', 'city_name', 'metropolis_name', 'advanced_barbarian', 'basic_barbarian', 'barbarian_sea_unit', 'cities_for_army', 'chance_of_rioting', 'draft_turn_penalty', 'shield_cost_in_gold', 'fortress_defence_bonus', 'citizens_affected_by_happy_face', 'forest_value_in_shields', 'shield_value_in_gold', 'citizen_value_in_shields', 'default_difficulty_level', 'battle_created_unit', 'build_army_unit', 'building_defensive_bonus', 'citizen_defensive_bonus', 'default_money_resource', 'chance_to_intercept_air_missions', 'chance_to_intercept_stealth_missions', 'starting_treasury', 'food_consumption_per_citizen', 'river_defensive_bonus', 'turn_penalty_for_whip', 'scout', 'slave', 'road_movement_rate', 'start_unit1', 'start_unit2', 'w_l_t_k_d_minimum_pop', 'town_defence_bonus', 'city_defence_bonus', 'metropolis_defence_bonus', 'max_city1_size', 'max_city2_size', 'question_mark_1', 'question_mark_2', 'question_mark_3', 'question_mark_4', 'fortifications_defence_bonus', 'border_expansion_multiplier', 'border_factor', 'future_tech_cost', 'golden_age_duration', 'maximum_research_time', 'minimum_research_time', 'flag_unit', 'upgrade_cost'];
 
 // ---------------------------------------------------------------------------
 // LEAD (Scenario Leaders)
@@ -2714,9 +2716,6 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
     rec.buildings = parts.map((p) => Number.parseInt(p, 10)).filter((n) => Number.isFinite(n));
     return true;
   }
-
-  // GAME scenario search folders: blocked (read-only)
-  if (code === 'GAME' && ck === 'scenariosearchfolders') return false;
 
   // LEAD: tech indices (dynamic list keyed by position)
   if (code === 'LEAD') {
