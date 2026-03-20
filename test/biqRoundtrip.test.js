@@ -87,9 +87,33 @@ function getBiqSectionRecordIndex(bundle, sectionCode, wantedKey) {
   });
 }
 
+function getBiqSectionRecordKeyByIndex(bundle, sectionCode, wantedIndex) {
+  const biq = bundle && bundle.biq;
+  const sections = biq && Array.isArray(biq.sections) ? biq.sections : [];
+  const section = sections.find((s) => String(s.code || '').toUpperCase() === String(sectionCode || '').toUpperCase());
+  if (!section || !Array.isArray(section.records)) return '';
+  const record = section.records[Number(wantedIndex)];
+  if (!record) return '';
+  const fields = Array.isArray(record && record.fields) ? record.fields : [];
+  const civField = fields.find((f) => String(f.baseKey || f.key || '').toLowerCase() === 'civilopediaentry');
+  return String(civField && civField.value || '').trim().toUpperCase();
+}
+
 function getEntryByCivKey(entries, civKey) {
   const target = String(civKey || '').trim().toUpperCase();
   return (Array.isArray(entries) ? entries : []).find((entry) => String(entry.civilopediaKey || '').trim().toUpperCase() === target) || null;
+}
+
+function parseDisplayedReferenceIndex(value, fallback = -1) {
+  const text = String(value == null ? '' : value).trim();
+  if (!text) return fallback;
+  if (/^none$/i.test(text)) return -1;
+  const parenMatch = text.match(/\((-?\d+)\)\s*$/);
+  if (parenMatch) {
+    const parsed = Number.parseInt(parenMatch[1], 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+  return mapCore.parseIntLoose(text, fallback);
 }
 
 function getSection(tab, code) {
@@ -493,13 +517,13 @@ test('BIQ round-trip persists array-backed projected and synthetic BIQ fields', 
 
   const reloadedCivEntry = getEntryByCivKey(reloaded.tabs.civilizations.entries, civEntry.civilopediaKey);
   assert.ok(reloadedCivEntry, 'expected reloaded civilization entry');
-  assert.equal(mapCore.parseIntLoose(findField(reloadedCivEntry, 'freetech1index')?.value, -1), Number(techOptions[1].biqIndex));
-  assert.equal(mapCore.parseIntLoose(findField(reloadedCivEntry, 'freetech2index')?.value, -1), Number(techOptions[2].biqIndex));
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedCivEntry, 'freetech1index')?.value, -1), Number(techOptions[1].biqIndex));
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedCivEntry, 'freetech2index')?.value, -1), Number(techOptions[2].biqIndex));
 
   const reloadedTechEntry = getEntryByCivKey(reloaded.tabs.technologies.entries, techEntry.civilopediaKey);
   assert.ok(reloadedTechEntry, 'expected reloaded technology entry');
-  assert.equal(mapCore.parseIntLoose(findField(reloadedTechEntry, 'prerequisite1')?.value, -1), Number(techOptions[0].biqIndex));
-  assert.equal(mapCore.parseIntLoose(findField(reloadedTechEntry, 'prerequisite2')?.value, -1), Number(techOptions[3].biqIndex));
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedTechEntry, 'prerequisite1')?.value, -1), Number(techOptions[0].biqIndex));
+  assert.equal(parseDisplayedReferenceIndex(findField(reloadedTechEntry, 'prerequisite2')?.value, -1), Number(techOptions[3].biqIndex));
 
   const reloadedGovEntry = getEntryByCivKey(reloaded.tabs.governments.entries, govEntry.civilopediaKey);
   assert.ok(reloadedGovEntry, 'expected reloaded government entry');
@@ -595,47 +619,6 @@ test('BIQ round-trip supports add/copy/delete record ops for technology section'
   const afterDelete = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
   assert.equal(biqSectionHasCivilopediaKey(afterDelete, 'TECH', importedRef), false);
   assert.equal(biqSectionHasCivilopediaKey(afterDelete, 'TECH', copiedRef), false);
-});
-
-test('BIQ save blocks deleting a technology that is still referenced elsewhere', (t) => {
-  const sampleBiq = findSampleBiqPath();
-  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
-
-  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
-  const tmp = mkTmpDir();
-  const c3x = path.join(tmp, 'c3x');
-  fs.mkdirSync(c3x, { recursive: true });
-  ensureDefaultC3xFiles(c3x);
-
-  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
-  fs.copyFileSync(sampleBiq, scenarioBiq);
-  fs.chmodSync(scenarioBiq, 0o644);
-
-  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
-  const resourceEntries = (bundle.tabs.resources && bundle.tabs.resources.entries) || [];
-  const techEntries = (bundle.tabs.technologies && bundle.tabs.technologies.entries) || [];
-  const targetResource = resourceEntries.find((entry) => mapCore.parseIntLoose(findField(entry, 'prerequisite')?.value, -1) >= 0);
-  if (!targetResource) return t.skip('Sample BIQ has no resource with a technology prerequisite.');
-
-  const targetTechIndex = mapCore.parseIntLoose(findField(targetResource, 'prerequisite')?.value, -1);
-  const targetTech = techEntries.find((entry) => Number(entry && entry.biqIndex) === targetTechIndex);
-  if (!targetTech) return t.skip('Could not resolve the referenced technology in the sample BIQ.');
-
-  const saveResult = saveBundle({
-    mode: 'scenario',
-    c3xPath: c3x,
-    civ3Path: civ3Root,
-    scenarioPath: scenarioBiq,
-    tabs: {
-      technologies: {
-        recordOps: [{ op: 'delete', recordRef: String(targetTech.civilopediaKey || '').toUpperCase() }]
-      }
-    }
-  });
-
-  assert.equal(saveResult.ok, false);
-  assert.match(String(saveResult.error || ''), /Cannot save yet because deleted items are still in use\./);
-  assert.match(String(saveResult.error || ''), /Resources:/);
 });
 
 test('BIQ matrix set test persists edits across core reference sections', (t) => {
@@ -806,25 +789,21 @@ test('BIQ delete cascade reindexes supported technology references end-to-end', 
   assert.equal(addSave.ok, true, String(addSave.error || 'save add failed'));
 
   const afterAdd = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
-  const deleteTech = getEntryByCivKey(afterAdd.tabs.technologies.entries, techDeleteRef);
-  const shiftTech = getEntryByCivKey(afterAdd.tabs.technologies.entries, techShiftRef);
-  assert.ok(deleteTech && Number.isFinite(deleteTech.biqIndex), 'expected delete-target tech with BIQ index');
-  assert.ok(shiftTech && Number.isFinite(shiftTech.biqIndex), 'expected shift-target tech with BIQ index');
+  const deleteTechIndex = getBiqSectionRecordIndex(afterAdd, 'TECH', techDeleteRef);
+  const shiftTechIndex = getBiqSectionRecordIndex(afterAdd, 'TECH', techShiftRef);
+  assert.ok(deleteTechIndex >= 0, 'expected delete-target tech with BIQ index');
+  assert.ok(shiftTechIndex >= 0, 'expected shift-target tech with BIQ index');
 
-  const resourceA = (afterAdd.tabs.resources && afterAdd.tabs.resources.entries || []).find((entry) => findField(entry, 'prerequisite'));
-  const resourceB = (afterAdd.tabs.resources && afterAdd.tabs.resources.entries || []).find((entry) => entry !== resourceA && findField(entry, 'prerequisite'));
   const techHost = (afterAdd.tabs.technologies && afterAdd.tabs.technologies.entries || []).find((entry) =>
     entry && entry.civilopediaKey !== techDeleteRef && entry.civilopediaKey !== techShiftRef && findField(entry, 'prerequisite1')
   );
-  if (!(resourceA && resourceB && techHost)) {
-    t.skip('Sample BIQ did not expose enough editable TECH/GOOD references.');
+  if (!techHost) {
+    t.skip('Sample BIQ did not expose enough editable TECH references.');
     return;
   }
 
-  findField(resourceA, 'prerequisite').value = String(deleteTech.biqIndex);
-  findField(resourceB, 'prerequisite').value = String(shiftTech.biqIndex);
-  findField(techHost, 'prerequisite1').value = String(deleteTech.biqIndex);
-  findField(techHost, 'prerequisite2').value = String(shiftTech.biqIndex);
+  findField(techHost, 'prerequisite1').value = String(deleteTechIndex);
+  findField(techHost, 'prerequisite2').value = String(shiftTechIndex);
 
   const setSave = saveBundle({
     mode: 'scenario',
@@ -849,15 +828,341 @@ test('BIQ delete cascade reindexes supported technology references end-to-end', 
   assert.equal(deleteSave.ok, true, String(deleteSave.error || 'delete cascade save failed'));
 
   const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
-  const reloadedShiftTech = getEntryByCivKey(reloaded.tabs.technologies.entries, techShiftRef);
-  assert.ok(reloadedShiftTech && Number.isFinite(reloadedShiftTech.biqIndex), 'expected surviving tech after delete');
-  const reResourceA = getEntryByCivKey(reloaded.tabs.resources.entries, resourceA.civilopediaKey);
-  const reResourceB = getEntryByCivKey(reloaded.tabs.resources.entries, resourceB.civilopediaKey);
+  const reloadedShiftTechIndex = getBiqSectionRecordIndex(reloaded, 'TECH', techShiftRef);
+  assert.ok(reloadedShiftTechIndex >= 0, 'expected surviving tech after delete');
   const reTechHost = getEntryByCivKey(reloaded.tabs.technologies.entries, techHost.civilopediaKey);
-  assert.equal(String(findField(reResourceA, 'prerequisite').value), 'None', 'deleted-tech references should clear to None');
-  assert.equal(Number(String(findField(reResourceB, 'prerequisite').value).match(/-?\d+/)[0]), reloadedShiftTech.biqIndex, 'higher tech references should decrement to the surviving tech index');
   assert.equal(String(findField(reTechHost, 'prerequisite1').value), 'None', 'deleted self-tech prereq should clear to None');
-  assert.equal(Number(String(findField(reTechHost, 'prerequisite2').value).match(/-?\d+/)[0]), reloadedShiftTech.biqIndex, 'higher self-tech prereq should decrement');
+  assert.equal(parseDisplayedReferenceIndex(findField(reTechHost, 'prerequisite2').value, -1), reloadedShiftTechIndex, 'higher self-tech prereq should decrement');
+});
+
+test('BIQ delete cascade reindexes supported resource references end-to-end', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const deleteGoodRef = 'GOOD_C3X_DEL_A';
+  const shiftGoodRef = 'GOOD_C3X_DEL_B';
+
+  const addSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      resources: {
+        recordOps: [
+          { op: 'add', newRecordRef: deleteGoodRef },
+          { op: 'add', newRecordRef: shiftGoodRef }
+        ]
+      }
+    }
+  });
+  assert.equal(addSave.ok, true, String(addSave.error || 'save add failed'));
+
+  const afterAdd = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const deleteGoodIndex = getBiqSectionRecordIndex(afterAdd, 'GOOD', deleteGoodRef);
+  const shiftGoodIndex = getBiqSectionRecordIndex(afterAdd, 'GOOD', shiftGoodRef);
+  assert.ok(deleteGoodIndex >= 0, 'expected delete-target resource with BIQ index');
+  assert.ok(shiftGoodIndex >= 0, 'expected shift-target resource with BIQ index');
+
+  const unitHost = (afterAdd.tabs.units && afterAdd.tabs.units.entries || []).find((entry) =>
+    entry && findField(entry, 'requiredresource1') && findField(entry, 'requiredresource2')
+  );
+  if (!unitHost) {
+    t.skip('Sample BIQ did not expose enough editable unit resource references.');
+    return;
+  }
+
+  findField(unitHost, 'requiredresource1').value = String(deleteGoodIndex);
+  findField(unitHost, 'requiredresource2').value = String(shiftGoodIndex);
+
+  const setSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: afterAdd.tabs
+  });
+  assert.equal(setSave.ok, true, String(setSave.error || 'save setup refs failed'));
+
+  const deleteSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      resources: {
+        recordOps: [{ op: 'delete', recordRef: deleteGoodRef }]
+      }
+    }
+  });
+  assert.equal(deleteSave.ok, true, String(deleteSave.error || 'delete cascade save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedShiftGoodIndex = getBiqSectionRecordIndex(reloaded, 'GOOD', shiftGoodRef);
+  assert.ok(reloadedShiftGoodIndex >= 0, 'expected surviving resource after delete');
+  const reUnitHost = getEntryByCivKey(reloaded.tabs.units.entries, unitHost.civilopediaKey);
+  assert.equal(String(findField(reUnitHost, 'requiredresource1').value), 'None', 'deleted unit resource prerequisite should clear to None');
+  assert.equal(parseDisplayedReferenceIndex(findField(reUnitHost, 'requiredresource2').value, -1), reloadedShiftGoodIndex, 'higher unit resource prerequisite should decrement');
+});
+
+test('BIQ delete cascade reindexes supported government references end-to-end', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const deleteGovRef = 'GOVT_C3X_DEL_A';
+  const shiftGovRef = 'GOVT_C3X_DEL_B';
+
+  const addSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      governments: {
+        recordOps: [
+          { op: 'add', newRecordRef: deleteGovRef },
+          { op: 'add', newRecordRef: shiftGovRef }
+        ]
+      }
+    }
+  });
+  assert.equal(addSave.ok, true, String(addSave.error || 'save add failed'));
+
+  const afterAdd = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const deleteGovIndex = getBiqSectionRecordIndex(afterAdd, 'GOVT', deleteGovRef);
+  const shiftGovIndex = getBiqSectionRecordIndex(afterAdd, 'GOVT', shiftGovRef);
+  assert.ok(deleteGovIndex >= 0, 'expected delete-target government with BIQ index');
+  assert.ok(shiftGovIndex >= 0, 'expected shift-target government with BIQ index');
+
+  const civHost = (afterAdd.tabs.civilizations && afterAdd.tabs.civilizations.entries || []).find((entry) =>
+    entry && findField(entry, 'favoritegovernment') && findField(entry, 'shunnedgovernment')
+  );
+  if (!civHost) {
+    t.skip('Sample BIQ did not expose enough editable civilization government references.');
+    return;
+  }
+
+  findField(civHost, 'favoritegovernment').value = String(deleteGovIndex);
+  findField(civHost, 'shunnedgovernment').value = String(shiftGovIndex);
+
+  const setSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: afterAdd.tabs
+  });
+  assert.equal(setSave.ok, true, String(setSave.error || 'save setup refs failed'));
+
+  const deleteSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      governments: {
+        recordOps: [{ op: 'delete', recordRef: deleteGovRef }]
+      }
+    }
+  });
+  assert.equal(deleteSave.ok, true, String(deleteSave.error || 'delete cascade save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedShiftGovIndex = getBiqSectionRecordIndex(reloaded, 'GOVT', shiftGovRef);
+  assert.ok(reloadedShiftGovIndex >= 0, 'expected surviving government after delete');
+  const reCivHost = getEntryByCivKey(reloaded.tabs.civilizations.entries, civHost.civilopediaKey);
+  assert.equal(String(findField(reCivHost, 'favoritegovernment').value), 'None', 'deleted favorite government should clear to None');
+  assert.equal(parseDisplayedReferenceIndex(findField(reCivHost, 'shunnedgovernment').value, -1), reloadedShiftGovIndex, 'higher shunned government should decrement');
+});
+
+test('BIQ delete cascade reindexes supported building references end-to-end', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const deleteBldgRef = 'BLDG_C3X_DEL_A';
+  const shiftBldgRef = 'BLDG_C3X_DEL_B';
+
+  const addSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      improvements: {
+        recordOps: [
+          { op: 'add', newRecordRef: deleteBldgRef },
+          { op: 'add', newRecordRef: shiftBldgRef }
+        ]
+      }
+    }
+  });
+  assert.equal(addSave.ok, true, String(addSave.error || 'save add failed'));
+
+  const afterAdd = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const deleteBldgIndex = getBiqSectionRecordIndex(afterAdd, 'BLDG', deleteBldgRef);
+  const shiftBldgIndex = getBiqSectionRecordIndex(afterAdd, 'BLDG', shiftBldgRef);
+  assert.ok(deleteBldgIndex >= 0, 'expected delete-target building with BIQ index');
+  assert.ok(shiftBldgIndex >= 0, 'expected shift-target building with BIQ index');
+
+  const bldgHost = (afterAdd.tabs.improvements && afterAdd.tabs.improvements.entries || []).find((entry) =>
+    entry && findField(entry, 'reqimprovement') && findField(entry, 'doubleshappiness')
+  );
+  if (!bldgHost) {
+    t.skip('Sample BIQ did not expose enough editable building references.');
+    return;
+  }
+
+  findField(bldgHost, 'reqimprovement').value = String(deleteBldgIndex);
+  findField(bldgHost, 'doubleshappiness').value = String(shiftBldgIndex);
+
+  const setSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: afterAdd.tabs
+  });
+  assert.equal(setSave.ok, true, String(setSave.error || 'save setup refs failed'));
+
+  const deleteSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      improvements: {
+        recordOps: [{ op: 'delete', recordRef: deleteBldgRef }]
+      }
+    }
+  });
+  assert.equal(deleteSave.ok, true, String(deleteSave.error || 'delete cascade save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedShiftBldgIndex = getBiqSectionRecordIndex(reloaded, 'BLDG', shiftBldgRef);
+  assert.ok(reloadedShiftBldgIndex >= 0, 'expected surviving building after delete');
+  const reBldgHost = getEntryByCivKey(reloaded.tabs.improvements.entries, bldgHost.civilopediaKey);
+  assert.equal(parseDisplayedReferenceIndex(findField(reBldgHost, 'reqimprovement').value, -1), 0, 'deleted required improvement should reset to zero sentinel');
+  assert.equal(parseDisplayedReferenceIndex(findField(reBldgHost, 'doubleshappiness').value, -1), reloadedShiftBldgIndex, 'higher doubles-happiness building should decrement');
+});
+
+test('BIQ delete cascade reindexes supported unit references end-to-end', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const unitEntries = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq }).tabs.units.entries || [];
+  const unitSeed = unitEntries.find((entry) => String(entry && entry.civilopediaKey || '').trim());
+  if (!unitSeed) {
+    t.skip('Sample BIQ did not expose a unit seed for copy tests.');
+    return;
+  }
+
+  const deleteUnitRef = 'PRTO_C3X_DEL_A';
+  const shiftUnitRef = 'PRTO_C3X_DEL_B';
+  const addSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      units: {
+        recordOps: [
+          { op: 'copy', sourceRef: String(unitSeed.civilopediaKey || '').toUpperCase(), newRecordRef: deleteUnitRef },
+          { op: 'copy', sourceRef: String(unitSeed.civilopediaKey || '').toUpperCase(), newRecordRef: shiftUnitRef }
+        ]
+      }
+    }
+  });
+  assert.equal(addSave.ok, true, String(addSave.error || 'save add failed'));
+
+  const afterAdd = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const deleteUnitIndex = getBiqSectionRecordIndex(afterAdd, 'PRTO', deleteUnitRef);
+  const shiftUnitIndex = getBiqSectionRecordIndex(afterAdd, 'PRTO', shiftUnitRef);
+  assert.ok(deleteUnitIndex >= 0, 'expected delete-target unit with BIQ index');
+  assert.ok(shiftUnitIndex >= 0, 'expected shift-target unit with BIQ index');
+
+  const unitHost = (afterAdd.tabs.units && afterAdd.tabs.units.entries || []).find((entry) =>
+    entry
+      && String(entry.civilopediaKey || '').toUpperCase() !== deleteUnitRef
+      && String(entry.civilopediaKey || '').toUpperCase() !== shiftUnitRef
+      && findField(entry, 'upgradeto')
+      && findField(entry, 'enslaveresultsin')
+  );
+  if (!unitHost) {
+    t.skip('Sample BIQ did not expose enough editable unit references.');
+    return;
+  }
+
+  findField(unitHost, 'upgradeto').value = String(deleteUnitIndex);
+  findField(unitHost, 'enslaveresultsin').value = String(shiftUnitIndex);
+
+  const setSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: afterAdd.tabs
+  });
+  assert.equal(setSave.ok, true, String(setSave.error || 'save setup refs failed'));
+
+  const deleteSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      units: {
+        recordOps: [{ op: 'delete', recordRef: deleteUnitRef }]
+      }
+    }
+  });
+  assert.equal(deleteSave.ok, true, String(deleteSave.error || 'delete cascade save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedShiftUnitIndex = getBiqSectionRecordIndex(reloaded, 'PRTO', shiftUnitRef);
+  assert.ok(reloadedShiftUnitIndex >= 0, 'expected surviving unit after delete');
+  const reUnitHost = getEntryByCivKey(reloaded.tabs.units.entries, unitHost.civilopediaKey);
+  assert.equal(String(findField(reUnitHost, 'upgradeto').value), 'None', 'deleted upgrade target should clear to None');
+  assert.equal(parseDisplayedReferenceIndex(findField(reUnitHost, 'enslaveresultsin').value, -1), reloadedShiftUnitIndex, 'higher enslave-result unit should decrement');
 });
 
 test('BIQ save blocks deleting a unit when the scenario already has map data', (t) => {

@@ -1989,6 +1989,7 @@ function captureCleanSnapshot() {
   refreshDirtyUi();
   refreshTabDirtyBadges();
   refreshActiveReferenceListDirtyBadges();
+  refreshActiveBiqRecordListDirtyBadges();
 }
 
 function setDirty(next) {
@@ -2000,6 +2001,7 @@ function setDirty(next) {
     refreshDirtyUi();
     refreshTabDirtyBadges();
     refreshActiveReferenceListDirtyBadges();
+    refreshActiveBiqRecordListDirtyBadges();
     return;
   }
   if (!state.isDirty) {
@@ -2026,6 +2028,7 @@ function setDirty(next) {
   refreshDirtyUi();
   refreshTabDirtyBadges();
   refreshActiveReferenceListDirtyBadges();
+  refreshActiveBiqRecordListDirtyBadges();
 }
 
 function parseSnapshotTabs(snapshotText) {
@@ -2440,6 +2443,71 @@ function refreshActiveReferenceListDirtyBadges() {
     if (entry && isDirty) {
       appendDirtyBadge(itemBtn, `${entry.name || entry.civilopediaKey} has unsaved edits`);
     }
+  });
+}
+
+function getActiveBiqSectionSelectionState() {
+  if (!state.bundle || !state.bundle.tabs || !state.activeTab) return null;
+  const tabKey = String(state.activeTab || '');
+  const tab = state.bundle.tabs[tabKey];
+  if (!tab || !Array.isArray(tab.sections) || tab.sections.length === 0) return null;
+  const sections = tab.sections;
+  const selectionKey = String((tab && tab.key) || tabKey || 'biq');
+  const selectedSectionIndex = Math.max(
+    0,
+    Math.min(Number(state.biqSectionSelectionByTab[selectionKey] || 0), sections.length - 1)
+  );
+  const selectedBase = sections[selectedSectionIndex];
+  const selectedBaseCode = String(selectedBase && selectedBase.code || '').toUpperCase();
+  const gamePanelStateKey = `${selectionKey}:game-panel`;
+  const gamePanelDefinitions = selectedBaseCode === 'GAME' ? GAME_PANEL_DEFINITIONS : [];
+  const gamePanelIndex = Math.max(
+    0,
+    Math.min(Number(state.biqSectionSelectionByTab[gamePanelStateKey] || 0), Math.max(0, gamePanelDefinitions.length - 1))
+  );
+  const activeGamePanel = gamePanelDefinitions[gamePanelIndex] || null;
+
+  let selected = selectedBase;
+  let selectedCode = selectedBaseCode;
+  let selectedSectionTab = tab;
+  if (selectedBaseCode === 'GAME' && activeGamePanel && activeGamePanel.id === 'players') {
+    const playersTab = getBiqTabByKey('players');
+    const leadSection = getBiqSectionFromTab(playersTab, 'LEAD');
+    if (playersTab && leadSection) {
+      selected = leadSection;
+      selectedCode = 'LEAD';
+      selectedSectionTab = playersTab;
+    }
+  }
+
+  return { selected, selectedCode, selectedSectionTab };
+}
+
+function refreshActiveBiqRecordListDirtyBadges() {
+  if (!state.bundle || !state.bundle.tabs || !state.activeTab || !el.tabContent) return;
+  const selectionState = getActiveBiqSectionSelectionState();
+  if (!selectionState || !selectionState.selected) return;
+  if (selectionState.selectedCode === 'RULE' || selectionState.selectedCode === 'GAME') return;
+
+  const records = Array.isArray(selectionState.selected.records) ? selectionState.selected.records : [];
+  const listButtons = Array.from(el.tabContent.querySelectorAll('.entry-list-pane .entry-list-item[data-index]'));
+  if (listButtons.length === 0) return;
+
+  const ownerTabKey = String(
+    (selectionState.selectedSectionTab && selectionState.selectedSectionTab.key)
+      || state.activeTab
+      || ''
+  );
+  listButtons.forEach((itemBtn) => {
+    const idx = Number.parseInt(String(itemBtn.getAttribute('data-index') || ''), 10);
+    const record = Number.isFinite(idx) ? records[idx] : null;
+    Array.from(itemBtn.querySelectorAll('.dirty-dot-badge')).forEach((node) => node.remove());
+    if (!record) return;
+    if (!isBiqRecordDirty(ownerTabKey, selectionState.selected.code, record)) return;
+    appendDirtyBadge(
+      itemBtn,
+      `${getDisplayBiqRecordName(selectionState.selected.code, record, idx)} has unsaved edits`
+    );
   });
 }
 
@@ -17886,6 +17954,9 @@ function renderBiqTab(tab) {
         if (civEntry) loadReferenceListThumbnail('civilizations', civEntry, thumb);
       }
       itemBtn.appendChild(title);
+      if (isBiqRecordDirty((selectedSectionTab && selectedSectionTab.key) || tab.key || state.activeTab || 'biq', selected.code, record)) {
+        appendDirtyBadge(itemBtn, `${recordTitle} has unsaved edits`);
+      }
       itemBtn.addEventListener('click', () => {
         navigateWithHistory(() => {
           state.biqRecordSelection[selected.id] = idx;

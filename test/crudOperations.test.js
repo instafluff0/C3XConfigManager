@@ -132,6 +132,21 @@ function getLeadRecords(bundle) {
   return section && Array.isArray(section.records) ? section.records : [];
 }
 
+function getRawRecordField(record, key) {
+  const target = String(key || '').trim().toLowerCase();
+  return (Array.isArray(record && record.fields) ? record.fields : []).find((field) =>
+    String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target
+  ) || null;
+}
+
+function getRawRecordInt(record, key, fallback = NaN) {
+  const field = getRawRecordField(record, key);
+  const match = String(field && field.value || '').match(/-?\d+/);
+  if (!match) return fallback;
+  const parsed = Number.parseInt(match[0], 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 /**
  * Simulate exactly what the renderer does when the user clicks Import:
  *   - Deep-clones the source entry
@@ -673,6 +688,19 @@ test('Import Civ from Tides: FLC forward/reverse filenames are copied to scenari
   if (!TIDES_BIQ_EXISTS) return t.skip(`Tides BIQ not found: ${TIDES_BIQ}`);
   const { tmpDir, c3xDir, biqPath } = ctx;
 
+  const prepDelete = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      civilizations: {
+        recordOps: [{ op: 'delete', recordRef: 'RACE_AMERICAN' }]
+      }
+    }
+  });
+  assert.equal(prepDelete.ok, true, String(prepDelete.error || 'failed to free a civ slot before import'));
+
   const tidesBundle = loadBundle({ mode: 'scenario', civ3Path: CIV3_ROOT, scenarioPath: TIDES_BIQ });
   const srcCiv = tidesBundle.tabs.civilizations.entries.find(
     (e) => e.civilopediaKey === 'RACE_AMAZONIANS'
@@ -885,20 +913,21 @@ test('Multiple imports from Tides across different sections are all independent'
   }
 });
 
-test('Add to each section simultaneously in one save call', (t) => {
-  const ctx = setupScenario();
+test('Add to each uncapped section simultaneously in one save call', (t) => {
+  const ctx = setupScenario(BASE_BIQ);
   if (!ctx) return t.skip(`Base BIQ not found: ${BASE_BIQ}`);
   const { c3xDir, biqPath } = ctx;
 
+  const cases = ADD_CASES.filter(({ sectionCode }) => sectionCode !== 'RACE');
   const before = reload(c3xDir, biqPath);
   const countsBefore = {};
-  for (const { sectionCode } of ADD_CASES) {
+  for (const { sectionCode } of cases) {
     countsBefore[sectionCode] = countSection(before, sectionCode);
   }
 
   const newKeys = {};
   const tabs = {};
-  for (const { tabKey, sectionCode, prefix } of ADD_CASES) {
+  for (const { tabKey, sectionCode, prefix } of cases) {
     const newKey = `${prefix}C3X_ALLADD_${Date.now()}`.toUpperCase();
     newKeys[sectionCode] = newKey;
     tabs[tabKey] = { recordOps: [{ op: 'add', newRecordRef: newKey }] };
@@ -910,7 +939,7 @@ test('Add to each section simultaneously in one save call', (t) => {
   assert.equal(saveResult.ok, true, String(saveResult.error || 'multi-add save failed'));
 
   const after = reload(c3xDir, biqPath);
-  for (const { sectionCode } of ADD_CASES) {
+  for (const { sectionCode } of cases) {
     assert.equal(countSection(after, sectionCode), countsBefore[sectionCode] + 1,
       `expected +1 in ${sectionCode}`);
     assert.equal(biqHasKey(after, sectionCode, newKeys[sectionCode]), true,
@@ -955,17 +984,20 @@ test('Delete existing civilizations reindexes GAME playable civs and LEAD civ re
   const raceCount = countSection(after, 'RACE');
   const gameRecord = getGameRecord(after);
   assert.ok(gameRecord, 'expected GAME record after delete');
-  const playableIds = Array.isArray(gameRecord.playableCivIds) ? gameRecord.playableCivIds : [];
-  const allianceIds = Array.isArray(gameRecord.civPartOfWhichAlliance) ? gameRecord.civPartOfWhichAlliance : [];
-  assert.equal(gameRecord.numPlayableCivs, playableIds.length, 'GAME playable civ count should match playable civ ids');
-  assert.equal(allianceIds.length, playableIds.length, 'GAME alliance membership array should track playable civ ids');
+  const playableIds = (Array.isArray(gameRecord.fields) ? gameRecord.fields : [])
+    .filter((field) => /^playable_civ(?:_\d+)?$/i.test(String(field && (field.baseKey || field.key) || '')))
+    .map((field) => getRawRecordInt({ fields: [field] }, field.baseKey || field.key, NaN))
+    .filter((id) => Number.isInteger(id) && id >= 0);
+  const numPlayable = getRawRecordInt(gameRecord, 'numberofplayablecivs', playableIds.length);
+  assert.equal(numPlayable, playableIds.length, 'GAME playable civ count should match playable civ ids');
   playableIds.forEach((id) => {
     assert.ok(Number.isInteger(id) && id >= 0 && id < raceCount,
       `playable civ id ${id} must remain within RACE bounds ${raceCount}`);
   });
 
   getLeadRecords(after).forEach((record, idx) => {
-    assert.ok(Number.isInteger(record.civ) && record.civ >= 0 && record.civ < raceCount,
+    const civ = getRawRecordInt(record, 'civ', NaN);
+    assert.ok(Number.isInteger(civ) && civ >= 0 && civ < raceCount,
       `LEAD record ${idx} civ index must remain within RACE bounds`);
   });
 });

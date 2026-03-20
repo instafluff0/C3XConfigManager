@@ -3146,6 +3146,7 @@ function normalizeRaceDependentSections(parsed, edits, originalRaceRefs) {
     gameRecord.playableCivIds = nextIds;
     gameRecord.civPartOfWhichAlliance = nextAlliance;
     gameRecord.numPlayableCivs = nextIds.length;
+    gameSection._modified = true;
   }
 
   const leadSection = getSectionByCode(parsed, 'LEAD');
@@ -3161,19 +3162,37 @@ function normalizeRaceDependentSections(parsed, edits, originalRaceRefs) {
       }
       record.civ = Number.isFinite(nextCiv) && nextCiv >= 0 ? nextCiv : 0;
     });
+    leadSection._modified = true;
   }
 
   return { ok: true };
 }
 
-function buildDeletedSectionRemap(originalRefs, finalRefs) {
+function buildDeletedSectionRemap(originalRefs, finalRefs, deletedIndices = []) {
   const oldToNew = new Map();
   const oldList = Array.isArray(originalRefs) ? originalRefs : [];
   const newList = Array.isArray(finalRefs) ? finalRefs : [];
-  oldList.forEach((ref, oldIndex) => {
-    const newIndex = newList.indexOf(ref);
-    if (newIndex >= 0) oldToNew.set(oldIndex, newIndex);
-  });
+  const normalizedDeleted = Array.from(new Set((Array.isArray(deletedIndices) ? deletedIndices : [])
+    .map((value) => Number.parseInt(String(value), 10))
+    .filter((value) => Number.isFinite(value) && value >= 0 && value < oldList.length)))
+    .sort((a, b) => a - b);
+
+  if (normalizedDeleted.length > 0) {
+    const deletedSet = new Set(normalizedDeleted);
+    let deletedBefore = 0;
+    for (let oldIndex = 0; oldIndex < oldList.length; oldIndex += 1) {
+      if (deletedSet.has(oldIndex)) {
+        deletedBefore += 1;
+        continue;
+      }
+      oldToNew.set(oldIndex, oldIndex - deletedBefore);
+    }
+  } else {
+    oldList.forEach((ref, oldIndex) => {
+      const newIndex = newList.indexOf(ref);
+      if (newIndex >= 0) oldToNew.set(oldIndex, newIndex);
+    });
+  }
   return {
     oldCount: oldList.length,
     finalCount: newList.length,
@@ -3237,10 +3256,16 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const remaps = new Map();
   deleteTouchedCodes.forEach((code) => {
     const section = getSectionByCode(parsed, code);
+    const originalRefs = (originalRefsBySection && originalRefsBySection[code]) || [];
+    const deletedIndices = (Array.isArray(edits) ? edits : [])
+      .filter((edit) => String(edit && edit.op || '').trim().toLowerCase() === 'delete'
+        && String(edit && edit.sectionCode || '').trim().toUpperCase() === code)
+      .map((edit) => originalRefs.indexOf(String(edit && edit.recordRef || '').trim().toUpperCase()))
+      .filter((index) => index >= 0);
     const finalRefs = section && Array.isArray(section.records)
       ? section.records.map((record) => getRecordCivilopediaRef(record))
       : [];
-    remaps.set(code, buildDeletedSectionRemap((originalRefsBySection && originalRefsBySection[code]) || [], finalRefs));
+    remaps.set(code, buildDeletedSectionRemap(originalRefs, finalRefs, deletedIndices));
   });
 
   const techRemap = remaps.get('TECH');
@@ -3248,6 +3273,9 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const bldgRemap = remaps.get('BLDG');
   const govtRemap = remaps.get('GOVT');
   const prtoRemap = remaps.get('PRTO');
+  const markModified = (section) => {
+    if (section) section._modified = true;
+  };
 
   const raceSection = getSectionByCode(parsed, 'RACE');
   if (raceSection && Array.isArray(raceSection.records)) {
@@ -3259,6 +3287,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       }
       if (prtoRemap) rec.kingUnit = remapDeletedSectionIndex(rec.kingUnit, prtoRemap, -1);
     });
+    if (techRemap || govtRemap || prtoRemap) markModified(raceSection);
   }
 
   const goodSection = getSectionByCode(parsed, 'GOOD');
@@ -3266,6 +3295,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
     goodSection.records.forEach((rec) => {
       rec.prerequisite = remapDeletedSectionIndex(rec.prerequisite, techRemap, -1);
     });
+    markModified(goodSection);
   }
 
   const techSection = getSectionByCode(parsed, 'TECH');
@@ -3274,6 +3304,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       rec.prerequisites = remapDeletedSectionList(ensureArraySize(rec.prerequisites, 4, -1), techRemap, -1);
       rec.index = index;
     });
+    markModified(techSection);
   }
 
   const govtSection = getSectionByCode(parsed, 'GOVT');
@@ -3298,6 +3329,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
         rec.numGovts = rec.relations.length;
       });
     }
+    if (techRemap || govtRemap) markModified(govtSection);
   }
 
   const bldgSection = getSectionByCode(parsed, 'BLDG');
@@ -3320,6 +3352,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       }
       if (prtoRemap) rec.unitProduced = remapDeletedSectionIndex(rec.unitProduced, prtoRemap, -1);
     });
+    if (techRemap || goodRemap || govtRemap || bldgRemap || prtoRemap) markModified(bldgSection);
   }
 
   const prtoSection = getSectionByCode(parsed, 'PRTO');
@@ -3339,6 +3372,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       }
       if (bldgRemap) rec.legalBuildingTelepads = remapDeletedSectionListRemovingDeleted(rec.legalBuildingTelepads, bldgRemap);
     });
+    if (goodRemap || techRemap || prtoRemap || bldgRemap) markModified(prtoSection);
   }
 
   const ruleSection = getSectionByCode(parsed, 'RULE');
@@ -3354,6 +3388,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
         });
       }
     });
+    if (goodRemap || prtoRemap) markModified(ruleSection);
   }
 
   const terrSection = getSectionByCode(parsed, 'TERR');
@@ -3363,6 +3398,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       rec.numTotalResources = next.numTotalResources;
       rec.possibleResources = next.possibleResources;
     });
+    markModified(terrSection);
   }
 
   const citySection = getSectionByCode(parsed, 'CITY');
@@ -3371,6 +3407,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       rec.buildings = remapDeletedSectionListRemovingDeleted(rec.buildings, bldgRemap);
       rec.numBuildings = Array.isArray(rec.buildings) ? rec.buildings.length : 0;
     });
+    markModified(citySection);
   }
 
   const unitSection = getSectionByCode(parsed, 'UNIT');
@@ -3378,6 +3415,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
     unitSection.records.forEach((rec) => {
       rec.pRTONumber = remapDeletedSectionIndex(rec.pRTONumber, prtoRemap, -1);
     });
+    markModified(unitSection);
   }
 
   const leadSection = getSectionByCode(parsed, 'LEAD');
@@ -3396,6 +3434,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       }
       if (techRemap) rec.numStartTechs = Array.isArray(rec.techIndices) ? rec.techIndices.length : 0;
     });
+    if (techRemap || govtRemap || prtoRemap) markModified(leadSection);
   }
 
   return { ok: true };
