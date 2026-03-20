@@ -645,24 +645,9 @@ button:disabled {
   background: #fdecd8;
 }
 
-.debug-fab.has-issue::after {
-  content: attr(data-issue-count);
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  min-width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  padding: 0 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.64rem;
-  font-weight: 800;
-  line-height: 1;
-  color: #fff;
-  background: #c73728;
-  border: 1px solid rgba(255, 255, 255, 0.92);
+.files-read-fab.has-issue {
+  box-shadow: 0 0 0 2px #c73728;
+  background: #fde8e6;
 }
 
 .debug-drawer {
@@ -876,11 +861,33 @@ button:disabled {
   flex-wrap: wrap;
 }
 
-.entity-import-path {
-  font-size: 0.74rem;
-  color: #5d5777;
+.entity-import-scenario-pill {
+  flex: 1 1 auto;
+  min-width: 160px;
   max-width: 100%;
-  word-break: break-all;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5l4 4 4-4' fill='none' stroke='%23524497' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"),
+    linear-gradient(130deg, #f4f1ff, #ece6ff);
+  background-repeat: no-repeat, no-repeat;
+  background-position: right 24px center, center;
+  background-size: 12px 12px, auto;
+  -webkit-appearance: none;
+  appearance: none;
+  border-color: rgba(114, 93, 204, 0.28);
+  color: #4b3f8d;
+  padding-right: 46px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entity-import-scenario-pill:hover {
+  box-shadow: 0 8px 18px rgba(114, 93, 204, 0.2);
+}
+
+.entity-import-scenario-pill option {
+  color: #1b1530;
+  background: #ffffff;
 }
 
 .entity-import-picker {
@@ -3654,7 +3661,7 @@ details > summary:focus-visible {
 
 .identity-key-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   flex-wrap: wrap;
   gap: 8px;
   padding: 2px 2px 4px;
@@ -3664,6 +3671,7 @@ details > summary:focus-visible {
 
 .identity-key-label {
   margin-bottom: 0;
+  padding-top: 9px;
   font-size: 0.72rem;
 }
 

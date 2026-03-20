@@ -382,6 +382,7 @@ const TAB_MIN_RELEASE = Object.freeze({
 });
 const REFERENCE_MUTABLE_ENTITY_TABS = new Set(['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts']);
 const REFERENCE_TOP_NAME_EDIT_TABS = new Set(['civilizations', 'technologies', 'resources', 'improvements', 'governments', 'units', 'gameConcepts']);
+const REFERENCE_KEY_MAX_LENGTH = 32; // BIQ civilopediaEntry is a fixed 32-byte null-padded latin1 buffer
 const REFERENCE_PREFIX_BY_TAB = {
   civilizations: 'RACE_',
   technologies: 'TECH_',
@@ -1659,14 +1660,11 @@ function updateFilesReadIssueBadge() {
   if (!el.filesReadToggle) return;
   const count = Number(state.filesReadIssueCount || 0);
   if (count > 0) {
-    const label = count > 99 ? '99+' : String(count);
     el.filesReadToggle.classList.add('has-issue');
-    el.filesReadToggle.setAttribute('data-issue-count', label);
     el.filesReadToggle.setAttribute('title', `Show files read (${count} potential save issue${count === 1 ? '' : 's'})`);
     return;
   }
   el.filesReadToggle.classList.remove('has-issue');
-  el.filesReadToggle.removeAttribute('data-issue-count');
   el.filesReadToggle.setAttribute('title', 'Show files read');
 }
 
@@ -3116,25 +3114,6 @@ async function runScenarioCreateFlow(kind = 'base') {
     resetScenarioNewActionControl();
     return false;
   }
-  const writeRoots = Array.isArray(created.scenarioWriteRoots) ? created.scenarioWriteRoots : [created.scenarioDir];
-  const preflightLines = [
-    `Scenario: ${created.scenarioName || details.scenarioName}`,
-    `Destination: ${created.scenarioDir || details.scenarioParentDir}`,
-    '',
-    'Writable roots:',
-    ...writeRoots.map((p) => `- ${p}`)
-  ];
-  if (kind === 'copy' && Array.isArray(created.sourceSearchRoots) && created.sourceSearchRoots.length > 0) {
-    preflightLines.push('', 'Source scenario search roots to isolate:');
-    created.sourceSearchRoots.forEach((p) => preflightLines.push(`- ${p}`));
-  }
-  const proceed = window.confirm(`Create scenario with this plan?\n\n${preflightLines.join('\n')}`);
-  if (!proceed) {
-    updateScenarioSelectValue();
-    resetScenarioNewActionControl();
-    return false;
-  }
-
   const committed = await window.c3xManager.createScenario({
     c3xPath: state.settings.c3xPath,
     civ3Path: state.settings.civ3Path,
@@ -6326,6 +6305,8 @@ function makeReferencePreviewTasks(tabKey, entry) {
     units: 180
   };
   const smallSize = 72;
+  const entryScenarioPath = (entry && entry._importScenarioPath) || state.settings.scenarioPath;
+  const entryScenarioPaths = (entry && entry._importScenarioPaths) || getScenarioPreviewPaths();
   if (Array.isArray(entry.iconPaths)) {
     entry.iconPaths.slice(0, 2).forEach((assetPath, idx) => {
       tasks.push({
@@ -6334,8 +6315,8 @@ function makeReferencePreviewTasks(tabKey, entry) {
         request: {
           kind: 'civilopediaIcon',
           civ3Path: state.settings.civ3Path,
-          scenarioPath: state.settings.scenarioPath,
-          scenarioPaths: getScenarioPreviewPaths(),
+          scenarioPath: entryScenarioPath,
+          scenarioPaths: entryScenarioPaths,
           assetPath
         }
       });
@@ -6349,8 +6330,8 @@ function makeReferencePreviewTasks(tabKey, entry) {
         request: {
           kind: 'civilopediaIcon',
           civ3Path: state.settings.civ3Path,
-          scenarioPath: state.settings.scenarioPath,
-          scenarioPaths: getScenarioPreviewPaths(),
+          scenarioPath: entryScenarioPath,
+          scenarioPaths: entryScenarioPaths,
           assetPath
         }
       });
@@ -6805,7 +6786,10 @@ function drawPreviewFrameToCanvas(preview, canvas) {
 }
 
 function loadReferenceListThumbnail(tabKey, entry, holder) {
+  const resolvedScenarioPath = (entry && entry._importScenarioPath) || state.settings.scenarioPath;
+  const resolvedScenarioPaths = (entry && entry._importScenarioPaths) || getScenarioPreviewPaths();
   const assetPath = entry.thumbPath || '';
+
   if (!assetPath) {
     if (tabKey === 'units' && entry) {
       const iconIndexField = getBiqFieldByBaseKey(entry, 'iconindex');
@@ -6829,8 +6813,8 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
         window.c3xManager.getPreview({
           kind: 'unitFlcFirstFrame',
           civ3Path: state.settings.civ3Path,
-          scenarioPath: state.settings.scenarioPath,
-          scenarioPaths: getScenarioPreviewPaths(),
+          scenarioPath: resolvedScenarioPath,
+          scenarioPaths: resolvedScenarioPaths,
           prtoName: String(entry.name || '')
         })
           .then((res) => {
@@ -6893,8 +6877,8 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
       civilopediaKey: tabKey === 'civilizations' ? String(entry.civilopediaKey || '') : '',
       assetPath: candidatePath,
       civ3Path: state.settings.civ3Path,
-      scenarioPath: state.settings.scenarioPath,
-      scenarioPaths: getScenarioPreviewPathsKey()
+      scenarioPath: resolvedScenarioPath,
+      scenarioPaths: resolvedScenarioPaths.join('|')
     });
 
     if (state.previewCache.has(key)) {
@@ -6905,12 +6889,13 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
     window.c3xManager.getPreview({
       kind: 'civilopediaIcon',
       civ3Path: state.settings.civ3Path,
-      scenarioPath: state.settings.scenarioPath,
-      scenarioPaths: getScenarioPreviewPaths(),
+      scenarioPath: resolvedScenarioPath,
+      scenarioPaths: resolvedScenarioPaths,
       assetPath: candidatePath,
       civilopediaKey: tabKey === 'civilizations' ? String(entry.civilopediaKey || '') : ''
     })
       .then((res) => {
+
         if (!res || !res.ok) {
           tryCandidate(index + 1);
           return;
@@ -6918,7 +6903,9 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
         setPreviewCache(key, res);
         if (holder.isConnected) paint(res);
       })
-      .catch(() => {
+      .catch((err) => {
+        if (entry && entry._importScenarioPath) {
+        }
         tryCandidate(index + 1);
       });
   };
@@ -15791,7 +15778,9 @@ async function loadImportEntriesForTab(tabKey, filePath) {
   if (!loaded || !loaded.tabs || !loaded.tabs[tabKey] || !Array.isArray(loaded.tabs[tabKey].entries)) {
     throw new Error('Could not load import source scenario.');
   }
-  return loaded.tabs[tabKey].entries;
+  const srcTab = loaded.tabs[tabKey];
+  const importScenarioPaths = Array.isArray(loaded.scenarioSearchPaths) ? loaded.scenarioSearchPaths : [];
+  return { entries: srcTab.entries, diplomacySlots: srcTab.diplomacySlots || [], importScenarioPaths };
 }
 
 async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initialMode = 'blank', lockMode = false }) {
@@ -15841,6 +15830,7 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   const keyInput = document.createElement('input');
   keyInput.type = 'text';
   keyInput.placeholder = `${REFERENCE_PREFIX_BY_TAB[tabKey] || ''}...`;
+  keyInput.maxLength = REFERENCE_KEY_MAX_LENGTH;
   keyField.appendChild(keyLabel);
   keyField.appendChild(keyInput);
   grid.appendChild(keyField);
@@ -15875,16 +15865,17 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   importWrap.className = 'entity-modal-content hidden';
   const importToolbar = document.createElement('div');
   importToolbar.className = 'entity-import-toolbar';
-  const importScenarioSelect = document.createElement('select');
-  importScenarioSelect.className = 'entity-import-scenario-select';
-  const importPlaceholder = document.createElement('option');
-  importPlaceholder.value = '';
-  importPlaceholder.textContent = 'Import source scenario...';
-  importScenarioSelect.appendChild(importPlaceholder);
-  const importManual = document.createElement('option');
-  importManual.value = '__manual__';
-  importManual.textContent = 'Manual / Browse...';
-  importScenarioSelect.appendChild(importManual);
+  // Purple pill-styled scenario select — mirrors the main scenario select UX
+  const importSourcePill = document.createElement('select');
+  importSourcePill.className = 'entity-import-scenario-pill';
+  const importPillPlaceholder = document.createElement('option');
+  importPillPlaceholder.value = '';
+  importPillPlaceholder.textContent = 'Scenario...';
+  importSourcePill.appendChild(importPillPlaceholder);
+  const importPillManual = document.createElement('option');
+  importPillManual.value = '__manual__';
+  importPillManual.textContent = 'Manual / Browse...';
+  importSourcePill.appendChild(importPillManual);
   const addImportGroup = (source, label) => {
     const items = (state.availableScenarios || []).filter((s) => String(s && s.source || '') === source);
     if (!items.length) return;
@@ -15897,20 +15888,11 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
       option.title = String(item.path || '');
       group.appendChild(option);
     });
-    importScenarioSelect.appendChild(group);
+    importSourcePill.appendChild(group);
   };
   addImportGroup('Conquests', 'Conquests Folder');
   addImportGroup('Scenarios', 'Scenarios Folder');
-  const pickBtn = document.createElement('button');
-  pickBtn.type = 'button';
-  pickBtn.className = 'ghost';
-  pickBtn.textContent = 'Choose Scenario .biq';
-  const importPath = document.createElement('span');
-  importPath.className = 'entity-import-path';
-  importPath.textContent = 'No source file selected';
-  importToolbar.appendChild(importScenarioSelect);
-  importToolbar.appendChild(pickBtn);
-  importToolbar.appendChild(importPath);
+  importToolbar.appendChild(importSourcePill);
   importWrap.appendChild(importToolbar);
 
   const importPickerHost = document.createElement('div');
@@ -15921,25 +15903,36 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
 
   let importFilePath = '';
   let importEntries = [];
+  let importDiplomacySlots = [];
   let selectedImportKey = '';
+  let keySetByImport = false;
   const loadImportSource = async (filePath) => {
     if (!filePath) return;
-    importPath.textContent = 'Loading source entries...';
+    importSourcePill.disabled = true;
     importEntries = [];
+    importDiplomacySlots = [];
     selectedImportKey = '';
     renderImportPicker();
+    updateConfirmButtonState();
     try {
-      const loadedEntries = await loadImportEntriesForTab(tabKey, filePath);
+      const loaded = await loadImportEntriesForTab(tabKey, filePath);
       importFilePath = filePath;
-      importEntries = loadedEntries;
-      importPath.textContent = filePath;
+      importEntries = loaded.entries;
+      importEntries.forEach((entry) => {
+        if (entry) {
+          entry._importScenarioPath = filePath;
+          entry._importScenarioPaths = loaded.importScenarioPaths;
+        }
+      });
+      importDiplomacySlots = loaded.diplomacySlots;
       renderImportPicker();
       if (importEntries.length === 0) {
         setStatus('Selected scenario has no entries for this tab.', true);
       }
     } catch (err) {
-      importPath.textContent = 'Could not load source scenario';
       setStatus(err && err.message ? err.message : 'Could not load import source scenario.', true);
+    } finally {
+      importSourcePill.disabled = false;
     }
   };
   const renderImportPicker = () => {
@@ -15964,21 +15957,50 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
       onSelect: (value) => {
         selectedImportKey = String(value || '').toUpperCase();
         const picked = importEntries.find((entry) => String(entry && entry.civilopediaKey || '').toUpperCase() === selectedImportKey);
-        if (picked && !nameEditedManually) {
-          nameInput.value = String(picked.name || inferReferenceNameFromKey(picked.civilopediaKey, tabKey));
-          syncKeyFromName();
+        if (picked) {
+          if (!nameEditedManually) {
+            nameInput.value = String(picked.name || inferReferenceNameFromKey(picked.civilopediaKey, tabKey));
+          }
+          // Always sync key from the import entry's own civilopediaKey
+          keyInput.value = makeUniqueReferenceCivilopediaKey(tab, tabKey, picked.civilopediaKey);
+          keySetByImport = true;
+          keyEditedManually = false;
         }
+        updateConfirmButtonState();
       }
     });
     importPickerHost.appendChild(picker);
   };
   const updateModeVisibility = () => {
-    importWrap.classList.toggle('hidden', modeSelect.value !== 'import');
+    const isImport = modeSelect.value === 'import';
+    importWrap.classList.toggle('hidden', !isImport);
+    if (el.entityModalConfirm) el.entityModalConfirm.textContent = isImport ? 'Import' : 'Create';
+    updateConfirmButtonState();
   };
   const syncKeyFromName = () => {
-    if (keyEditedManually) return;
+    if (keyEditedManually || keySetByImport) return;
     const name = String(nameInput.value || '').trim();
     keyInput.value = makeUniqueReferenceCivilopediaKey(tab, tabKey, name || `NEW_${Date.now()}`);
+  };
+  const getConfirmEnabled = () => {
+    const mode = modeSelect.value;
+    const rawKey = String(keyInput.value || '').trim();
+    const normalizedToken = normalizeReferenceKeyToken(rawKey);
+    const prefix = REFERENCE_PREFIX_BY_TAB[tabKey] || '';
+    const strippedToken = prefix ? stripReferencePrefixToken(normalizedToken) : normalizedToken;
+    const fullKey = prefix ? (strippedToken ? `${prefix}${strippedToken}` : '') : normalizedToken;
+    const keyNonEmpty = fullKey.length > 0;
+    const keyInLength = rawKey.length <= REFERENCE_KEY_MAX_LENGTH;
+    const entries = (tab && Array.isArray(tab.entries)) ? tab.entries : [];
+    const existingKeys = new Set(entries.map((e) => String(e && e.civilopediaKey || '').toUpperCase()));
+    const keyUnique = keyNonEmpty && !existingKeys.has(fullKey.toUpperCase());
+    if (mode === 'import') {
+      return !!selectedImportKey && keyNonEmpty && keyInLength && keyUnique;
+    }
+    return true;
+  };
+  const updateConfirmButtonState = () => {
+    if (el.entityModalConfirm) el.entityModalConfirm.disabled = !getConfirmEnabled();
   };
 
   modeSelect.addEventListener('change', updateModeVisibility);
@@ -15988,28 +16010,35 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
   });
   keyInput.addEventListener('input', () => {
     keyEditedManually = true;
+    keySetByImport = false;
+    updateConfirmButtonState();
   });
-  importScenarioSelect.addEventListener('change', async () => {
-    const value = String(importScenarioSelect.value || '');
+  importSourcePill.addEventListener('change', async () => {
+    const value = String(importSourcePill.value || '');
     if (!value) return;
     if (value === '__manual__') {
-      pickBtn.click();
+      const filePath = await window.c3xManager.pickFile({
+        filters: [{ name: 'BIQ Scenario Files', extensions: ['biq'] }]
+      });
+      if (!filePath) {
+        importSourcePill.value = importFilePath || '';
+        return;
+      }
+      const existingOpt = Array.from(importSourcePill.options).find((opt) => String(opt.value || '') === filePath);
+      if (existingOpt) {
+        importSourcePill.value = filePath;
+      } else {
+        const manualOpt = document.createElement('option');
+        manualOpt.value = filePath;
+        manualOpt.textContent = getPathTail(filePath);
+        manualOpt.title = filePath;
+        importSourcePill.insertBefore(manualOpt, importPillManual);
+        importSourcePill.value = filePath;
+      }
+      await loadImportSource(filePath);
       return;
     }
     await loadImportSource(value);
-  });
-  pickBtn.addEventListener('click', async () => {
-    const filePath = await window.c3xManager.pickFile({
-      filters: [{ name: 'BIQ Scenario Files', extensions: ['biq'] }]
-    });
-    if (!filePath) return;
-    const hasOption = Array.from(importScenarioSelect.options).some((opt) => String(opt.value || '') === filePath);
-    if (hasOption) {
-      importScenarioSelect.value = filePath;
-    } else {
-      importScenarioSelect.value = '__manual__';
-    }
-    await loadImportSource(filePath);
   });
   updateModeVisibility();
   syncKeyFromName();
@@ -16040,7 +16069,7 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
           setStatus('Select one import entry from the list.', true);
           return;
         }
-        resolveEntityModal({ mode, name, key, importedEntry: picked, importFilePath });
+        resolveEntityModal({ mode, name, key, importedEntry: picked, importFilePath, importDiplomacySlots });
         return;
       }
       resolveEntityModal({ mode, name, key });
@@ -16271,6 +16300,26 @@ function renderReferenceTab(tab, tabKey) {
         mode: 'import',
         displayName: result.name
       });
+      if (tabKey === 'civilizations' && Array.isArray(result.importDiplomacySlots) && Array.isArray(tab.diplomacySlots)) {
+        const textIndexField = getBiqFieldByBaseKey(newEntry, 'diplomacytextindex');
+        const sourceSlotIndex = textIndexField ? Number(textIndexField.value) : -1;
+        if (Number.isFinite(sourceSlotIndex) && sourceSlotIndex >= 0) {
+          const sourceSlot = result.importDiplomacySlots.find((s) => Number(s.index) === sourceSlotIndex);
+          if (sourceSlot && (sourceSlot.firstContact || sourceSlot.firstDeal)) {
+            const usedIndices = new Set(tab.diplomacySlots.map((s) => Number(s.index)));
+            let newSlotIndex = tab.diplomacySlots.length;
+            while (usedIndices.has(newSlotIndex)) newSlotIndex++;
+            tab.diplomacySlots.push({
+              index: newSlotIndex,
+              firstContact: String(sourceSlot.firstContact || ''),
+              originalFirstContact: '',
+              firstDeal: String(sourceSlot.firstDeal || ''),
+              originalFirstDeal: ''
+            });
+            if (textIndexField) textIndexField.value = String(newSlotIndex);
+          }
+        }
+      }
       const ops = ensureReferenceRecordOps(tab);
       ops.push({
         op: 'add',
@@ -16628,6 +16677,7 @@ function renderReferenceTab(tab, tabKey) {
         keyInput.type = 'text';
         keyInput.className = 'key-input-inline';
         keyInput.value = String(entry.civilopediaKey || '');
+        keyInput.maxLength = REFERENCE_KEY_MAX_LENGTH;
         keyInput.title = 'Record key (editable for new entries)';
         keyInput.addEventListener('change', () => {
           rememberUndoSnapshot();
@@ -16668,6 +16718,7 @@ function renderReferenceTab(tab, tabKey) {
         keyInput.type = 'text';
         keyInput.className = 'key-input-inline';
         keyInput.value = String(entry.civilopediaKey || '');
+        keyInput.maxLength = REFERENCE_KEY_MAX_LENGTH;
         keyInput.addEventListener('change', () => {
           rememberUndoSnapshot();
           const changed = renamePendingReferenceEntryKey(tab, tabKey, entry, keyInput.value);
@@ -25613,12 +25664,7 @@ async function loadBundleAndRender(options = {}) {
     });
     const cleanSnapshotForLoadedBundle = snapshotEditableTabsFromBundle(bundle);
     if (bundle && bundle.tabs && bundle.tabs.districts && bundle.tabs.districts.model && Array.isArray(bundle.tabs.districts.model.sections)) {
-      const districtEffectiveSource = String(bundle.tabs.districts.effectiveSource || '').toLowerCase();
-      if (districtEffectiveSource === 'default') {
-        // Only backfill known district defaults when using the default file.
-        // User and scenario files are used exclusively — no default backfill.
-        applySpecialDistrictDefaultsToSections(bundle.tabs.districts.model.sections);
-      }
+      applySpecialDistrictDefaultsToSections(bundle.tabs.districts.model.sections);
     }
     if (bundle && state.settings.mode === 'scenario') {
       filterDistrictSectionsForScenarioFallback(bundle);
@@ -26330,9 +26376,7 @@ async function performSeedScenarioTab(tabKey) {
     if (freshBundle && freshBundle.tabs && freshBundle.tabs[tabKey]) {
       const freshTab = freshBundle.tabs[tabKey];
       if (tabKey === 'districts' && freshTab.model && Array.isArray(freshTab.model.sections)) {
-        if (String(freshTab.effectiveSource || '').toLowerCase() === 'default') {
-          applySpecialDistrictDefaultsToSections(freshTab.model.sections);
-        }
+        applySpecialDistrictDefaultsToSections(freshTab.model.sections);
       }
       state.bundle.tabs[tabKey] = freshTab;
       if (state.settings.mode === 'scenario') {
