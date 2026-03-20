@@ -810,6 +810,12 @@ function getPreview(request) {
     return { ok: true, ...decodeByPath(pcx, request.crop) };
   }
 
+  if (kind === 'districtButtonSheet') {
+    const pcxPath = path.join(String(c3xPath || ''), 'Art', 'Districts', 'WorkerDistrictButtonsNorm.pcx');
+    if (!fileExists(pcxPath)) return { ok: false, error: 'Button sheet not found' };
+    return { ok: true, ...decodeByPath(pcxPath, request.crop) };
+  }
+
   if (kind === 'animationIni') {
     const iniRel = String(request.iniPath || '').replace(/\\/g, path.sep).replace(/\//g, path.sep);
     const iniAbs = path.isAbsolute(iniRel)

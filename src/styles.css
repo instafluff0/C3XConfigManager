@@ -2499,17 +2499,17 @@ button.danger:hover {
   padding: 7px 30px 7px 8px;
 }
 
-.district-entry-item-has-issue {
+.entry-item-has-issue {
   background: linear-gradient(135deg, rgba(255, 247, 204, 0.92), rgba(255, 243, 184, 0.9));
   border-color: rgba(193, 144, 38, 0.45);
 }
 
-.district-entry-item-has-issue.active {
+.entry-item-has-issue.active {
   background: linear-gradient(135deg, rgba(255, 239, 170, 0.95), rgba(255, 231, 146, 0.95));
   border-color: rgba(183, 123, 25, 0.52);
 }
 
-.district-issue-badge {
+.entry-issue-badge {
   position: absolute;
   right: 7px;
   top: 50%;
@@ -4619,6 +4619,21 @@ details > summary:focus-visible {
   color: #7c3d08;
   font-size: 0.9rem;
   margin: 8px 0 0;
+}
+
+.unit-icon-field-warning {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(192, 146, 40, 0.42);
+  background: linear-gradient(180deg, rgba(255, 246, 204, 0.96), rgba(255, 238, 176, 0.9));
+  color: #6d3907;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.unit-icon-field-warning.hidden {
+  display: none;
 }
 
 .district-warning-box {

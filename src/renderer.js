@@ -1233,11 +1233,14 @@ function collectPendingWritePathsFromDirtyTabs() {
 
   // Fallback write paths for new/imported entries whose sourceMeta write paths were cleared
   // (they came from a source entry in a different context).
-  const scenarioCivilopediaFallback = String(
-    ((tabs.civilizations && tabs.civilizations.sourceDetails && tabs.civilizations.sourceDetails.civilopediaScenario) || '')
-  ).trim();
-  const scenarioPediaIconsFallback = String(
-    ((tabs.civilizations && tabs.civilizations.sourceDetails && tabs.civilizations.sourceDetails.pediaIconsScenario) || '')
+  const civilopediaSourceDetails = (tabs.civilizations && tabs.civilizations.sourceDetails) || {};
+  const scenarioCivilopediaFallback = String(civilopediaSourceDetails.civilopediaScenario || '').trim();
+  // Use the write path (not the read path) to match what buildSavePlan targets.
+  const scenarioPediaIconsFallback = String(civilopediaSourceDetails.pediaIconsScenarioWrite || '').trim();
+  const scenarioBiqFallback = String(
+    (state.bundle && state.bundle.biq && state.bundle.biq.sourcePath)
+    || (state.settings && state.settings.scenarioPath)
+    || ''
   ).trim();
 
   Object.keys(tabs).forEach((tabKey) => {
@@ -1270,7 +1273,7 @@ function collectPendingWritePathsFromDirtyTabs() {
         addPath((meta && meta.animationName && meta.animationName.writePath) || scenarioPediaIconsFallback);
       }
       if (changedBiq) {
-        addPath(meta && meta.biq && meta.biq.writePath);
+        addPath((meta && meta.biq && meta.biq.writePath) || scenarioBiqFallback);
       }
     });
     if (tabKey === 'civilizations') {
@@ -2393,6 +2396,16 @@ function applyDirtyBadgeToTabButton(button, key, tab) {
       appendWarningCountBadge(
         button,
         `Wonder Districts has ${warningCount} warning${warningCount === 1 ? '' : 's'}`,
+        warningCount
+      );
+    }
+  } else if (key === 'units') {
+    const unitsTab = tab || (state.bundle && state.bundle.tabs && state.bundle.tabs.units);
+    const warningCount = collectUnitIconIssueKeys(unitsTab).size;
+    if (warningCount > 0) {
+      appendWarningCountBadge(
+        button,
+        `Units has ${warningCount} icon index warning${warningCount === 1 ? '' : 's'} — icon may be missing at runtime`,
         warningCount
       );
     }
@@ -4198,6 +4211,17 @@ function isSectionFieldVersionAllowed(field) {
   return parseReleaseNumber(configured) >= parseReleaseNumber(minRelease);
 }
 
+// Returns false when a base config key is mapped in C3X_RELEASE_BY_KEY to a
+// release that exceeds the configured c3xVersion. No mapping or no version
+// configured → always shown.
+function isBaseRowVersionAllowed(key) {
+  const minRelease = C3X_RELEASE_BY_KEY[String(key || '').trim().toLowerCase()];
+  if (!minRelease) return true;
+  const configured = String((state.settings && state.settings.c3xVersion) || '').trim();
+  if (!configured) return true;
+  return parseReleaseNumber(configured) >= parseReleaseNumber(minRelease);
+}
+
 function getC3xReleaseInfo(rawKey) {
   const key = String(rawKey || '').trim().toLowerCase();
   if (!key) {
@@ -5710,6 +5734,7 @@ function renderBaseTab(tab) {
     });
   };
   for (const row of tab.rows) {
+    if (!isBaseRowVersionAllowed(row.key)) continue;
     const sectionName = (tab.sectionByKey && tab.sectionByKey[row.key]) || 'General';
     if (!groups.has(sectionName)) {
       const group = document.createElement('div');
@@ -6884,11 +6909,26 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
         getUnits32AtlasPreview()
           .then((preview) => {
             if (!preview || !holder.isConnected) return;
+            if (!units32AtlasMetricsCache) {
+              units32AtlasMetricsCache = getUnits32AtlasMetrics(preview, 32, 1);
+              refreshTabDirtyBadges();
+            }
             const canvas = document.createElement('canvas');
             canvas.width = 28;
             canvas.height = 28;
             canvas.className = 'entry-thumb-canvas';
-            if (!drawUnits32IconToCanvas(preview, iconIndex, canvas)) return;
+            if (!drawUnits32IconToCanvas(preview, iconIndex, canvas)) {
+              const btn = holder.closest('.entry-list-item');
+              if (btn && !btn.querySelector('.unit-icon-issue-badge')) {
+                btn.classList.add('entry-item-has-issue');
+                const badge = document.createElement('span');
+                badge.className = 'entry-issue-badge unit-icon-issue-badge';
+                badge.textContent = '⚠';
+                badge.title = 'Icon index is out of range for the available units_32.pcx — this unit\'s icon will be missing at runtime.';
+                btn.appendChild(badge);
+              }
+              return;
+            }
             holder.innerHTML = '';
             holder.appendChild(canvas);
           })
@@ -7943,6 +7983,22 @@ function collectDistrictCompatibilityIssuesForTab(tab) {
     totalIssues,
     sectionCount: bySection.size
   };
+}
+
+let units32AtlasMetricsCache = null;
+
+function collectUnitIconIssueKeys(tab) {
+  if (!units32AtlasMetricsCache) return new Set();
+  const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+  const out = new Set();
+  entries.forEach((entry) => {
+    const field = getBiqFieldByBaseKey(entry, 'iconindex');
+    const idx = parseIntLoose(field && field.value, NaN);
+    if (!Number.isFinite(idx) || idx < 0) return;
+    const row = Math.floor(idx / units32AtlasMetricsCache.cols);
+    if (row >= units32AtlasMetricsCache.rows) out.add(String(entry && entry.civilopediaKey || ''));
+  });
+  return out;
 }
 
 function collectDistrictIssueIndexes(tab, compatibility = null) {
@@ -10530,16 +10586,6 @@ function buildImprovementTopReferenceControl(field, labelText, referenceEditable
 
 function renderImprovementTopControls(entry, identityGrid, referenceEditable) {
   if (!entry || !identityGrid) return;
-
-  const civField = getBiqFieldByBaseKey(entry, 'civilopediaentry');
-  if (civField) {
-    const { row, control } = createImprovementTopRow(entry, 'Civilopedia Entry', [civField]);
-    const chip = document.createElement('span');
-    chip.className = 'key-display-chip';
-    chip.textContent = getImprovementTopFieldValue(civField, String(entry.civilopediaKey || '(none)'));
-    control.appendChild(chip);
-    identityGrid.appendChild(row);
-  }
 
   const wonder = getBiqFieldByBaseKey(entry, 'wonder');
   const smallWonder = getBiqFieldByBaseKey(entry, 'smallwonder');
@@ -16564,6 +16610,14 @@ function renderReferenceTab(tab, tabKey) {
   }
   wrap.appendChild(controls);
 
+  if (tabKey === 'units' && !units32AtlasMetricsCache) {
+    getUnits32AtlasPreview().then((preview) => {
+      if (!preview || units32AtlasMetricsCache) return;
+      units32AtlasMetricsCache = getUnits32AtlasMetrics(preview, 32, 1);
+      renderActiveTab({ preserveTabScroll: true });
+    }).catch(() => {});
+  }
+
   const filteredEntries = allEntries
     .map((entry, baseIndex) => ({ entry, baseIndex }))
     .filter(({ entry }) => {
@@ -16651,6 +16705,21 @@ function renderReferenceTab(tab, tabKey) {
     itemBtn.appendChild(title);
     if (isReferenceEntryDirty(tabKey, entry)) {
       appendDirtyBadge(itemBtn, `${entry.name || entry.civilopediaKey} has unsaved edits`);
+    }
+    if (tabKey === 'units' && units32AtlasMetricsCache) {
+      const iconField = getBiqFieldByBaseKey(entry, 'iconindex');
+      const iconIdx = parseIntLoose(iconField && iconField.value, NaN);
+      if (Number.isFinite(iconIdx) && iconIdx >= 0) {
+        const row = Math.floor(iconIdx / units32AtlasMetricsCache.cols);
+        if (row >= units32AtlasMetricsCache.rows) {
+          itemBtn.classList.add('entry-item-has-issue');
+          const badge = document.createElement('span');
+          badge.className = 'entry-issue-badge unit-icon-issue-badge';
+          badge.textContent = '⚠';
+          badge.title = 'Icon index is out of range for the available units_32.pcx — this unit\'s icon will be missing at runtime.';
+          itemBtn.appendChild(badge);
+        }
+      }
     }
     if (thumb) {
       if (baseIndex === activeBaseIndex) {
@@ -17215,6 +17284,20 @@ function renderReferenceTab(tab, tabKey) {
                 setDirty(true);
               });
               controlWrap.appendChild(picker);
+              const iconWarnEl = document.createElement('div');
+              iconWarnEl.className = 'unit-icon-field-warning hidden';
+              iconWarnEl.textContent = '⚠ Icon index is out of range for the available units_32.pcx — this unit\'s icon will be missing at runtime. Copy units_32.pcx from the source scenario into this scenario\'s Art/Units/ folder.';
+              controlWrap.appendChild(iconWarnEl);
+              getUnits32AtlasPreview().then((preview) => {
+                if (!preview || !iconWarnEl.isConnected) return;
+                if (!units32AtlasMetricsCache) units32AtlasMetricsCache = getUnits32AtlasMetrics(preview, 32, 1);
+                if (!units32AtlasMetricsCache) return;
+                const idx = parseIntLoose(field.value, NaN);
+                if (!Number.isFinite(idx) || idx < 0) return;
+                if (Math.floor(idx / units32AtlasMetricsCache.cols) >= units32AtlasMetricsCache.rows) {
+                  iconWarnEl.classList.remove('hidden');
+                }
+              }).catch(() => {});
             } else if (useColorSlotPicker) {
               const colorPicker = createColorSlotPicker({
                 currentValue: field.value,
@@ -23930,6 +24013,94 @@ function getTokenColor(token, fieldKey = '') {
   return `hsl(${hue} 55% 48%)`;
 }
 
+function renderButtonTileCompoundRow(section) {
+  const rowEl = document.createElement('div');
+  rowEl.className = 'rule-row section-rule-row';
+
+  const labelWrap = document.createElement('div');
+  labelWrap.className = 'section-rule-label';
+  const labelEl = document.createElement('label');
+  labelEl.className = 'field-label section-rule-title';
+  labelEl.textContent = 'Button Tile';
+  labelWrap.appendChild(labelEl);
+  rowEl.appendChild(labelWrap);
+
+  const controlWrap = document.createElement('div');
+  controlWrap.className = 'rule-control section-rule-control';
+  controlWrap.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap';
+
+  const makeSubLabel = (text) => {
+    const span = document.createElement('span');
+    span.className = 'inline-field-label';
+    span.textContent = text;
+    return span;
+  };
+
+  const rowInput = document.createElement('input');
+  rowInput.type = 'number';
+  rowInput.min = '0';
+  rowInput.style.width = '4.5em';
+  rowInput.value = getFieldValue(section, 'btn_tile_sheet_row') || '0';
+
+  const colInput = document.createElement('input');
+  colInput.type = 'number';
+  colInput.min = '0';
+  colInput.style.width = '4.5em';
+  colInput.value = getFieldValue(section, 'btn_tile_sheet_column') || '0';
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  canvas.className = 'preview-canvas';
+  canvas.style.cssText = 'width:64px;height:64px;image-rendering:pixelated;cursor:pointer;flex-shrink:0';
+
+  controlWrap.appendChild(makeSubLabel('Row'));
+  controlWrap.appendChild(rowInput);
+  controlWrap.appendChild(makeSubLabel('Col'));
+  controlWrap.appendChild(colInput);
+  controlWrap.appendChild(canvas);
+  rowEl.appendChild(controlWrap);
+
+  let loadedPreview = null;
+
+  const refreshCanvas = () => {
+    const r = Math.max(0, Number.parseInt(rowInput.value || '0', 10) || 0);
+    const c = Math.max(0, Number.parseInt(colInput.value || '0', 10) || 0);
+    window.c3xManager.getPreview({
+      kind: 'districtButtonSheet',
+      c3xPath: state.settings && state.settings.c3xPath,
+      crop: { row: r, col: c, w: 32, h: 32 }
+    }).then((res) => {
+      if (!res || !res.ok || !canvas.isConnected) return;
+      loadedPreview = res;
+      canvas.width = res.width;
+      canvas.height = res.height;
+      drawPreviewFrameToCanvas(res, canvas);
+    }).catch(() => {});
+  };
+
+  rowInput.addEventListener('input', () => {
+    setSingleFieldValue(section, 'btn_tile_sheet_row', rowInput.value);
+    refreshCanvas();
+    setDirty(true);
+  });
+
+  colInput.addEventListener('input', () => {
+    setSingleFieldValue(section, 'btn_tile_sheet_column', colInput.value);
+    refreshCanvas();
+    setDirty(true);
+  });
+
+  canvas.addEventListener('click', () => {
+    if (loadedPreview) {
+      openArtFocusWithPreview(loadedPreview, 'Button Tile', loadedPreview.sourcePath || '');
+    }
+  });
+
+  refreshCanvas();
+  return rowEl;
+}
+
 function getDistrictPreviewSpec(section) {
   const firstPath = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths'))
     .map((v) => String(v || '').trim().replace(/^"|"$/g, ''))
@@ -25417,7 +25588,7 @@ function renderSectionTab(tab, tabKey) {
     itemBtn.type = 'button';
     if (tabKey === 'districts') {
       const hasDistrictIssue = !!(districtIssueIndexes && districtIssueIndexes.has(sectionIndex));
-      if (hasDistrictIssue) itemBtn.classList.add('district-entry-item-has-issue');
+      if (hasDistrictIssue) itemBtn.classList.add('entry-item-has-issue');
       const thumb = document.createElement('span');
       thumb.className = 'entry-thumb district-entry-thumb';
       itemBtn.appendChild(thumb);
@@ -25437,7 +25608,7 @@ function renderSectionTab(tab, tabKey) {
       itemBtn.appendChild(primary);
       if (hasDistrictIssue) {
         const issueBadge = document.createElement('span');
-        issueBadge.className = 'district-issue-badge';
+        issueBadge.className = 'entry-issue-badge';
         issueBadge.textContent = '⚠';
         issueBadge.title = 'This district has unresolved config references.';
         itemBtn.appendChild(issueBadge);
@@ -25448,7 +25619,7 @@ function renderSectionTab(tab, tabKey) {
       );
     } else if (tabKey === 'wonders' || tabKey === 'naturalWonders') {
       const hasSectionIssue = tabKey === 'wonders' && !!(wonderIssueIndexes && wonderIssueIndexes.has(sectionIndex));
-      if (hasSectionIssue) itemBtn.classList.add('district-entry-item-has-issue');
+      if (hasSectionIssue) itemBtn.classList.add('entry-item-has-issue');
       const thumb = document.createElement('span');
       thumb.className = 'entry-thumb district-entry-thumb section-entry-thumb-large';
       itemBtn.appendChild(thumb);
@@ -25469,7 +25640,7 @@ function renderSectionTab(tab, tabKey) {
       itemBtn.insertAdjacentHTML('beforeend', `<strong>${sectionTitle}</strong>`);
       if (hasSectionIssue) {
         const issueBadge = document.createElement('span');
-        issueBadge.className = 'district-issue-badge';
+        issueBadge.className = 'entry-issue-badge';
         issueBadge.textContent = '⚠';
         issueBadge.title = 'This wonder district has unresolved config references.';
         itemBtn.appendChild(issueBadge);
@@ -25675,6 +25846,10 @@ function renderSectionTab(tab, tabKey) {
       orderedSchemaFields = orderedSchemaFields.filter((field) => shouldShowAnimationFieldForType(field && field.key, animationType));
     }
     orderedSchemaFields = orderedSchemaFields.filter(isSectionFieldVersionAllowed);
+    if (tabKey === 'districts') {
+      const hiddenBtnKeys = new Set(['btn_tile_sheet_row', 'btn_tile_sheet_column']);
+      orderedSchemaFields = orderedSchemaFields.filter((field) => !hiddenBtnKeys.has(String(field && field.key || '')));
+    }
     orderedSchemaFields
       .forEach((schemaField) => {
       form.appendChild(renderKnownField(section, schemaField, tab.fieldDocs, (key, value) => {
@@ -25739,6 +25914,9 @@ function renderSectionTab(tab, tabKey) {
         }
         setDirty(true);
       }));
+      if (tabKey === 'districts' && schemaField.key === 'vary_img_by_culture') {
+        form.appendChild(renderButtonTileCompoundRow(section));
+      }
       });
     card.appendChild(form);
     detailPane.appendChild(card);
