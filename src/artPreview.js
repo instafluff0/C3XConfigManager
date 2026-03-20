@@ -603,7 +603,7 @@ function normalizeScenarioRoots(scenarioPath, scenarioPaths) {
 }
 
 function resolveConquestsAssetPath(civ3Path, rawAssetPath, scenarioPath, scenarioPaths, civilopediaKey = '') {
-  if (!civ3Path || !rawAssetPath) return null;
+  if (!civ3Path || (!rawAssetPath && !civilopediaKey)) return null;
   const civ3Root = resolveCiv3Root(civ3Path);
   const conquestsRoot = resolveConquestsRoot(civ3Path);
   const ptwRoot = resolvePtwRoot(civ3Path);

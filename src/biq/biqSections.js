@@ -1885,7 +1885,18 @@ function serializeTERR(rec, io) {
 }
 
 function toEnglishTERR(rec, io) {
+  const resourceCount = Math.max(0, rec.numTotalResources | 0);
+  const resourceMask = [];
+  const resourceBytes = Buffer.isBuffer(rec.possibleResources) ? rec.possibleResources : Buffer.alloc(0);
+  for (let i = 0; i < resourceCount; i += 1) {
+    const byteIndex = i >> 3;
+    const bitMask = 1 << (i & 7);
+    const enabled = byteIndex < resourceBytes.length && (resourceBytes[byteIndex] & bitMask) !== 0;
+    resourceMask.push(enabled ? 1 : 0);
+  }
   const pairs = [
+    ['numPossibleResources', String(resourceCount)],
+    ['possibleResourcesMask', resourceMask.join(',')],
     ['name', rec.name || ''],
     ['civilopediaEntry', rec.civilopediaEntry || ''],
     ['foodBonus', String(rec.foodBonus | 0)],

@@ -1484,10 +1484,8 @@ function extractScenarioSearchFolders(biqTab) {
   const field = (game.records[0].fields || []).find((f) => {
     const key = String(f.key || '').toLowerCase();
     const label = String(f.label || '').toLowerCase();
-    return key.includes('scenario_search') ||
-      key.includes('scenariousearchfolders') ||
-      label.includes('scenariosearchfolders') ||
-      label.includes('scenario search folders');
+    return key.includes('scenariosearchfolder') ||
+      label.includes('scenario search folder');
   });
   if (!field || !field.value || field.value === '(none)' || field.value === '(truncated)') return [];
   return splitScenarioSearchFolderValue(field.value);
@@ -3300,6 +3298,88 @@ function buildReferenceTabs(civ3Path, options = {}) {
       });
     }
 
+    if ((tabSpec.key === 'civilizations' || tabSpec.key === 'resources') && options.biqTab && Array.isArray(options.biqTab.sections)) {
+      const syntheticSectionCode = tabSpec.key === 'civilizations' ? 'RACE' : 'GOOD';
+      const syntheticSection = options.biqTab.sections.find((s) => String(s && s.code || '').toUpperCase() === syntheticSectionCode);
+      const syntheticRecords = Array.isArray(syntheticSection && syntheticSection.fullRecords)
+        ? syntheticSection.fullRecords
+        : (syntheticSection && Array.isArray(syntheticSection.records) ? syntheticSection.records : []);
+      const seenSyntheticIndexes = new Set(entries.map((entry) => Number(entry && entry.biqIndex)).filter((n) => Number.isFinite(n)));
+      const seenSyntheticKeys = new Set(entries.map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase()).filter(Boolean));
+      syntheticRecords.forEach((record) => {
+        const idx = Number(record && record.index);
+        if (!Number.isFinite(idx) || seenSyntheticIndexes.has(idx)) return;
+        const civilopediaEntry = String(getRecordFieldValue(record, syntheticSectionCode, 'civilopediaentry') || '').toUpperCase();
+        if (syntheticSectionCode === 'RACE' && civilopediaEntry === 'RACE_BARBARIANS') return;
+        if (civilopediaEntry && seenSyntheticKeys.has(civilopediaEntry)) return;
+        const recordName = cleanDisplayText(record && record.name || '') || `${syntheticSectionCode} ${Number.isFinite(idx) ? idx + 1 : '?'}`;
+        const rawRecordFields = getRecordFieldsForSection(record, syntheticSectionCode);
+        const rawBiqFields = rawRecordFields
+          .filter((f) => String(f && (f.baseKey || f.key) || '').toLowerCase() !== 'civilopediaentry')
+          .map((f) => ({
+            key: f.key,
+            baseKey: f.baseKey || String(f.key || '').replace(/_\d+$/, ''),
+            label: f.label || toTitleFromKey(f.key),
+            value: cleanDisplayText(f.value),
+            originalValue: cleanDisplayText(f.originalValue == null ? f.value : f.originalValue),
+            editable: !!f.editable,
+            expectedSetter: String(f.expectedSetter || '')
+          }));
+        const biqSourcePath = (options.biqTab && options.biqTab.sourcePath) || '';
+        const fallbackCivilopediaEntry = civilopediaEntry || `${syntheticSectionCode}_${recordName.replace(/\s+/g, '_')}`;
+        let biqFields = rawBiqFields;
+        if (tabSpec.key === 'civilizations') {
+          biqFields = projectCivilizationBiqFields({ rawFields: rawBiqFields, civilopediaEntry: fallbackCivilopediaEntry, flavorCount });
+        } else if (tabSpec.key === 'resources') {
+          biqFields = projectResourceBiqFields({ rawFields: rawBiqFields, civilopediaEntry: fallbackCivilopediaEntry });
+        }
+        const preferredNameBaseKey = tabSpec.key === 'civilizations' ? 'civilizationname' : 'name';
+        const biqNameField = biqFields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === preferredNameBaseKey)
+          || biqFields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === 'name');
+        const displayName = (biqNameField && biqNameField.value) ? String(biqNameField.value).trim() : recordName;
+        const syntheticPedia = mapPediaIconsForKey(pediaBlocks, fallbackCivilopediaEntry);
+        const syntheticThumbPath = tabSpec.key === 'civilizations'
+          ? (syntheticPedia.iconPaths[0] || syntheticPedia.racePaths[0] || syntheticPedia.iconPaths[syntheticPedia.iconPaths.length - 1] || '')
+          : (syntheticPedia.iconPaths[syntheticPedia.iconPaths.length - 1] || syntheticPedia.iconPaths[0] || '');
+        entries.push({
+          id: `biq-${syntheticSectionCode.toLowerCase()}-${Number.isFinite(idx) ? idx : displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+          civilopediaKey: civilopediaEntry || '',
+          biqIndex: Number.isFinite(idx) ? idx : null,
+          name: displayName,
+          overview: '',
+          originalOverview: '',
+          description: '',
+          originalDescription: '',
+          techDependencies: [],
+          improvementKind: null,
+          iconPaths: syntheticPedia.iconPaths,
+          originalIconPaths: [...syntheticPedia.iconPaths],
+          racePaths: syntheticPedia.racePaths,
+          originalRacePaths: [...syntheticPedia.racePaths],
+          thumbPath: syntheticThumbPath,
+          animationName: syntheticPedia.animationName,
+          originalAnimationName: syntheticPedia.animationName,
+          biqSectionCode: syntheticSectionCode,
+          biqSectionTitle: syntheticSectionCode,
+          biqFields,
+          improvementFlavorCount: 0,
+          civilizationFlavorCount: tabSpec.key === 'civilizations' ? flavorCount : 0,
+          technologyFlavorCount: 0,
+          sourceMeta: {
+            overview: { source: 'BIQ', readPath: biqSourcePath, writePath: mode === 'scenario' ? biqSourcePath : '' },
+            description: { source: 'BIQ', readPath: biqSourcePath, writePath: mode === 'scenario' ? biqSourcePath : '' },
+            iconPaths: { source: 'BIQ', readPath: biqSourcePath, writePath: mode === 'scenario' ? biqSourcePath : '' },
+            animationName: { source: 'BIQ', readPath: biqSourcePath, writePath: mode === 'scenario' ? biqSourcePath : '' },
+            biq: { source: 'BIQ', readPath: biqSourcePath, writePath: mode === 'scenario' ? biqSourcePath : '' }
+          },
+          syntheticBiqOnly: true
+        });
+        seenSyntheticIndexes.add(idx);
+        if (civilopediaEntry) seenSyntheticKeys.add(civilopediaEntry);
+      });
+      entries.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+    }
+
     if (tabSpec.key === 'civilizations') {
       const fallbackThumb = (entries.find((e) => e.thumbPath) || {}).thumbPath || '';
       if (fallbackThumb) {
@@ -4146,6 +4226,17 @@ function loadBundle(payload) {
     Object.keys(biqStructureTabs).forEach((key) => {
       bundle.tabs[key] = biqStructureTabs[key];
     });
+    if (mode === 'scenario' && bundle.tabs.terrain && Array.isArray(bundle.tabs.terrain.sections) && bundle.tabs.terrain.sections.length === 0) {
+      const globalBiqTab = loadBiqTab({ mode: 'global', civ3Path, scenarioPath: '' });
+      const globalStructureTabs = buildBiqStructureTabs(globalBiqTab, 'global');
+      if (globalStructureTabs.terrain && Array.isArray(globalStructureTabs.terrain.sections) && globalStructureTabs.terrain.sections.length > 0) {
+        bundle.tabs.terrain.sections = globalStructureTabs.terrain.sections;
+        bundle.tabs.terrain.readOnly = true;
+        bundle.tabs.terrain.sourcePath = globalStructureTabs.terrain.sourcePath || bundle.tabs.terrain.sourcePath;
+        bundle.tabs.terrain.fallbackSourcePath = globalStructureTabs.terrain.sourcePath || '';
+        bundle.tabs.terrain.fallbackNotice = 'Showing standard-game terrain rules because this scenario BIQ does not include TERR/TFRM sections.';
+      }
+    }
     if (bundle.tabs.terrain) {
       bundle.tabs.terrain.civilopedia = {
         terrain: referenceTabs.terrainPedia || null,

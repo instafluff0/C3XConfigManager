@@ -3578,6 +3578,9 @@ function ensureSyntheticReferenceEntryForBiqRecord(tabKey, sectionCode, record) 
   const idx = Number(record && record.index);
   const name = String(record && record.name || '').trim().toLowerCase();
   const civilopediaKey = String(getFieldByBaseKey(record, 'civilopediaentry')?.value || '').trim().toUpperCase();
+  // Never inject a synthetic civilizations entry for barbarians — they are always
+  // raw RACE index 0 and must never appear in the Civs tab.
+  if (tabKey === 'civilizations' && (idx === 0 || civilopediaKey === 'RACE_BARBARIANS')) return null;
   const existing = tab.entries.find((entry, fallbackIdx) => {
     const biqIdx = Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : fallbackIdx;
     if (Number.isFinite(idx) && biqIdx === idx) return true;
@@ -6860,7 +6863,15 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
     (Array.isArray(entry && entry.racePaths) ? entry.racePaths : []).forEach(addCandidate);
   }
   addCandidate(assetPath);
-  if (candidatePaths.length === 0) return;
+  if (candidatePaths.length === 0) {
+    // For civs, resolveConquestsAssetPath derives leaderhead fallback paths from the RACE_* key even
+    // when no explicit assetPath is available — allow the preview attempt with an empty sentinel path.
+    if (tabKey === 'civilizations' && entry.civilopediaKey) {
+      candidatePaths.push('');
+    } else {
+      return;
+    }
+  }
 
   const paint = (preview) => {
     const canvas = document.createElement('canvas');
@@ -25480,17 +25491,22 @@ function renderTabs() {
       const button = document.createElement('button');
       button.className = 'tab-btn';
       button.dataset.tabKey = key;
+      const isDisabledTab = key === 'map';
+      button.disabled = isDisabledTab;
+      if (isDisabledTab) button.title = 'Map tab temporarily disabled';
       button.appendChild(createIcon(TAB_ICONS[key]));
       const text = document.createElement('span');
       text.textContent = tab.title;
       button.appendChild(text);
       applyDirtyBadgeToTabButton(button, key, tab);
       button.classList.toggle('active', state.activeTab === key);
-      button.addEventListener('click', () => {
-        navigateWithHistory(() => {
-          state.activeTab = key;
-        }, { preserveTabScroll: false });
-      });
+      if (!isDisabledTab) {
+        button.addEventListener('click', () => {
+          navigateWithHistory(() => {
+            state.activeTab = key;
+          }, { preserveTabScroll: false });
+        });
+      }
       row.appendChild(button);
     });
     groupWrap.appendChild(row);
