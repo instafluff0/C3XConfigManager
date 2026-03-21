@@ -139,16 +139,16 @@ test('scenario PediaIcons save preserves source header casing and avoids duplica
             originalOverview: 'Original overview',
             description: '',
             originalDescription: '',
-            iconPaths: [],
-            originalIconPaths: [],
-            racePaths: [
+            iconPaths: [
               'art\\civilopedia\\icons\\races\\new-large.pcx',
               'art\\civilopedia\\icons\\races\\new-small.pcx'
             ],
-            originalRacePaths: [
+            originalIconPaths: [
               'art\\civilopedia\\icons\\races\\old-large.pcx',
               'art\\civilopedia\\icons\\races\\old-small.pcx'
             ],
+            racePaths: [],
+            originalRacePaths: [],
             animationName: '',
             originalAnimationName: '',
             biqFields: []

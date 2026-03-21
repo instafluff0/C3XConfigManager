@@ -165,11 +165,11 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
           originalOverview: 'Original civ overview line.',
           description: 'Updated civ description text.',
           originalDescription: 'Original civ description.',
-          racePaths: [
+          iconPaths: [
             'art\\civilopedia\\icons\\races\\new-civ-large.pcx',
             'art\\civilopedia\\icons\\races\\new-civ-small.pcx'
           ],
-          originalRacePaths: [
+          originalIconPaths: [
             'art\\civilopedia\\icons\\races\\test-civ-large.pcx',
             'art\\civilopedia\\icons\\races\\test-civ-small.pcx'
           ]

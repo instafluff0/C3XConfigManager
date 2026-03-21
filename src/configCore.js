@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
-const { resolveUnitIniPath } = require('./artPreview');
+const { resolveUnitIniPath, decodePcx, encodePcx } = require('./artPreview');
 const { decompress: biqDecompress } = require('./biq/decompress');
 const { parseBiqBuffer: jsParseBiqBuffer, applyBiqEdits: jsApplyBiqEdits } = require('./biq/biqBridgeJs');
 const { projectImprovementBiqFields, collapseImprovementBiqFields } = require('./biq/bldgCodec');
@@ -1720,6 +1720,21 @@ function normalizeRelativePath(raw) {
     .replace(/\\/g, '/');
 }
 
+function isAbsoluteFilesystemPath(raw) {
+  const value = String(raw || '').trim().replace(/^["']|["']$/g, '');
+  return value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value);
+}
+
+function normalizeAssetReferencePath(raw) {
+  const value = String(raw || '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/\\/g, '/');
+  if (!value) return '';
+  if (isAbsoluteFilesystemPath(value)) return value;
+  return value.replace(/^\.?[\\/]+/, '');
+}
+
 function resolveCiv3RootPath(civ3Path) {
   if (!civ3Path) return '';
   const base = path.basename(civ3Path).toLowerCase();
@@ -3410,17 +3425,6 @@ function buildReferenceTabs(civ3Path, options = {}) {
       entries.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
     }
 
-    if (tabSpec.key === 'civilizations') {
-      const fallbackThumb = (entries.find((e) => e.thumbPath) || {}).thumbPath || '';
-      if (fallbackThumb) {
-        entries.forEach((entry) => {
-          if (!entry.thumbPath) {
-            entry.thumbPath = fallbackThumb;
-          }
-        });
-      }
-    }
-
     if (tabSpec.key === 'units' && options.biqTab && Array.isArray(options.biqTab.sections)) {
       const prtoSection = options.biqTab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'PRTO');
       const prtoRecords = Array.isArray(prtoSection && prtoSection.fullRecords)
@@ -4341,6 +4345,14 @@ function buildScenarioPediaIconsEditResult({ targetPath, edits }) {
     edits.forEach((edit) => {
       const blockKey = String(edit && edit.blockKey || '').trim().toUpperCase();
       if (!blockKey) return;
+      const op = String(edit && edit.op || 'upsert').trim().toLowerCase();
+      if (op === 'delete') {
+        delete doc.blocks[blockKey];
+        delete doc.headers[blockKey];
+        doc.order = doc.order.filter((key) => String(key || '').trim().toUpperCase() !== blockKey);
+        applied += 1;
+        return;
+      }
       const nextLines = normalizePediaIconsLines(edit.lines || []);
       const prevLines = normalizePediaIconsLines(doc.blocks[blockKey] || []);
       if (JSON.stringify(prevLines) === JSON.stringify(nextLines)) return;
@@ -4725,6 +4737,203 @@ function resolveArtFileFromRoots(relPath, searchRoots) {
   return null;
 }
 
+// Build a 256-entry lookup table remapping palette indices from srcPalette to the
+// closest-color entry in dstPalette (by squared RGB distance).
+function buildPaletteRemap(srcPalette, dstPalette) {
+  const remap = new Uint8Array(256);
+  for (let si = 0; si < 256; si++) {
+    const sr = srcPalette[si * 3];
+    const sg = srcPalette[si * 3 + 1];
+    const sb = srcPalette[si * 3 + 2];
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let di = 0; di < 256; di++) {
+      const dr = dstPalette[di * 3] - sr;
+      const dg = dstPalette[di * 3 + 1] - sg;
+      const db = dstPalette[di * 3 + 2] - sb;
+      const dist = dr * dr + dg * dg + db * db;
+      if (dist < bestDist) { bestDist = dist; bestIdx = di; }
+    }
+    remap[si] = bestIdx;
+  }
+  return remap;
+}
+
+// For each PRTO import op whose iconIndex is out of range in the target scenario's
+// units_32.pcx, extract that sprite from the source atlas and splice it into the target
+// atlas at the next available index, updating the entry's biqFields iconindex value.
+// The modified atlas is pushed into plannedWrites so it is written atomically with the BIQ.
+// Must be called before collectBiqReferenceEdits so the mutated field value is picked up.
+function spliceImportedUnitIconsIntoAtlas({ tabs, targetContentRoot, civ3Path, plannedWrites, saveReport }) {
+  const unitsTab = tabs && tabs.units;
+  if (!unitsTab || !Array.isArray(unitsTab.recordOps) || !Array.isArray(unitsTab.entries)) return;
+
+  const importOps = unitsTab.recordOps.filter(
+    (op) => String(op && op.op || '').toLowerCase() === 'add' &&
+             String(op && op.importArtFrom || '').trim()
+  );
+  if (importOps.length === 0) return;
+
+  // Locate the target scenario's units_32.pcx, or fall back to the standard game atlas.
+  const atlasRelPath = path.join('Art', 'Units', 'units_32.pcx');
+  const targetAtlasPath = path.join(targetContentRoot, atlasRelPath);
+  let targetAtlasBuffer = null;
+  try { targetAtlasBuffer = fs.readFileSync(targetAtlasPath); } catch (_e) { /* not present yet */ }
+  if (!targetAtlasBuffer) {
+    const fallbacks = [
+      path.join(civ3Path, 'Conquests', 'Art', 'Units', 'units_32.pcx'),
+      path.join(civ3Path, 'Art', 'Units', 'units_32.pcx')
+    ];
+    for (const fp of fallbacks) {
+      try { targetAtlasBuffer = fs.readFileSync(fp); break; } catch (_e) { /* try next */ }
+    }
+  }
+  if (!targetAtlasBuffer) return;
+
+  let targetAtlas;
+  try { targetAtlas = decodePcx(targetAtlasBuffer, { returnIndexed: true }); } catch (_e) { return; }
+
+  const gutter = 1;
+  const spriteSize = 32;
+  const stride = 33;
+
+  const atlasCols = Math.max(1, Math.floor((targetAtlas.width - gutter) / stride));
+  const atlasRows = Math.max(1, Math.floor((targetAtlas.height - gutter) / stride));
+
+  // Find the highest iconIndex currently in use within the target atlas bounds.
+  // New icons are placed at maxUsedIndex + 1, filling existing empty slots before
+  // extending the atlas with a new row.
+  let maxUsedIndex = -1;
+  for (const entry of unitsTab.entries) {
+    if (!Array.isArray(entry.biqFields)) continue;
+    const f = entry.biqFields.find((f) => String(f && (f.baseKey || f.key) || '').toLowerCase() === 'iconindex');
+    const idx = f ? parseInt(f.value, 10) : NaN;
+    if (!Number.isFinite(idx) || idx < 0) continue;
+    if (Math.floor(idx / atlasCols) < atlasRows && idx > maxUsedIndex) maxUsedIndex = idx;
+  }
+
+  let atlasIndices = new Uint8Array(targetAtlas.indices);
+  const atlasPalette = targetAtlas.palette;
+  const atlasWidth = targetAtlas.width;
+  let atlasHeight = targetAtlas.height;
+  let currentRows = atlasRows;
+  let nextIconIdx = maxUsedIndex + 1;
+  let atlasDirty = false;
+
+  // Mirror the source-roots resolution used by collectImportArtCopies.
+  const sourceRootsCache = new Map();
+  const getSourceRoots = (sourceBiqPath) => {
+    if (sourceRootsCache.has(sourceBiqPath)) return sourceRootsCache.get(sourceBiqPath);
+    let roots = [];
+    try {
+      const sourceBiqTab = loadBiqTab({ mode: 'scenario', civ3Path, scenarioPath: sourceBiqPath });
+      const ctx = deriveScenarioPathContext({ scenarioPath: sourceBiqPath, civ3Path, biqTab: sourceBiqTab });
+      roots = dedupePathList([ctx.biqRoot, ...ctx.searchRoots, civ3Path].filter(Boolean));
+    } catch (_err) {
+      roots = dedupePathList([path.dirname(sourceBiqPath), civ3Path].filter(Boolean));
+    }
+    sourceRootsCache.set(sourceBiqPath, roots);
+    return roots;
+  };
+
+  for (const op of importOps) {
+    const newRef = String(op.newRecordRef || '').trim().toUpperCase();
+    const sourceBiqPath = String(op.importArtFrom || '').trim();
+    if (!newRef || !sourceBiqPath) continue;
+
+    const entry = unitsTab.entries.find(
+      (e) => String(e && e.civilopediaKey || '').toUpperCase() === newRef
+    );
+    if (!entry || !Array.isArray(entry.biqFields)) continue;
+
+    const iconField = entry.biqFields.find(
+      (f) => String(f && (f.baseKey || f.key) || '').toLowerCase() === 'iconindex'
+    );
+    if (!iconField) continue;
+
+    const pendingImportIcon = entry._pendingImportedUnitIcon && typeof entry._pendingImportedUnitIcon === 'object'
+      ? entry._pendingImportedUnitIcon
+      : null;
+    const sourceIconIdx = pendingImportIcon && Number.isFinite(Number(pendingImportIcon.sourceIconIndex))
+      ? Number(pendingImportIcon.sourceIconIndex)
+      : parseInt(iconField.value, 10);
+    if (!Number.isFinite(sourceIconIdx) || sourceIconIdx < 0) continue;
+
+    const requiresAtlasSplice = pendingImportIcon
+      ? pendingImportIcon.requiresAtlasSplice !== false
+      : Math.floor(sourceIconIdx / atlasCols) >= currentRows;
+    if (!requiresAtlasSplice) continue;
+
+    // Find the source atlas via the source scenario's full search roots.
+    const sourceAtlasPath = resolveArtFileFromRoots(atlasRelPath, getSourceRoots(sourceBiqPath));
+    if (!sourceAtlasPath) continue;
+
+    let sourceAtlas;
+    try {
+      sourceAtlas = decodePcx(fs.readFileSync(sourceAtlasPath), { returnIndexed: true });
+    } catch (_e) { continue; }
+
+    const srcCols = Math.max(1, Math.floor((sourceAtlas.width - gutter) / stride));
+    const srcRows = Math.max(1, Math.floor((sourceAtlas.height - gutter) / stride));
+    const srcIconRow = Math.floor(sourceIconIdx / srcCols);
+    const srcIconCol = sourceIconIdx % srcCols;
+    if (srcIconRow >= srcRows) continue; // icon out of range in source too
+
+    // Extract the 32×32 sprite from the source atlas.
+    const sprite = new Uint8Array(spriteSize * spriteSize);
+    const srcX0 = gutter + srcIconCol * stride;
+    const srcY0 = gutter + srcIconRow * stride;
+    for (let sy = 0; sy < spriteSize; sy++) {
+      for (let sx = 0; sx < spriteSize; sx++) {
+        sprite[sy * spriteSize + sx] = sourceAtlas.indices[(srcY0 + sy) * sourceAtlas.width + (srcX0 + sx)];
+      }
+    }
+
+    // Remap sprite palette indices to match the target atlas palette.
+    const remap = buildPaletteRemap(sourceAtlas.palette, atlasPalette);
+    for (let i = 0; i < sprite.length; i++) sprite[i] = remap[sprite[i]];
+
+    // Place sprite at the next available index, extending the atlas by one row if needed.
+    const newIconCol = nextIconIdx % atlasCols;
+    const newIconRow = Math.floor(nextIconIdx / atlasCols);
+    if (newIconRow >= currentRows) {
+      const newHeight = atlasHeight + stride;
+      const newIndices = new Uint8Array(atlasWidth * newHeight);
+      newIndices.set(atlasIndices, 0);
+      atlasIndices = newIndices;
+      atlasHeight = newHeight;
+      currentRows += 1;
+    }
+
+    const dstX0 = gutter + newIconCol * stride;
+    const dstY0 = gutter + newIconRow * stride;
+    for (let sy = 0; sy < spriteSize; sy++) {
+      for (let sx = 0; sx < spriteSize; sx++) {
+        atlasIndices[(dstY0 + sy) * atlasWidth + (dstX0 + sx)] = sprite[sy * spriteSize + sx];
+      }
+    }
+
+    atlasDirty = true;
+    iconField.value = String(nextIconIdx);
+    nextIconIdx += 1;
+  }
+
+  if (!atlasDirty) return;
+
+  let newPcxBuffer;
+  try {
+    newPcxBuffer = encodePcx(atlasIndices, atlasPalette, atlasWidth, atlasHeight);
+  } catch (_e) { return; }
+
+  const existing = plannedWrites.findIndex((w) => w.path === targetAtlasPath);
+  if (existing >= 0) {
+    plannedWrites[existing].data = newPcxBuffer;
+  } else {
+    plannedWrites.push({ kind: 'art', path: targetAtlasPath, data: newPcxBuffer });
+    saveReport.push({ kind: 'art', path: targetAtlasPath });
+  }
+}
+
 // For each import op (op:'add' with importArtFrom), collect { sourcePath, targetPath }
 // pairs for all art files that should be copied into the target content root.
 function collectImportArtCopies({ tabs, targetContentRoot, civ3Path }) {
@@ -4943,6 +5152,17 @@ function buildSavePlan(payload) {
   if (mode === 'scenario' && isBiqPath(scenarioPath)) {
     const protectErr = failIfProtected(scenarioPath, 'scenario BIQ target');
     if (protectErr) return { ok: false, error: protectErr };
+
+    // Splice imported unit icons into the target units_32.pcx before collecting BIQ edits,
+    // so the updated iconindex field values are picked up by collectBiqReferenceEdits below.
+    spliceImportedUnitIconsIntoAtlas({
+      tabs: payload.tabs || {},
+      targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+      civ3Path,
+      plannedWrites,
+      saveReport
+    });
+
     const biqRecordOps = collectBiqReferenceRecordOps(payload.tabs || {});
     const biqStructureRecordOps = collectBiqStructureRecordOps(payload.tabs || {});
     const biqMapStructureOps = collectBiqMapStructureOps(payload.tabs || {});
@@ -5018,6 +5238,20 @@ function buildSavePlan(payload) {
   }
 
   if (mode === 'scenario') {
+    try {
+      const localization = localizeScenarioReferenceArtAssets({
+        tabs: payload.tabs || {},
+        targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
+        plannedWrites,
+        saveReport
+      });
+      if (!localization.ok) {
+        return { ok: false, error: localization.error || 'Failed to localize scenario art.' };
+      }
+    } catch (err) {
+      return { ok: false, error: err && err.message ? err.message : 'Failed to localize scenario art.' };
+    }
+
     const pediaIconsEdits = collectPediaIconsReferenceEdits(payload.tabs || {});
     if (pediaIconsEdits.length > 0) {
       const explicitPediaTarget = ((((payload.tabs || {}).civilizations || {}).sourceDetails || {}).pediaIconsScenarioWrite || '').trim();
@@ -6150,22 +6384,54 @@ function collectDiplomacyReferenceEdits(tabs) {
 function normalizePediaPathList(values) {
   return dedupeStrings(
     (Array.isArray(values) ? values : [])
-      .map((v) => normalizeRelativePath(v))
+      .map((v) => normalizeAssetReferencePath(v))
       .filter(Boolean)
   );
 }
 
 function collectPediaIconsReferenceEdits(tabs) {
   const edits = [];
+  const blank = (blockKey) => {
+    const key = String(blockKey || '').trim().toUpperCase();
+    if (!key) return;
+    edits.push({ op: 'delete', blockKey: key });
+  };
   for (const spec of REFERENCE_TAB_SPECS) {
     const tab = tabs[spec.key];
-    if (!tab || !Array.isArray(tab.entries)) continue;
+    if (!tab) continue;
+    if (Array.isArray(tab.recordOps)) {
+      tab.recordOps.forEach((op) => {
+        const kind = String(op && op.op || '').trim().toLowerCase();
+        const key = String(op && op.recordRef || '').trim().toUpperCase();
+        if (kind !== 'delete' && kind !== 'rename') return;
+        if (!key) return;
+        const shortKey = key.replace(/^(RACE_|TECH_|GOOD_|BLDG_|GOVT_|PRTO_)/, '');
+        if (key.startsWith('TECH_')) {
+          blank(key);
+          blank(`${key}_LARGE`);
+        } else {
+          blank(`ICON_${key}`);
+        }
+        if (key.startsWith('RACE_')) {
+          blank(`ICON_RACE_${shortKey}`);
+          blank(key);
+        }
+        if (key.startsWith('PRTO_')) {
+          blank(`ANIMNAME_${key}`);
+        }
+      });
+    }
+    if (!Array.isArray(tab.entries)) continue;
     tab.entries.forEach((entry) => {
       const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
       if (!key) return;
       const shortKey = key.replace(/^(RACE_|TECH_|GOOD_|BLDG_|GOVT_|PRTO_)/, '');
+      const importedFromScenario = !!String(entry && entry._importScenarioPath || '').trim();
+      const shouldForceImportedPedia = importedFromScenario && !!(entry && entry.isNew);
       const nextIconPaths = normalizePediaPathList(entry && entry.iconPaths);
-      const prevIconPaths = normalizePediaPathList(entry && entry.originalIconPaths);
+      const prevIconPaths = shouldForceImportedPedia
+        ? []
+        : normalizePediaPathList(entry && entry.originalIconPaths);
       if (JSON.stringify(nextIconPaths) !== JSON.stringify(prevIconPaths)) {
         if (key.startsWith('TECH_')) {
           const small = nextIconPaths[0] || '';
@@ -6178,13 +6444,17 @@ function collectPediaIconsReferenceEdits(tabs) {
       }
 
       const nextRacePaths = normalizePediaPathList(entry && entry.racePaths);
-      const prevRacePaths = normalizePediaPathList(entry && entry.originalRacePaths);
+      const prevRacePaths = shouldForceImportedPedia
+        ? []
+        : normalizePediaPathList(entry && entry.originalRacePaths);
       if (JSON.stringify(nextRacePaths) !== JSON.stringify(prevRacePaths) && key.startsWith('RACE_')) {
-        edits.push({ blockKey: `ICON_RACE_${shortKey}`, lines: nextRacePaths });
+        edits.push({ blockKey: key, lines: nextRacePaths });
       }
 
-      const nextAnim = normalizeRelativePath(entry && entry.animationName);
-      const prevAnim = normalizeRelativePath(entry && entry.originalAnimationName);
+      const nextAnim = normalizeAssetReferencePath(entry && entry.animationName);
+      const prevAnim = shouldForceImportedPedia
+        ? ''
+        : normalizeAssetReferencePath(entry && entry.originalAnimationName);
       if (nextAnim !== prevAnim && key.startsWith('PRTO_')) {
         edits.push({ blockKey: `ANIMNAME_${key}`, lines: nextAnim ? [nextAnim] : [] });
       }
@@ -6194,9 +6464,97 @@ function collectPediaIconsReferenceEdits(tabs) {
   edits.forEach((edit) => {
     const k = String(edit.blockKey || '').trim().toUpperCase();
     if (!k) return;
-    merged.set(k, { blockKey: k, lines: normalizePediaIconsLines(edit.lines) });
+    const op = String(edit.op || 'upsert').trim().toLowerCase();
+    merged.set(k, op === 'delete'
+      ? { op: 'delete', blockKey: k }
+      : { blockKey: k, lines: normalizePediaIconsLines(edit.lines) });
   });
   return Array.from(merged.values());
+}
+
+function pickScenarioReferenceArtTargetRelativePath({ tabKey, group, originalPath, sourcePath, targetContentRoot }) {
+  const normalizedOriginal = normalizeAssetReferencePath(originalPath);
+  if (normalizedOriginal && !isAbsoluteFilesystemPath(normalizedOriginal)) {
+    return normalizeRelativePath(normalizedOriginal);
+  }
+  const absSource = String(sourcePath || '').trim();
+  const absRoot = String(targetContentRoot || '').trim();
+  if (absSource && absRoot) {
+    const relWithinTarget = normalizeRelativePath(path.relative(absRoot, absSource));
+    if (relWithinTarget && !relWithinTarget.startsWith('../')) {
+      return relWithinTarget;
+    }
+  }
+  const baseName = path.basename(absSource || normalizedOriginal || '');
+  if (!baseName) return '';
+  if (tabKey === 'civilizations' && group === 'iconPaths') {
+    return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', 'Races', baseName));
+  }
+  if (tabKey === 'civilizations' && group === 'racePaths') {
+    return normalizeRelativePath(path.join('Art', 'Advisors', baseName));
+  }
+  return normalizeRelativePath(path.join('Art', 'Civilopedia', 'Icons', baseName));
+}
+
+function localizeScenarioReferenceArtAssets({ tabs, targetContentRoot, plannedWrites, saveReport }) {
+  if (!targetContentRoot || !tabs) return { ok: true };
+  const queued = new Map();
+  const queueFileWrite = (targetPath, data) => {
+    const key = String(targetPath || '');
+    if (!key) return;
+    queued.set(key, data);
+  };
+  for (const spec of REFERENCE_TAB_SPECS) {
+    const tab = tabs[spec.key];
+    if (!tab || !Array.isArray(tab.entries)) continue;
+    tab.entries.forEach((entry) => {
+      const groups = [
+        ['iconPaths', 'originalIconPaths'],
+        ['racePaths', 'originalRacePaths']
+      ];
+      groups.forEach(([fieldKey, originalFieldKey]) => {
+        const sourceValues = Array.isArray(entry && entry[fieldKey]) ? [...entry[fieldKey]] : [];
+        const originalValues = Array.isArray(entry && entry[originalFieldKey]) ? entry[originalFieldKey] : [];
+        let changed = false;
+        sourceValues.forEach((rawValue, index) => {
+          const normalized = normalizeAssetReferencePath(rawValue);
+          if (!isAbsoluteFilesystemPath(normalized)) return;
+          let stats = null;
+          try {
+            stats = fs.statSync(normalized);
+          } catch (_err) {
+            stats = null;
+          }
+          if (!stats || !stats.isFile()) {
+            throw new Error(`Referenced art file does not exist: ${normalized}`);
+          }
+          const relTarget = pickScenarioReferenceArtTargetRelativePath({
+            tabKey: spec.key,
+            group: fieldKey,
+            originalPath: originalValues[index],
+            sourcePath: normalized,
+            targetContentRoot
+          });
+          if (!relTarget) {
+            throw new Error(`Could not determine scenario-relative target for art file: ${normalized}`);
+          }
+          const targetPath = path.join(targetContentRoot, relTarget.replace(/\//g, path.sep));
+          queueFileWrite(targetPath, fs.readFileSync(normalized));
+          sourceValues[index] = relTarget;
+          changed = true;
+        });
+        while (sourceValues.length > 0 && !String(sourceValues[sourceValues.length - 1] || '').trim()) {
+          sourceValues.pop();
+        }
+        if (changed) entry[fieldKey] = sourceValues;
+      });
+    });
+  }
+  queued.forEach((data, targetPath) => {
+    plannedWrites.push({ kind: 'art', path: targetPath, data });
+    saveReport.push({ kind: 'art', path: targetPath });
+  });
+  return { ok: true };
 }
 
 function normalizeUnitIniActionRows(rows) {
@@ -6486,6 +6844,8 @@ module.exports = {
   serializeCivilopediaDocumentWithOrder,
   parsePediaIconsDocumentWithOrder,
   serializePediaIconsDocumentWithOrder,
+  buildScenarioPediaIconsEditResult,
+  collectPediaIconsReferenceEdits,
   parseDiplomacyDocumentWithOrder,
   serializeDiplomacyDocumentWithOrder,
   parseDiplomacySlotOptions,

@@ -34,8 +34,8 @@ function fileExists(p) {
   }
 }
 
-function decodePcx(filePath, options = {}) {
-  const b = fs.readFileSync(filePath);
+function decodePcx(filePathOrBuffer, options = {}) {
+  const b = Buffer.isBuffer(filePathOrBuffer) ? filePathOrBuffer : fs.readFileSync(filePathOrBuffer);
   if (b.length < 128) throw new Error('PCX too small');
   if (b[0] !== 10) throw new Error('Not a PCX file');
   if (b[2] !== 1) throw new Error('Unsupported PCX encoding');
@@ -556,12 +556,16 @@ function parseUnitAnimationIni(iniPath) {
 }
 
 function normalizeAssetPath(raw) {
-  return String(raw || '')
+  const value = String(raw || '')
     .trim()
     .replace(/^["']|["']$/g, '')
-    .replace(/^\.?[\\/]+/, '')
     .replace(/\\/g, path.sep)
     .replace(/\//g, path.sep);
+  if (!value) return '';
+  if (path.isAbsolute(value) || path.win32.isAbsolute(String(raw || '').trim().replace(/^["']|["']$/g, ''))) {
+    return value;
+  }
+  return value.replace(/^\.?[\\/]+/, '');
 }
 
 function resolveCiv3Root(civ3Path) {
@@ -957,9 +961,63 @@ function getPreview(request) {
   return { ok: false, error: 'Unknown preview kind' };
 }
 
+// Encode a palette-indexed image to PCX format.
+// indices: Uint8Array of width*height palette index values (row-major)
+// palette: Uint8Array of 768 bytes (256 * RGB)
+// Returns a Buffer containing a valid 8-bit 1-plane PCX file.
+function encodePcx(indices, palette, width, height) {
+  const bytesPerLine = width % 2 === 0 ? width : width + 1;
+
+  const header = Buffer.alloc(128, 0);
+  header[0] = 10;  // manufacturer
+  header[1] = 5;   // version (3.0 with 256-color palette)
+  header[2] = 1;   // encoding (RLE)
+  header[3] = 8;   // bits per plane
+  header.writeUInt16LE(0, 4);            // xMin
+  header.writeUInt16LE(0, 6);            // yMin
+  header.writeUInt16LE(width - 1, 8);   // xMax
+  header.writeUInt16LE(height - 1, 10); // yMax
+  header.writeUInt16LE(72, 12);          // hDpi
+  header.writeUInt16LE(72, 14);          // vDpi
+  header[65] = 1;                         // planes
+  header.writeUInt16LE(bytesPerLine, 66); // bytesPerLine
+  header.writeUInt16LE(1, 68);            // paletteInfo (color)
+
+  const encodedRows = [];
+  for (let y = 0; y < height; y++) {
+    const row = [];
+    let x = 0;
+    while (x < bytesPerLine) {
+      const val = x < width ? indices[y * width + x] : 0;
+      let run = 1;
+      while (
+        run < 63 &&
+        x + run < bytesPerLine &&
+        (x + run < width ? indices[y * width + x + run] : 0) === val
+      ) {
+        run++;
+      }
+      if (run > 1 || val >= 0xC0) {
+        row.push(0xC0 | run, val);
+      } else {
+        row.push(val);
+      }
+      x += run;
+    }
+    encodedRows.push(Buffer.from(row));
+  }
+
+  const palSection = Buffer.alloc(769);
+  palSection[0] = 0x0C;
+  Buffer.from(palette).copy(palSection, 1);
+
+  return Buffer.concat([header, ...encodedRows, palSection]);
+}
+
 module.exports = {
   getPreview,
   parseUnitAnimationIni,
   resolveUnitIniPath,
-  decodePcx
+  decodePcx,
+  encodePcx
 };

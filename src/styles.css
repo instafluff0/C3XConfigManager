@@ -25,7 +25,15 @@ body {
   height: 100%;
   overflow: hidden;
   color: var(--ink);
-  font-family: "General Sans", "Satoshi", "Manrope", "Avenir Next", "Helvetica Neue", sans-serif;
+  font-family:
+    "General Sans",
+    "Satoshi",
+    "Manrope",
+    "Avenir Next",
+    "Segoe UI",
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
   font-size: calc(16px * var(--ui-scale));
 }
 
@@ -130,6 +138,7 @@ body.mode-scenario .bg-shape-b {
 }
 
 .hero-title-wrap {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -138,6 +147,7 @@ body.mode-scenario .bg-shape-b {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .hero h1 {
@@ -1228,7 +1238,16 @@ button.danger:hover {
 .files-read-path {
   display: block;
   min-width: 0;
-  font-family: 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-family: "SF Mono",
+    "SFMono-Regular",
+    ui-monospace,
+    "Cascadia Code",
+    "Cascadia Mono",
+    Consolas,
+    "Liberation Mono",
+    Menlo,
+    Monaco,
+    monospace;
   font-size: 0.69rem;
   line-height: 1.22;
   color: #1f2b4f;

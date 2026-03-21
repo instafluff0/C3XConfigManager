@@ -63,6 +63,9 @@ const state = {
   biqMapArtLoading: {},
   biqMapTerritoryEdgeCache: new Map(),
   biqMapNtpColorCache: {},
+  civSlotUiColorCache: {},
+  civSlotUiColorLoading: {},
+  civSlotUiColorListeners: {},
   biqMapColoredUnitIconCache: new Map(),
   biqMapColoredStartLocCache: new Map(),
   previewCache: new Map(),
@@ -6903,16 +6906,19 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
 
   if (!assetPath) {
     if (tabKey === 'units' && entry) {
-      const iconIndexField = getBiqFieldByBaseKey(entry, 'iconindex');
-      const iconIndex = parseIntLoose(iconIndexField && iconIndexField.value, NaN);
+      const previewDescriptor = getUnitIconPreviewDescriptor(entry);
+      const iconIndex = Number(previewDescriptor && previewDescriptor.iconIndex);
       if (Number.isFinite(iconIndex) && iconIndex >= 0) {
-        getUnits32AtlasPreview()
+        getUnits32AtlasPreview({
+          scenarioPath: previewDescriptor && previewDescriptor.scenarioPath,
+          scenarioPaths: previewDescriptor && previewDescriptor.scenarioPaths
+        })
           .then((preview) => {
             if (!preview || !holder.isConnected) return;
-            if (!units32AtlasMetricsCache) {
-              units32AtlasMetricsCache = getUnits32AtlasMetrics(preview, 32, 1);
+            ensureCurrentUnits32AtlasMetrics().then((metrics) => {
+              if (metrics) refreshPendingImportedUnitIconAssignments();
               refreshTabDirtyBadges();
-            }
+            }).catch(() => {});
             const canvas = document.createElement('canvas');
             canvas.width = 28;
             canvas.height = 28;
@@ -7986,14 +7992,113 @@ function collectDistrictCompatibilityIssuesForTab(tab) {
 }
 
 let units32AtlasMetricsCache = null;
+let units32AtlasMetricsCacheKey = '';
+
+function getUnits32TargetAtlasCacheKey() {
+  return JSON.stringify({
+    civ3Path: String(state.settings && state.settings.civ3Path || ''),
+    scenarioPath: String(state.settings && state.settings.scenarioPath || ''),
+    scenarioPaths: getScenarioPreviewPathsKey()
+  });
+}
+
+function invalidateUnits32AtlasMetricsCache() {
+  units32AtlasMetricsCache = null;
+  units32AtlasMetricsCacheKey = '';
+}
+
+function invalidatePreviewStateForReload() {
+  state.previewCache.clear();
+  invalidateUnits32AtlasMetricsCache();
+}
+
+function syncUnits32AtlasMetricsCache(preview, cacheKey = getUnits32TargetAtlasCacheKey()) {
+  const metrics = getUnits32AtlasMetrics(preview, 32, 1);
+  if (!metrics) return null;
+  units32AtlasMetricsCache = metrics;
+  units32AtlasMetricsCacheKey = String(cacheKey || '');
+  return metrics;
+}
+
+async function ensureCurrentUnits32AtlasMetrics() {
+  const cacheKey = getUnits32TargetAtlasCacheKey();
+  if (units32AtlasMetricsCache && units32AtlasMetricsCacheKey === cacheKey) {
+    return units32AtlasMetricsCache;
+  }
+  const preview = await getUnits32AtlasPreview();
+  if (!preview) return null;
+  return syncUnits32AtlasMetricsCache(preview, cacheKey);
+}
+
+function getPendingImportedUnitIconMeta(entry) {
+  return entry && entry._pendingImportedUnitIcon && typeof entry._pendingImportedUnitIcon === 'object'
+    ? entry._pendingImportedUnitIcon
+    : null;
+}
+
+function getUnitIconValidationIndex(entry) {
+  const pending = getPendingImportedUnitIconMeta(entry);
+  if (pending && Number.isFinite(Number(pending.plannedIndex))) {
+    return Number(pending.plannedIndex);
+  }
+  const field = getBiqFieldByBaseKey(entry, 'iconindex');
+  return parseIntLoose(field && field.value, NaN);
+}
+
+function getUnitIconPreviewDescriptor(entry) {
+  const pending = getPendingImportedUnitIconMeta(entry);
+  if (pending && pending.requiresAtlasSplice && Number.isFinite(Number(pending.sourceIconIndex)) && pending.sourceScenarioPath) {
+    return {
+      iconIndex: Number(pending.sourceIconIndex),
+      scenarioPath: String(pending.sourceScenarioPath || ''),
+      scenarioPaths: Array.isArray(pending.sourceScenarioPaths) ? pending.sourceScenarioPaths : []
+    };
+  }
+  return {
+    iconIndex: getUnitIconValidationIndex(entry),
+    scenarioPath: String(state.settings && state.settings.scenarioPath || ''),
+    scenarioPaths: getScenarioPreviewPaths()
+  };
+}
+
+function refreshPendingImportedUnitIconAssignments(tab) {
+  const unitsTab = tab || (state.bundle && state.bundle.tabs && state.bundle.tabs.units);
+  if (!unitsTab || !Array.isArray(unitsTab.entries) || !units32AtlasMetricsCache) return;
+  const { cols, rows } = units32AtlasMetricsCache;
+  let maxUsedIndex = -1;
+  unitsTab.entries.forEach((entry) => {
+    const pending = getPendingImportedUnitIconMeta(entry);
+    const idx = pending && Number.isFinite(Number(pending.plannedIndex))
+      ? Number(pending.plannedIndex)
+      : parseIntLoose(getBiqFieldByBaseKey(entry, 'iconindex')?.value, NaN);
+    if (!Number.isFinite(idx) || idx < 0) return;
+    if (Math.floor(idx / cols) < rows && idx > maxUsedIndex) maxUsedIndex = idx;
+  });
+  let nextIconIdx = maxUsedIndex + 1;
+  unitsTab.entries.forEach((entry) => {
+    const pending = getPendingImportedUnitIconMeta(entry);
+    if (!pending) return;
+    const iconField = getBiqFieldByBaseKey(entry, 'iconindex');
+    const sourceIconIndex = Number(pending.sourceIconIndex);
+    if (!iconField || !Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) return;
+    if (Math.floor(sourceIconIndex / cols) < rows) {
+      pending.requiresAtlasSplice = false;
+      pending.plannedIndex = sourceIconIndex;
+    } else {
+      pending.requiresAtlasSplice = true;
+      pending.plannedIndex = nextIconIdx;
+      nextIconIdx += 1;
+    }
+    iconField.value = String(pending.plannedIndex);
+  });
+}
 
 function collectUnitIconIssueKeys(tab) {
-  if (!units32AtlasMetricsCache) return new Set();
+  if (!units32AtlasMetricsCache || units32AtlasMetricsCacheKey !== getUnits32TargetAtlasCacheKey()) return new Set();
   const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
   const out = new Set();
   entries.forEach((entry) => {
-    const field = getBiqFieldByBaseKey(entry, 'iconindex');
-    const idx = parseIntLoose(field && field.value, NaN);
+    const idx = getUnitIconValidationIndex(entry);
     if (!Number.isFinite(idx) || idx < 0) return;
     const row = Math.floor(idx / units32AtlasMetricsCache.cols);
     if (row >= units32AtlasMetricsCache.rows) out.add(String(entry && entry.civilopediaKey || ''));
@@ -8272,6 +8377,18 @@ function toPediaRelativeAssetPath(absPath) {
   return full;
 }
 
+function isAbsoluteAssetPath(value) {
+  const raw = toSlashPath(value).trim().replace(/^["']|["']$/g, '');
+  return raw.startsWith('/') || /^[A-Za-z]:\//.test(raw);
+}
+
+function normalizeAssetReferencePath(value) {
+  const raw = toSlashPath(value).trim().replace(/^["']|["']$/g, '');
+  if (!raw) return '';
+  if (isAbsoluteAssetPath(raw)) return raw;
+  return raw.replace(/^\.?[\\/]+/, '');
+}
+
 function normalizeRelativePath(value) {
   return String(value || '')
     .trim()
@@ -8288,8 +8405,16 @@ function getParentPath(rawPath) {
 }
 
 async function resolveExistingAssetPath(assetPath) {
-  const rel = normalizeRelativePath(assetPath);
+  const rel = normalizeAssetReferencePath(assetPath);
   if (!rel) return '';
+  if (isAbsoluteAssetPath(rel)) {
+    try {
+      if (await window.c3xManager.pathExists(rel)) return rel;
+    } catch (_err) {
+      // ignore
+    }
+    return '';
+  }
   const roots = [];
   const scenarioDir = getActiveScenarioDir();
   const civ3Root = toSlashPath(state.settings && state.settings.civ3Path || '');
@@ -12835,9 +12960,13 @@ function createColorSlotPicker(config) {
     if (!Number.isFinite(n)) return 0;
     return Math.max(0, Math.min(max, n));
   };
+  const swatchNodes = new Map();
   let current = parseValue(opts.currentValue);
   const renderBtn = () => {
-    swatch.style.background = colorFromNumber(current);
+    const slot = current;
+    swatch.style.background = getCivSlotUiColor(slot, (css) => {
+      if (current === slot) swatch.style.background = css;
+    });
     text.textContent = `Color ${current}`;
   };
   renderBtn();
@@ -12855,8 +12984,13 @@ function createColorSlotPicker(config) {
     item.className = 'color-slot-item';
     item.title = `Color ${i}`;
     item.setAttribute('aria-label', `Color ${i}`);
-    item.style.background = colorFromNumber(i);
+    item.style.background = getCivSlotUiColor(i, (css) => {
+      const node = swatchNodes.get(i);
+      if (node && node.isConnected) node.style.background = css;
+      if (i === current) swatch.style.background = css;
+    });
     if (i === current) item.classList.add('active');
+    swatchNodes.set(i, item);
     item.addEventListener('click', (ev) => {
       ev.preventDefault();
       current = i;
@@ -12910,19 +13044,23 @@ function drawUnits32IconToCanvas(preview, spriteIndex, canvas, spriteSize = 32) 
   return true;
 }
 
-async function getUnits32AtlasPreview() {
+async function getUnits32AtlasPreview({ scenarioPath, scenarioPaths } = {}) {
+  const resolvedScenarioPath = String(
+    typeof scenarioPath === 'string' ? scenarioPath : (state.settings && state.settings.scenarioPath) || ''
+  );
+  const resolvedScenarioPaths = Array.isArray(scenarioPaths) ? scenarioPaths : getScenarioPreviewPaths();
   const cacheKey = JSON.stringify({
     kind: 'units32-atlas',
     civ3Path: state.settings && state.settings.civ3Path,
-    scenarioPath: state.settings && state.settings.scenarioPath,
-    scenarioPaths: getScenarioPreviewPathsKey()
+    scenarioPath: resolvedScenarioPath,
+    scenarioPaths: resolvedScenarioPaths.join('|')
   });
   if (state.previewCache.has(cacheKey)) return state.previewCache.get(cacheKey);
   const res = await window.c3xManager.getPreview({
     kind: 'civilopediaIcon',
     civ3Path: state.settings.civ3Path,
-    scenarioPath: state.settings.scenarioPath,
-    scenarioPaths: getScenarioPreviewPaths(),
+    scenarioPath: resolvedScenarioPath,
+    scenarioPaths: resolvedScenarioPaths,
     assetPath: 'Art/Units/units_32.pcx'
   });
   if (res && res.ok) {
@@ -12932,7 +13070,7 @@ async function getUnits32AtlasPreview() {
   return null;
 }
 
-function createUnitIconIndexPicker(currentValue, onSelect) {
+function createUnitIconIndexPicker(currentValue, onSelect, entry = null) {
   const UNIT_ICON_ITEM_SIZE = 42;
   const UNIT_ICON_COLS = 8;
   const UNIT_ICON_OVERSCAN_ROWS = 2;
@@ -13013,8 +13151,14 @@ function createUnitIconIndexPicker(currentValue, onSelect) {
   };
 
   const syncPreview = async () => {
+    const previewDescriptor = getUnitIconPreviewDescriptor(entry);
+    const previewIndex = Number(previewDescriptor && previewDescriptor.iconIndex);
+    const preview = await getUnits32AtlasPreview({
+      scenarioPath: previewDescriptor && previewDescriptor.scenarioPath,
+      scenarioPaths: previewDescriptor && previewDescriptor.scenarioPaths
+    });
     if (!atlasPreview) atlasPreview = await getUnits32AtlasPreview();
-    if (!atlasPreview || !drawUnits32IconToCanvas(atlasPreview, current, previewCanvas)) {
+    if (!preview || !drawUnits32IconToCanvas(preview, Number.isFinite(previewIndex) ? previewIndex : current, previewCanvas)) {
       previewHost.innerHTML = '';
       previewHost.textContent = '#';
       return;
@@ -14985,12 +15129,13 @@ function buildReferenceArtSlots(tabKey, entry, options = {}) {
 
 function setReferenceArtSlotPath(entry, slot, nextPathRaw) {
   if (!entry || !slot) return;
-  const nextPath = normalizeRelativePath(toPediaRelativeAssetPath(nextPathRaw || ''));
+  const nextPath = normalizeAssetReferencePath(toPediaRelativeAssetPath(nextPathRaw || ''));
   const key = slot.group === 'racePaths' ? 'racePaths' : 'iconPaths';
   const arr = Array.isArray(entry[key]) ? [...entry[key]] : [];
   arr[slot.index] = nextPath;
   while (arr.length > 0 && !String(arr[arr.length - 1] || '').trim()) arr.pop();
   entry[key] = arr;
+  if (key === 'iconPaths' && slot.index === 0) entry.thumbPath = nextPath;
 }
 
 function makeArtSlotCard({ tabKey, entry, slot, editable, onChanged, showTitle = false }) {
@@ -15917,6 +16062,9 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
       ...field,
       originalValue: ''
     }));
+    if (tabKey === 'units') {
+      normalizeImportedUnitReferenceFields(entry);
+    }
   } else {
     entry.biqFields = entry.biqFields.map((field) => ({
       ...field,
@@ -15925,9 +16073,19 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
   }
   entry.originalOverview = '';
   entry.originalDescription = '';
-  entry.originalIconPaths = [];
-  entry.originalRacePaths = [];
-  entry.originalAnimationName = '';
+  // For import mode: keep icon/race/animation originals in sync with current values so they are
+  // not treated as new changes. These paths are typically base-game values, not scenario-specific
+  // overrides, and writing them to the scenario's PediaIcons.txt would be redundant. The user
+  // can edit them manually if a scenario-specific override is needed.
+  if (mode === 'import') {
+    entry.originalIconPaths = Array.isArray(entry.iconPaths) ? [...entry.iconPaths] : [];
+    entry.originalRacePaths = Array.isArray(entry.racePaths) ? [...entry.racePaths] : [];
+    entry.originalAnimationName = String(entry.animationName || '');
+  } else {
+    entry.originalIconPaths = [];
+    entry.originalRacePaths = [];
+    entry.originalAnimationName = '';
+  }
   // Clear inherited write paths from source — they point to the wrong file context.
   // collectPendingWritePathsFromDirtyTabs will fall back to the current scenario's paths.
   if (entry.sourceMeta) {
@@ -16019,7 +16177,103 @@ async function loadImportEntriesForTab(tabKey, filePath) {
   }
   const srcTab = loaded.tabs[tabKey];
   const importScenarioPaths = Array.isArray(loaded.scenarioSearchPaths) ? loaded.scenarioSearchPaths : [];
-  return { entries: srcTab.entries, diplomacySlots: srcTab.diplomacySlots || [], importScenarioPaths };
+  const buildReferenceIndexMap = (entries) => (Array.isArray(entries) ? entries : []).map((entry, fallbackIdx) => ({
+    index: Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : fallbackIdx,
+    civilopediaKey: String(entry && entry.civilopediaKey || '').trim().toUpperCase()
+  })).filter((item) => Number.isFinite(item.index) && item.index >= 0 && item.civilopediaKey);
+  return {
+    entries: srcTab.entries,
+    diplomacySlots: srcTab.diplomacySlots || [],
+    importScenarioPaths,
+    referenceIndexMaps: {
+      civilizations: buildReferenceIndexMap(loaded.tabs.civilizations && loaded.tabs.civilizations.entries),
+      improvements: buildReferenceIndexMap(loaded.tabs.improvements && loaded.tabs.improvements.entries),
+      units: buildReferenceIndexMap(loaded.tabs.units && loaded.tabs.units.entries)
+    }
+  };
+}
+
+function getImportReferenceIndexMap(sourceMaps, tabKey) {
+  const maps = sourceMaps && typeof sourceMaps === 'object' ? sourceMaps : {};
+  const items = maps[tabKey];
+  return Array.isArray(items) ? items : [];
+}
+
+function getTargetReferenceIndexByKey(tabKey) {
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+  const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+  const out = new Map();
+  entries.forEach((entry, fallbackIdx) => {
+    const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    const index = Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : fallbackIdx;
+    if (!key || !Number.isFinite(index) || index < 0) return;
+    out.set(key, index);
+  });
+  return out;
+}
+
+function normalizeImportedIndexedListField(entry, {
+  candidateKeys,
+  fallbackKey,
+  sourceTabKey,
+  targetTabKey
+}) {
+  const sourceValues = getUnitListFieldState(entry, candidateKeys, fallbackKey);
+  if (!sourceValues.values.length) return;
+  const sourceIndexToKey = new Map(
+    getImportReferenceIndexMap(entry && entry._importReferenceIndexMaps, sourceTabKey)
+      .map((item) => [String(item.index), item.civilopediaKey])
+  );
+  const targetIndexByKey = getTargetReferenceIndexByKey(targetTabKey);
+  const remapped = [];
+  sourceValues.values.forEach((value) => {
+    const key = sourceIndexToKey.get(String(value).trim());
+    if (!key) return;
+    const targetIndex = targetIndexByKey.get(key);
+    if (!Number.isFinite(targetIndex) || targetIndex < 0) return;
+    remapped.push(String(targetIndex));
+  });
+  setUnitListFieldValues(entry, sourceValues.key, dedupeStrings(remapped));
+}
+
+function normalizeImportedUnitAvailableTo(entry) {
+  const field = getBiqFieldByBaseKey(entry, 'availableto');
+  if (!field) return;
+  const sourceIndexToKey = new Map(
+    getImportReferenceIndexMap(entry && entry._importReferenceIndexMaps, 'civilizations')
+      .map((item) => [Number(item.index), item.civilopediaKey])
+  );
+  const targetIndexByKey = getTargetReferenceIndexByKey('civilizations');
+  const remapped = decodeAvailableToIndices(field.value).map((sourceIndex) => {
+    const key = sourceIndexToKey.get(sourceIndex);
+    if (!key) return null;
+    const targetIndex = targetIndexByKey.get(key);
+    return Number.isFinite(targetIndex) ? String(targetIndex) : null;
+  }).filter(Boolean);
+  field.value = encodeAvailableToFromIndices(dedupeStrings(remapped));
+}
+
+function normalizeImportedUnitReferenceFields(entry) {
+  if (!entry || !Array.isArray(entry.biqFields)) return;
+  normalizeImportedUnitAvailableTo(entry);
+  normalizeImportedIndexedListField(entry, {
+    candidateKeys: ['stealth_target', 'stealthtarget'],
+    fallbackKey: 'stealth_target',
+    sourceTabKey: 'units',
+    targetTabKey: 'units'
+  });
+  normalizeImportedIndexedListField(entry, {
+    candidateKeys: ['legal_unit_telepad', 'legalunittelepad'],
+    fallbackKey: 'legal_unit_telepad',
+    sourceTabKey: 'units',
+    targetTabKey: 'units'
+  });
+  normalizeImportedIndexedListField(entry, {
+    candidateKeys: ['legal_building_telepad', 'legalbuildingtelepad'],
+    fallbackKey: 'legal_building_telepad',
+    sourceTabKey: 'improvements',
+    targetTabKey: 'improvements'
+  });
 }
 
 async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initialMode = 'blank', lockMode = false }) {
@@ -16161,6 +16415,7 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
         if (entry) {
           entry._importScenarioPath = filePath;
           entry._importScenarioPaths = loaded.importScenarioPaths;
+          entry._importReferenceIndexMaps = loaded.referenceIndexMaps;
         }
       });
       importDiplomacySlots = loaded.diplomacySlots;
@@ -16539,6 +16794,21 @@ function renderReferenceTab(tab, tabKey) {
         mode: 'import',
         displayName: result.name
       });
+      if (tabKey === 'units') {
+        const sourceIconField = getBiqFieldByBaseKey(result.importedEntry, 'iconindex');
+        const sourceIconIndex = parseIntLoose(sourceIconField && sourceIconField.value, NaN);
+        if (Number.isFinite(sourceIconIndex) && sourceIconIndex >= 0) {
+          newEntry._pendingImportedUnitIcon = {
+            sourceScenarioPath: result.importFilePath,
+            sourceScenarioPaths: Array.isArray(result.importedEntry && result.importedEntry._importScenarioPaths)
+              ? [...result.importedEntry._importScenarioPaths]
+              : [],
+            sourceIconIndex,
+            plannedIndex: sourceIconIndex,
+            requiresAtlasSplice: false
+          };
+        }
+      }
       if (tabKey === 'civilizations' && Array.isArray(result.importDiplomacySlots) && Array.isArray(tab.diplomacySlots)) {
         const textIndexField = getBiqFieldByBaseKey(newEntry, 'diplomacytextindex');
         const sourceSlotIndex = textIndexField ? Number(textIndexField.value) : -1;
@@ -16567,6 +16837,12 @@ function renderReferenceTab(tab, tabKey) {
       });
       rememberUndoSnapshot();
       tab.entries.unshift(newEntry);
+      if (tabKey === 'units') {
+        if (!units32AtlasMetricsCache || units32AtlasMetricsCacheKey !== getUnits32TargetAtlasCacheKey()) {
+          await ensureCurrentUnits32AtlasMetrics().catch(() => null);
+        }
+        refreshPendingImportedUnitIconAssignments(tab);
+      }
       if (tabKey === 'civilizations') {
         setCivilizationPlayableState(newEntry, true);
       }
@@ -16610,10 +16886,10 @@ function renderReferenceTab(tab, tabKey) {
   }
   wrap.appendChild(controls);
 
-  if (tabKey === 'units' && !units32AtlasMetricsCache) {
-    getUnits32AtlasPreview().then((preview) => {
-      if (!preview || units32AtlasMetricsCache) return;
-      units32AtlasMetricsCache = getUnits32AtlasMetrics(preview, 32, 1);
+  if (tabKey === 'units' && (!units32AtlasMetricsCache || units32AtlasMetricsCacheKey !== getUnits32TargetAtlasCacheKey())) {
+    ensureCurrentUnits32AtlasMetrics().then((metrics) => {
+      if (!metrics) return;
+      refreshPendingImportedUnitIconAssignments(tab);
       renderActiveTab({ preserveTabScroll: true });
     }).catch(() => {});
   }
@@ -16706,9 +16982,8 @@ function renderReferenceTab(tab, tabKey) {
     if (isReferenceEntryDirty(tabKey, entry)) {
       appendDirtyBadge(itemBtn, `${entry.name || entry.civilopediaKey} has unsaved edits`);
     }
-    if (tabKey === 'units' && units32AtlasMetricsCache) {
-      const iconField = getBiqFieldByBaseKey(entry, 'iconindex');
-      const iconIdx = parseIntLoose(iconField && iconField.value, NaN);
+    if (tabKey === 'units' && units32AtlasMetricsCache && units32AtlasMetricsCacheKey === getUnits32TargetAtlasCacheKey()) {
+      const iconIdx = getUnitIconValidationIndex(entry);
       if (Number.isFinite(iconIdx) && iconIdx >= 0) {
         const row = Math.floor(iconIdx / units32AtlasMetricsCache.cols);
         if (row >= units32AtlasMetricsCache.rows) {
@@ -17281,20 +17556,20 @@ function renderReferenceTab(tab, tabKey) {
               const picker = createUnitIconIndexPicker(field.value, (value) => {
                 rememberUndoSnapshot();
                 field.value = String(value);
+                if (entry && entry._pendingImportedUnitIcon) delete entry._pendingImportedUnitIcon;
                 setDirty(true);
-              });
+              }, entry);
               controlWrap.appendChild(picker);
               const iconWarnEl = document.createElement('div');
               iconWarnEl.className = 'unit-icon-field-warning hidden';
               iconWarnEl.textContent = '⚠ Icon index is out of range for the available units_32.pcx — this unit\'s icon will be missing at runtime. Copy units_32.pcx from the source scenario into this scenario\'s Art/Units/ folder.';
               controlWrap.appendChild(iconWarnEl);
-              getUnits32AtlasPreview().then((preview) => {
-                if (!preview || !iconWarnEl.isConnected) return;
-                if (!units32AtlasMetricsCache) units32AtlasMetricsCache = getUnits32AtlasMetrics(preview, 32, 1);
-                if (!units32AtlasMetricsCache) return;
-                const idx = parseIntLoose(field.value, NaN);
+              ensureCurrentUnits32AtlasMetrics().then((metrics) => {
+                if (!metrics || !iconWarnEl.isConnected) return;
+                refreshPendingImportedUnitIconAssignments();
+                const idx = getUnitIconValidationIndex(entry);
                 if (!Number.isFinite(idx) || idx < 0) return;
-                if (Math.floor(idx / units32AtlasMetricsCache.cols) >= units32AtlasMetricsCache.rows) {
+                if (Math.floor(idx / metrics.cols) >= metrics.rows) {
                   iconWarnEl.classList.remove('hidden');
                 }
               }).catch(() => {});
@@ -19886,6 +20161,43 @@ function colorFromNumber(value) {
   const g = 40 + ((x >> 8) & 0x7f);
   const b = 40 + ((x >> 16) & 0x7f);
   return `rgb(${r}, ${g}, ${b})`;
+}
+
+function getCivSlotUiColor(slot, onReady = null) {
+  const idx = ((Number(slot) % 32) + 32) % 32;
+  const cached = state.civSlotUiColorCache && state.civSlotUiColorCache[idx];
+  if (cached) return cached;
+  if (typeof onReady === 'function') {
+    if (!Array.isArray(state.civSlotUiColorListeners[idx])) state.civSlotUiColorListeners[idx] = [];
+    state.civSlotUiColorListeners[idx].push(onReady);
+  }
+  if (!state.settings || !state.settings.civ3Path) return colorFromNumber(idx);
+  if (!state.civSlotUiColorLoading[idx]) {
+    state.civSlotUiColorLoading[idx] = true;
+    window.c3xManager.getPreview({
+      kind: 'civilopediaIcon',
+      civ3Path: state.settings.civ3Path,
+      scenarioPath: state.settings.scenarioPath,
+      scenarioPaths: getScenarioPreviewPaths(),
+      assetPath: `Art/Units/Palettes/ntp${String(idx).padStart(2, '0')}.pcx`
+    }).then((res) => {
+      const rgba = getPreviewRgba(res);
+      if (res && res.ok && rgba && rgba.length >= 3) {
+        state.civSlotUiColorCache[idx] = `rgb(${rgba[0]}, ${rgba[1]}, ${rgba[2]})`;
+      }
+    }).catch(() => {}).finally(() => {
+      delete state.civSlotUiColorLoading[idx];
+      const listeners = Array.isArray(state.civSlotUiColorListeners[idx]) ? state.civSlotUiColorListeners[idx] : [];
+      delete state.civSlotUiColorListeners[idx];
+      const css = state.civSlotUiColorCache[idx] || colorFromNumber(idx);
+      listeners.forEach((listener) => {
+        try {
+          listener(css);
+        } catch (_err) {}
+      });
+    });
+  }
+  return colorFromNumber(idx);
 }
 
 function colorFromCivSlot(slot, fallback = null) {
@@ -26046,6 +26358,7 @@ async function loadBundleAndRender(options = {}) {
   syncSettingsFromInputs();
   updatePathsSummary();
   updateModeState();
+  invalidateUnits32AtlasMetricsCache();
   await window.c3xManager.setSettings(state.settings);
   setLoadingUi(true, options.loadingText || 'Loading configs...');
 
@@ -26141,8 +26454,11 @@ async function loadBundleAndRender(options = {}) {
     state.biqMapArtLoading = {};
     state.biqMapTerritoryEdgeCache = new Map();
     state.biqMapNtpColorCache = {};
+    state.civSlotUiColorCache = {};
+    state.civSlotUiColorLoading = {};
+    state.civSlotUiColorListeners = {};
     state.biqMapColoredUnitIconCache = new Map();
-  state.biqMapColoredStartLocCache = new Map();
+    state.biqMapColoredStartLocCache = new Map();
     state.biqMapSelectedTile = -1;
     state.biqMapScrollLeft = null;
     state.biqMapScrollTop = null;
@@ -26742,6 +27058,7 @@ async function saveCurrentBundle() {
         }
       });
     }
+    invalidatePreviewStateForReload();
     await loadBundleAndRender({
       usePersistedView: true,
       referenceSelectionKeys,
@@ -26819,6 +27136,7 @@ async function performSeedScenarioTab(tabKey) {
     const paths = res.saveReport.map((r) => r.path).join(' | ');
     setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
     // Targeted tab refresh: reload only the seeded tab so dirty state for other tabs is preserved.
+    invalidatePreviewStateForReload();
     const freshBundle = await window.c3xManager.loadBundle({
       mode: state.settings.mode,
       c3xPath: state.settings.c3xPath,
