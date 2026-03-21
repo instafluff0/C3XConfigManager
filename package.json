@@ -1,7 +1,7 @@
 {
   "name": "civ3-c3x-modern-config-manager",
   "productName": "Civ 3 C3X Modern Configuration Manager",
-  "version": "BETA R26.0",
+  "version": "26.0.0",
   "description": "Modern config manager for C3X",
   "main": "main.js",
   "scripts": {
@@ -14,13 +14,20 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.nacdobbins.c3xconfigmanager",
-    "icon": "build/icon.png",
+    "appId": "com.instafluff.c3xconfigmanager",
     "files": [
       "main.js",
       "preload.js",
       "src/**/*",
       "package.json"
-    ]
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "build/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "build/icon.icns"
+    }
   }
 }

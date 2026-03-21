@@ -1868,13 +1868,18 @@ function sanitizeScenarioStem(rawName) {
     .trim();
 }
 
-function validateScenarioStem(stem) {
-  if (!stem) return 'Scenario name is required.';
-  if (/^\.+$/.test(stem)) return 'Scenario name cannot be only dots.';
+function validateSimpleFolderName(stem, label = 'Name') {
+  const labelText = String(label || 'Name');
+  if (!stem) return `${labelText} is required.`;
+  if (/^\.+$/.test(stem)) return `${labelText} cannot be only dots.`;
   if (/[<>:"/\\|?*\u0000-\u001f]/.test(stem)) {
-    return 'Scenario name contains invalid filename characters.';
+    return `${labelText} contains invalid filename characters.`;
   }
   return '';
+}
+
+function validateScenarioStem(stem) {
+  return validateSimpleFolderName(stem, 'Scenario name');
 }
 
 function makeUniqueTempScenarioDir(parentDir, scenarioStem) {
@@ -1902,6 +1907,7 @@ function createScenario(payload = {}) {
     const includeC3xDefaults = payload.includeC3xDefaults !== false;
     const dryRun = payload.dryRun === true;
     const requestedParent = String(payload.scenarioParentDir || '').trim();
+    const requestedSearchFolderName = sanitizeScenarioStem(payload.scenarioSearchFolderName || '');
     const defaultParent = civ3Root ? path.join(civ3Root, 'Conquests', 'Scenarios') : '';
     if (!requestedParent && !defaultParent) {
       return { ok: false, error: 'Civilization 3 path is required.' };
@@ -1927,7 +1933,11 @@ function createScenario(payload = {}) {
     let sourceBiqTab = null;
     let sourceSearchRoots = [];
     let sourceSearchField = null;
+    let localizedSearchFolderStem = '';
     if (template === 'copy') {
+      localizedSearchFolderStem = requestedSearchFolderName || scenarioStem;
+      const searchFolderErr = validateSimpleFolderName(localizedSearchFolderStem, 'Localized search folder name');
+      if (searchFolderErr) return { ok: false, error: searchFolderErr };
       sourceScenarioPath = String(payload.sourceScenarioPath || '').trim();
       if (!sourceScenarioPath) return { ok: false, error: 'Source scenario .biq file is required for copy template.' };
       if (!/\.biq$/i.test(sourceScenarioPath)) return { ok: false, error: 'Source scenario must be a .biq file.' };
@@ -2039,6 +2049,7 @@ function createScenario(payload = {}) {
         const targetBiqInTemp = scenarioBiqPath;
         const copiedSearchRootMap = new Map();
         if (sourceContentRoot) copiedSearchRootMap.set(path.resolve(sourceContentRoot), path.resolve(tempDir));
+        const localizedSearchRootParent = path.join(tempDir, localizedSearchFolderStem);
         if (path.normalize(sourceBiqInTemp) !== path.normalize(targetBiqInTemp)) {
           if (fs.existsSync(sourceBiqInTemp)) {
             fs.renameSync(sourceBiqInTemp, targetBiqInTemp);
@@ -2054,10 +2065,10 @@ function createScenario(payload = {}) {
             .replace(/[^A-Za-z0-9._-]/g, '_')
             .replace(/^_+|_+$/g, '')
             .slice(0, 48) || `search_${idx + 1}`;
-          let destRoot = path.join(tempDir, '_search', safeTail);
+          let destRoot = path.join(localizedSearchRootParent, safeTail);
           let suffix = 2;
           while (fs.existsSync(destRoot)) {
-            destRoot = path.join(tempDir, '_search', `${safeTail}_${suffix}`);
+            destRoot = path.join(localizedSearchRootParent, `${safeTail}_${suffix}`);
             suffix += 1;
           }
           fs.mkdirSync(path.dirname(destRoot), { recursive: true });
@@ -2066,13 +2077,13 @@ function createScenario(payload = {}) {
           copiedFiles.push({ kind: 'searchRoot', from: sourceRoot, to: path.join(scenarioDir, path.relative(tempDir, destRoot)) });
         });
         if (sourceSearchField && sourceSearchField.fieldKey) {
-          const rewrittenFolders = [];
+          const rewrittenFolders = [scenarioStem];
           dedupePathList(sourceSearchRoots).forEach((sourceRoot) => {
             const srcResolved = path.resolve(sourceRoot);
             const mapped = copiedSearchRootMap.get(srcResolved);
             if (!mapped || path.resolve(mapped) === path.resolve(tempDir)) return;
             const rel = path.relative(parentDir, path.join(scenarioDir, path.relative(tempDir, mapped))).replace(/\\/g, '/').trim();
-            if (rel) rewrittenFolders.push(rel);
+            if (rel && !rewrittenFolders.includes(rel)) rewrittenFolders.push(rel);
           });
           const rewrittenValue = rewrittenFolders.join('; ');
           const biqRewrite = applyBiqReferenceEdits({

@@ -65,6 +65,7 @@ function loadRendererImportHelpers(targetBundle) {
     'getBiqFieldByBaseKey',
     'buildNewReferenceEntryFromTemplate',
     'getImportReferenceIndexMap',
+    'getTargetReferenceEntries',
     'getTargetReferenceIndexByKey',
     'getTargetReferenceIndexByName',
     'normalizeImportedIndexedListField',

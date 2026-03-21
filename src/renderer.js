@@ -2987,7 +2987,7 @@ async function promptCreateScenarioFromBaseAction() {
   const parentLabel = document.createElement('label');
   parentLabel.textContent = 'Scenario Folder';
   const parentRow = document.createElement('div');
-  parentRow.className = 'art-path-row';
+  parentRow.className = 'art-path-row entity-path-row';
   const parentInput = document.createElement('input');
   parentInput.type = 'text';
   parentInput.placeholder = 'Folder where scenario directory will be created';
@@ -3038,7 +3038,7 @@ async function promptCopyScenarioAction() {
   if (!el.entityModalOverlay || !el.entityModalContent) return null;
   if (el.entityModalTitle) el.entityModalTitle.textContent = 'Create Scenario: Copy Existing';
   if (el.entityModalBody) {
-    el.entityModalBody.textContent = 'Copy an existing scenario folder and rename its BIQ for the new scenario.';
+    el.entityModalBody.textContent = 'Copy an existing scenario and localize its BIQ search folders for the new scenario.';
   }
   if (el.entityModalConfirm) {
     el.entityModalConfirm.textContent = 'Create Copy';
@@ -3056,18 +3056,11 @@ async function promptCopyScenarioAction() {
   sourceField.className = 'entity-field';
   const sourceLabel = document.createElement('label');
   sourceLabel.textContent = 'Source Scenario';
-  const sourceRow = document.createElement('div');
-  sourceRow.className = 'art-path-row';
   const sourceSelect = document.createElement('select');
+  sourceSelect.className = 'entity-import-scenario-pill';
   buildScenarioSourceSelect(sourceSelect);
-  const sourceBrowse = document.createElement('button');
-  sourceBrowse.type = 'button';
-  sourceBrowse.className = 'ghost';
-  sourceBrowse.textContent = 'Browse';
-  sourceRow.appendChild(sourceSelect);
-  sourceRow.appendChild(sourceBrowse);
   sourceField.appendChild(sourceLabel);
-  sourceField.appendChild(sourceRow);
+  sourceField.appendChild(sourceSelect);
   grid.appendChild(sourceField);
 
   const nameField = document.createElement('div');
@@ -3081,30 +3074,16 @@ async function promptCopyScenarioAction() {
   nameField.appendChild(nameInput);
   grid.appendChild(nameField);
 
-  const parentField = document.createElement('div');
-  parentField.className = 'entity-field';
-  const parentLabel = document.createElement('label');
-  parentLabel.textContent = 'Scenario Folder';
-  const parentRow = document.createElement('div');
-  parentRow.className = 'art-path-row';
-  const parentInput = document.createElement('input');
-  parentInput.type = 'text';
-  parentInput.placeholder = 'Folder where scenario directory will be created';
-  parentInput.value = getDefaultScenarioParentDir();
-  const parentPick = document.createElement('button');
-  parentPick.type = 'button';
-  parentPick.className = 'ghost';
-  parentPick.textContent = 'Browse';
-  parentPick.addEventListener('click', async () => {
-    const selected = await window.c3xManager.pickDirectory();
-    if (!selected) return;
-    parentInput.value = selected;
-  });
-  parentRow.appendChild(parentInput);
-  parentRow.appendChild(parentPick);
-  parentField.appendChild(parentLabel);
-  parentField.appendChild(parentRow);
-  grid.appendChild(parentField);
+  const searchFolderField = document.createElement('div');
+  searchFolderField.className = 'entity-field';
+  const searchFolderLabel = document.createElement('label');
+  searchFolderLabel.textContent = 'Localized Search Folder';
+  const searchFolderInput = document.createElement('input');
+  searchFolderInput.type = 'text';
+  searchFolderInput.placeholder = 'Defaults to the new scenario name';
+  searchFolderField.appendChild(searchFolderLabel);
+  searchFolderField.appendChild(searchFolderInput);
+  grid.appendChild(searchFolderField);
 
   el.entityModalContent.appendChild(form);
   state.entityModal.open = true;
@@ -3113,37 +3092,56 @@ async function promptCopyScenarioAction() {
 
   let selectedSourcePath = '';
   let nameEdited = false;
+  let searchFolderEdited = false;
   const syncDefaultNameFromSource = () => {
     if (nameEdited) return;
     const base = stripBiqExtension(getPathTail(selectedSourcePath));
     if (!base) return;
     nameInput.value = `${base} Copy`;
+    syncSearchFolderName();
+  };
+  const syncSearchFolderName = () => {
+    if (searchFolderEdited) return;
+    const nextName = String(nameInput.value || '').trim();
+    searchFolderInput.value = nextName;
   };
 
   sourceSelect.addEventListener('change', async () => {
     const value = String(sourceSelect.value || '').trim();
     if (!value) return;
     if (value === '__manual__') {
-      sourceBrowse.click();
+      const filePath = await window.c3xManager.pickFile({
+        filters: [{ name: 'BIQ Scenario Files', extensions: ['biq'] }]
+      });
+      if (!filePath) {
+        sourceSelect.value = selectedSourcePath || '';
+        return;
+      }
+      selectedSourcePath = filePath;
+      const existingOpt = Array.from(sourceSelect.options).find((opt) => String(opt.value || '') === filePath);
+      if (existingOpt) {
+        sourceSelect.value = filePath;
+      } else {
+        const manualOpt = document.createElement('option');
+        manualOpt.value = filePath;
+        manualOpt.textContent = getPathTail(filePath);
+        manualOpt.title = filePath;
+        sourceSelect.insertBefore(manualOpt, sourceSelect.querySelector('option[value="__manual__"]'));
+        sourceSelect.value = filePath;
+      }
+      syncDefaultNameFromSource();
       return;
     }
     selectedSourcePath = value;
     syncDefaultNameFromSource();
   });
 
-  sourceBrowse.addEventListener('click', async () => {
-    const filePath = await window.c3xManager.pickFile({
-      filters: [{ name: 'BIQ Scenario Files', extensions: ['biq'] }]
-    });
-    if (!filePath) return;
-    selectedSourcePath = filePath;
-    const hasOption = Array.from(sourceSelect.options).some((opt) => String(opt.value || '') === filePath);
-    sourceSelect.value = hasOption ? filePath : '__manual__';
-    syncDefaultNameFromSource();
-  });
-
   nameInput.addEventListener('input', () => {
     nameEdited = true;
+    syncSearchFolderName();
+  });
+  searchFolderInput.addEventListener('input', () => {
+    searchFolderEdited = String(searchFolderInput.value || '').trim().length > 0;
   });
   window.setTimeout(() => sourceSelect.focus({ preventScroll: true }), 0);
 
@@ -3151,7 +3149,7 @@ async function promptCopyScenarioAction() {
     state.entityModal.resolve = resolve;
     const onConfirm = () => {
       const scenarioName = String(nameInput.value || '').trim();
-      const scenarioParentDir = String(parentInput.value || '').trim();
+      const scenarioSearchFolderName = String(searchFolderInput.value || '').trim() || scenarioName;
       if (!selectedSourcePath) {
         setStatus('Source scenario is required.', true);
         return;
@@ -3160,15 +3158,11 @@ async function promptCopyScenarioAction() {
         setStatus('Scenario name is required.', true);
         return;
       }
-      if (!scenarioParentDir) {
-        setStatus('Scenario folder is required.', true);
-        return;
-      }
       resolveEntityModal({
         template: 'copy',
         sourceScenarioPath: selectedSourcePath,
         scenarioName,
-        scenarioParentDir
+        scenarioSearchFolderName
       });
     };
     const onCancel = () => resolveEntityModal(null);
@@ -3201,48 +3195,54 @@ async function runScenarioCreateFlow(kind = 'base') {
     setStatus('Set C3X folder before creating a scenario.', true);
     return false;
   }
-  const created = await window.c3xManager.createScenario({
-    dryRun: true,
+  const creationPayload = {
     c3xPath: state.settings.c3xPath,
     civ3Path: state.settings.civ3Path,
     template: details.template || 'base',
     sourceScenarioPath: details.sourceScenarioPath || '',
     scenarioName: details.scenarioName,
-    scenarioParentDir: details.scenarioParentDir
-  });
-  if (!created || !created.ok) {
-    setStatus((created && created.error) || 'Could not prepare scenario creation.', true);
+    scenarioParentDir: details.scenarioParentDir,
+    scenarioSearchFolderName: details.scenarioSearchFolderName || ''
+  };
+  const creationLoadingText = kind === 'copy' ? 'Copying scenario files...' : 'Creating scenario files...';
+  setLoadingUi(true, creationLoadingText);
+  try {
+    const created = await window.c3xManager.createScenario({
+      ...creationPayload,
+      dryRun: true
+    });
+    if (!created || !created.ok) {
+      setStatus((created && created.error) || 'Could not prepare scenario creation.', true);
+      updateScenarioSelectValue();
+      resetScenarioNewActionControl();
+      return false;
+    }
+    const committed = await window.c3xManager.createScenario(creationPayload);
+    if (!committed || !committed.ok) {
+      setStatus((committed && committed.error) || 'Could not create scenario.', true);
+      updateScenarioSelectValue();
+      resetScenarioNewActionControl();
+      return false;
+    }
+    setMode('scenario');
+    el.scenarioPath.value = String(committed.scenarioBiqPath || '');
+    syncSettingsFromInputs();
+    await refreshScenarioSelectOptions();
     updateScenarioSelectValue();
+    updatePathsSummary();
+    updateModeState();
+    await window.c3xManager.setSettings(state.settings);
+    await loadBundleAndRender({
+      loadingText: kind === 'copy' ? 'Loading copied scenario...' : 'Loading new scenario...',
+      reuseLoadingUi: true
+    });
+    const statusVerb = kind === 'copy' ? 'Copied' : 'Created';
+    setStatus(`${statusVerb} scenario "${committed.scenarioName}" and loaded it.`);
     resetScenarioNewActionControl();
-    return false;
+    return true;
+  } finally {
+    if (state.isLoading) setLoadingUi(false);
   }
-  const committed = await window.c3xManager.createScenario({
-    c3xPath: state.settings.c3xPath,
-    civ3Path: state.settings.civ3Path,
-    template: details.template || 'base',
-    sourceScenarioPath: details.sourceScenarioPath || '',
-    scenarioName: details.scenarioName,
-    scenarioParentDir: details.scenarioParentDir
-  });
-  if (!committed || !committed.ok) {
-    setStatus((committed && committed.error) || 'Could not create scenario.', true);
-    updateScenarioSelectValue();
-    resetScenarioNewActionControl();
-    return false;
-  }
-  setMode('scenario');
-  el.scenarioPath.value = String(committed.scenarioBiqPath || '');
-  syncSettingsFromInputs();
-  await refreshScenarioSelectOptions();
-  updateScenarioSelectValue();
-  updatePathsSummary();
-  updateModeState();
-  await window.c3xManager.setSettings(state.settings);
-  await loadBundleAndRender({ loadingText: kind === 'copy' ? 'Loading copied scenario...' : 'Loading new scenario...' });
-  const statusVerb = kind === 'copy' ? 'Copied' : 'Created';
-  setStatus(`${statusVerb} scenario "${committed.scenarioName}" and loaded it.`);
-  resetScenarioNewActionControl();
-  return true;
 }
 
 function setPathsCollapsed(collapsed) {
@@ -8664,7 +8664,7 @@ const BIQ_FIELD_REFS = {
   },
   governments: {
     prerequisitetechnology: 'technologies',
-    immuneto: 'governments'
+    immuneto: 'espionage'
   },
   technologies: {
     era: 'eras',
@@ -9462,6 +9462,7 @@ function getBiqStructureRefSpec(sectionCode, baseKey) {
   if (code === 'LEAD' && canon === 'initialera') return { section: 'ERAS', oneBased: false };
   if (code === 'LEAD' && /^startingtechnology\d+$/.test(canon)) return { section: 'TECH', oneBased: false };
   if (code === 'LEAD' && canon === 'difficulty') return { section: 'DIFF', oneBased: false };
+  if (code === 'GOVT' && canon === 'immuneto') return { section: 'ESPN', oneBased: false };
   if (code === 'TFRM' && canon === 'requiredadvance') return { section: 'TECH', oneBased: false };
   if (code === 'TFRM' && (canon === 'requiredresource1' || canon === 'requiredresource2')) return { section: 'GOOD', oneBased: false };
   if (code === 'TERR' && canon === 'workerjob') return { section: 'TFRM', oneBased: false };
@@ -16200,6 +16201,17 @@ async function loadImportEntriesForTab(tabKey, filePath) {
     civilopediaKey: String(entry && entry.civilopediaKey || '').trim().toUpperCase(),
     name: String(entry && entry.name || '').trim()
   })).filter((item) => Number.isFinite(item.index) && item.index >= 0 && (item.civilopediaKey || item.name));
+  const buildRuleSectionIndexMap = (sectionCode) => {
+    const rulesTab = loaded.tabs && loaded.tabs.rules;
+    const sections = rulesTab && Array.isArray(rulesTab.sections) ? rulesTab.sections : [];
+    const section = sections.find((item) => String(item && item.code || '').trim().toUpperCase() === String(sectionCode || '').trim().toUpperCase());
+    const records = section && Array.isArray(section.records) ? section.records : [];
+    return records.map((record, fallbackIdx) => ({
+      index: Number.isFinite(record && record.index) ? Number(record.index) : fallbackIdx,
+      civilopediaKey: String(record && (record.civilopediaKey || record.civilopediaEntry) || '').trim().toUpperCase(),
+      name: String(record && (record.name || record.eraName || record.description) || '').trim()
+    })).filter((item) => Number.isFinite(item.index) && item.index >= 0 && (item.civilopediaKey || item.name));
+  };
   return {
     entries: srcTab.entries,
     diplomacySlots: srcTab.diplomacySlots || [],
@@ -16210,7 +16222,12 @@ async function loadImportEntriesForTab(tabKey, filePath) {
       resources: buildReferenceIndexMap(loaded.tabs.resources && loaded.tabs.resources.entries),
       improvements: buildReferenceIndexMap(loaded.tabs.improvements && loaded.tabs.improvements.entries),
       governments: buildReferenceIndexMap(loaded.tabs.governments && loaded.tabs.governments.entries),
-      units: buildReferenceIndexMap(loaded.tabs.units && loaded.tabs.units.entries)
+      units: buildReferenceIndexMap(loaded.tabs.units && loaded.tabs.units.entries),
+      eras: buildRuleSectionIndexMap('ERAS'),
+      difficulties: buildRuleSectionIndexMap('DIFF'),
+      espionage: buildRuleSectionIndexMap('ESPN'),
+      workerActions: buildRuleSectionIndexMap('TFRM'),
+      terrainPedia: buildRuleSectionIndexMap('TERR')
     }
   };
 }
@@ -16221,13 +16238,31 @@ function getImportReferenceIndexMap(sourceMaps, tabKey) {
   return Array.isArray(items) ? items : [];
 }
 
+function getTargetReferenceEntries(tabKey) {
+  const bundle = state.bundle || {};
+  const tab = bundle.tabs && bundle.tabs[tabKey];
+  if (tab && Array.isArray(tab.entries)) return tab.entries;
+  const rulesTab = bundle.tabs && bundle.tabs.rules;
+  const sections = rulesTab && Array.isArray(rulesTab.sections) ? rulesTab.sections : [];
+  const sectionCode = ({
+    eras: 'ERAS',
+    difficulties: 'DIFF',
+    espionage: 'ESPN',
+    workerActions: 'TFRM',
+    terrainPedia: 'TERR'
+  })[String(tabKey || '')];
+  if (!sectionCode) return [];
+  const section = sections.find((item) => String(item && item.code || '').trim().toUpperCase() === sectionCode);
+  return section && Array.isArray(section.records) ? section.records : [];
+}
+
 function getTargetReferenceIndexByKey(tabKey) {
-  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
-  const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+  const entries = getTargetReferenceEntries(tabKey);
   const out = new Map();
   entries.forEach((entry, fallbackIdx) => {
-    const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
-    const index = Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : fallbackIdx;
+    const key = String(entry && (entry.civilopediaKey || entry.civilopediaEntry) || '').trim().toUpperCase();
+    const rawIndex = entry && (entry.biqIndex != null ? entry.biqIndex : entry.index);
+    const index = Number.isFinite(rawIndex) ? Number(rawIndex) : fallbackIdx;
     if (!key || !Number.isFinite(index) || index < 0) return;
     out.set(key, index);
   });
@@ -16235,13 +16270,13 @@ function getTargetReferenceIndexByKey(tabKey) {
 }
 
 function getTargetReferenceIndexByName(tabKey) {
-  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
-  const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+  const entries = getTargetReferenceEntries(tabKey);
   const out = new Map();
   const dupes = new Set();
   entries.forEach((entry, fallbackIdx) => {
-    const name = String(entry && entry.name || '').trim();
-    const index = Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : fallbackIdx;
+    const name = String(entry && (entry.name || entry.eraName || entry.description) || '').trim();
+    const rawIndex = entry && (entry.biqIndex != null ? entry.biqIndex : entry.index);
+    const index = Number.isFinite(rawIndex) ? Number(rawIndex) : fallbackIdx;
     if (!name || !Number.isFinite(index) || index < 0) return;
     if (dupes.has(name)) return;
     if (out.has(name)) { out.delete(name); dupes.add(name); return; }
@@ -16330,6 +16365,11 @@ function normalizeImportedScalarReferenceField(entry, {
 
 function normalizeImportedTechnologyReferenceFields(entry) {
   if (!entry || !Array.isArray(entry.biqFields)) return;
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['era'],
+    sourceTabKey: 'eras',
+    targetTabKey: 'eras'
+  });
   ['prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4'].forEach((key) => {
     normalizeImportedScalarReferenceField(entry, {
       candidateKeys: [key],
@@ -16481,6 +16521,11 @@ function normalizeImportedGovernmentReferenceFields(entry) {
     candidateKeys: ['prerequisitetechnology'],
     sourceTabKey: 'technologies',
     targetTabKey: 'technologies'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['immuneto'],
+    sourceTabKey: 'espionage',
+    targetTabKey: 'espionage'
   });
   normalizeImportedGovernmentRelationFields(entry);
 }
@@ -24992,6 +25037,40 @@ async function fetchDistrictRepresentativePreview(section) {
   }
 }
 
+async function fetchDistrictCellPreview(section, { cultureIndex = 0, eraIndex = 0, buildingCol = 0 } = {}) {
+  if (!state.settings || !state.settings.c3xPath) return null;
+  const allPaths = tokenizeListPreservingQuotes(getFieldValue(section, 'img_paths'))
+    .map((v) => String(v || '').trim().replace(/^"|"$/g, ''))
+    .filter(Boolean);
+  if (!allPaths.length) return null;
+  const fileName = allPaths[Math.max(0, Math.min(cultureIndex, allPaths.length - 1))];
+  if (!fileName) return null;
+  const customW = Number.parseInt(getFieldValue(section, 'custom_width') || '', 10);
+  const customH = Number.parseInt(getFieldValue(section, 'custom_height') || '', 10);
+  const cellW = Number.isFinite(customW) && customW > 0 ? customW : 128;
+  const cellH = Number.isFinite(customH) && customH > 0 ? customH : 64;
+  const cropKey = JSON.stringify({
+    kind: 'district-cell',
+    c3xPath: state.settings.c3xPath,
+    fileName,
+    row: eraIndex,
+    col: buildingCol,
+    w: cellW,
+    h: cellH
+  });
+  const cached = state.previewCache.get(cropKey);
+  if (cached) return cached;
+  const result = await window.c3xManager.getPreview({
+    kind: 'district',
+    c3xPath: state.settings.c3xPath,
+    fileName,
+    crop: { row: eraIndex, col: buildingCol, w: cellW, h: cellH }
+  });
+  if (!result || !result.ok) return null;
+  setPreviewCache(cropKey, result);
+  return result;
+}
+
 function loadDistrictRepresentativePreview(section, holder, canvasSize = 28, onLoaded = null) {
   if (!holder) return;
   holder.innerHTML = '';
@@ -25096,8 +25175,76 @@ function loadNaturalWonderThumbnail(section, holder, canvasSize = 35) {
 
 function renderDistrictRepresentativePreviewCard(section, previewWrap, titleForFocus = 'District Art') {
   if (!previewWrap) return;
+
+  const varyByEra = getFieldValue(section, 'vary_img_by_era') === '1';
+  const varyByCulture = getFieldValue(section, 'vary_img_by_culture') === '1';
+  const depImprovs = tokenizeListPreservingQuotes(getFieldValue(section, 'dependent_improvs') || '')
+    .map((v) => String(v || '').trim().replace(/^"|"$/g, ''))
+    .filter(Boolean);
+  const numBuildings = depImprovs.length;
+
+  const ERA_NAMES = ['Ancient', 'Middle Ages', 'Industrial', 'Modern'];
+  const CULTURE_NAMES = ['American', 'European', 'Roman', 'Mideast', 'Asian'];
+
+  const sel = { eraIndex: 0, cultureIndex: 0, buildingCol: 0 };
+  const pickerButtonsByRow = {};
+
   const card = document.createElement('div');
   card.className = 'preview-card district-representative-preview-card';
+
+  const showPicker = varyByEra || varyByCulture || numBuildings > 0;
+  if (showPicker) {
+    const picker = document.createElement('div');
+    picker.className = 'district-preview-picker';
+
+    const makePickerRow = (label, options, selKey, iconFactory = null) => {
+      const row = document.createElement('div');
+      row.className = 'district-preview-picker-row';
+      const lbl = document.createElement('span');
+      lbl.className = 'district-preview-picker-label';
+      lbl.textContent = label;
+      row.appendChild(lbl);
+      const btns = document.createElement('div');
+      btns.className = 'district-preview-picker-btns';
+      const btnEls = [];
+      options.forEach((optLabel, idx) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'district-preview-picker-btn';
+        if (iconFactory) btn.classList.add('has-icon');
+        if (idx === sel[selKey]) btn.classList.add('active');
+        const icon = iconFactory ? iconFactory(optLabel, idx) : null;
+        if (icon) btn.appendChild(icon);
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = optLabel;
+        btn.appendChild(labelSpan);
+        btn.addEventListener('click', () => {
+          btnEls.forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          sel[selKey] = idx;
+          refreshPreview();
+        });
+        btns.appendChild(btn);
+        btnEls.push(btn);
+      });
+      row.appendChild(btns);
+      pickerButtonsByRow[selKey] = btnEls;
+      return row;
+    };
+
+    if (varyByEra) picker.appendChild(makePickerRow('Era', ERA_NAMES, 'eraIndex'));
+    if (varyByCulture) picker.appendChild(makePickerRow('Culture', CULTURE_NAMES, 'cultureIndex'));
+    if (numBuildings > 0) {
+      const buildingLabels = ['None', ...depImprovs];
+      picker.appendChild(makePickerRow('Buildings', buildingLabels, 'buildingCol', (optLabel, idx) => {
+        if (idx === 0) return null;
+        return makeImprovementOptionPreviewIcon(optLabel);
+      }));
+    }
+
+    card.appendChild(picker);
+  }
+
   const frame = document.createElement('div');
   frame.className = 'section-art-soft-frame';
   const canvas = document.createElement('canvas');
@@ -25109,21 +25256,77 @@ function renderDistrictRepresentativePreviewCard(section, previewWrap, titleForF
   frame.appendChild(canvas);
   card.appendChild(frame);
   previewWrap.appendChild(card);
+
   let loadedPreview = null;
-  fetchDistrictRepresentativePreview(section)
-    .then((preview) => {
-      if (!preview || !canvas.isConnected) return;
+  let previewGeneration = 0;
+
+  function refreshPreview() {
+    const gen = ++previewGeneration;
+    fetchDistrictCellPreview(section, {
+      cultureIndex: sel.cultureIndex,
+      eraIndex: sel.eraIndex,
+      buildingCol: sel.buildingCol,
+    }).then((preview) => {
+      if (gen !== previewGeneration || !preview || !canvas.isConnected) return;
       loadedPreview = preview;
       canvas.width = preview.width;
       canvas.height = preview.height;
       drawPreviewFrameToCanvas(preview, canvas);
-    })
-    .catch(() => {});
-  card.addEventListener('click', (ev) => {
+    }).catch(() => {});
+  }
+
+  frame.addEventListener('click', (ev) => {
     ev.preventDefault();
     if (!loadedPreview) return;
     openArtFocusWithPreview(loadedPreview, titleForFocus, loadedPreview.sourcePath || '');
   });
+
+  // Initial draw: use the proven representative preview (auto-detects the best row/col).
+  // Skip if the user has already interacted with the picker (previewGeneration > 0).
+  fetchDistrictRepresentativePreview(section).then((preview) => {
+    if (previewGeneration > 0 || !preview || !canvas.isConnected) return;
+    loadedPreview = preview;
+    canvas.width = preview.width;
+    canvas.height = preview.height;
+    drawPreviewFrameToCanvas(preview, canvas);
+  }).catch(() => {});
+
+  // Auto-detect picker defaults to match the representative preview — no draw needed here.
+  if ((varyByEra || numBuildings > 0) && state.settings && state.settings.c3xPath) {
+    const spec = getDistrictPreviewSpec(section);
+    if (spec) {
+      const fullKey = JSON.stringify({
+        kind: 'district-full',
+        c3xPath: state.settings.c3xPath,
+        fileName: spec.fileName
+      });
+      (async () => {
+        let fullPreview = state.previewCache.get(fullKey) || null;
+        if (!fullPreview) {
+          const full = await window.c3xManager.getPreview({
+            kind: 'district',
+            c3xPath: state.settings.c3xPath,
+            fileName: spec.fileName
+          });
+          if (!full || !full.ok) return;
+          fullPreview = full;
+          setPreviewCache(fullKey, fullPreview);
+        }
+        const detectedRow = findLastNonTransparentDistrictRow(fullPreview, spec);
+        const detectedCol = findRightMostNonTransparentDistrictColumn(fullPreview, spec, detectedRow);
+        if (varyByEra) {
+          sel.eraIndex = detectedRow;
+          const eraBtns = pickerButtonsByRow['eraIndex'];
+          if (eraBtns) eraBtns.forEach((b, i) => b.classList.toggle('active', i === detectedRow));
+        }
+        if (numBuildings > 0) {
+          sel.buildingCol = detectedCol;
+          const bldBtns = pickerButtonsByRow['buildingCol'];
+          if (bldBtns) bldBtns.forEach((b, i) => b.classList.toggle('active', i === detectedCol));
+        }
+      })().catch(() => {});
+    }
+  }
 }
 
 function normalizeOptionLookupToken(value) {
@@ -25173,6 +25376,22 @@ function findDistrictSectionByName(name) {
     const displayName = normalizeConfigToken(getDistrictSectionDisplay(section, index).primary).toLowerCase();
     return internalName === target || displayName === target;
   }) || null;
+}
+
+function findImprovementEntryByName(name) {
+  const normalized = normalizeConfigToken(name);
+  if (!normalized) return null;
+  const options = getNamedReferenceOptionsForTab('improvements');
+  const opt = options.find((o) => normalizeConfigToken(o.value) === normalized);
+  return opt ? opt.entry : null;
+}
+
+function makeImprovementOptionPreviewIcon(name) {
+  const holder = document.createElement('span');
+  holder.className = 'improvement-option-chip-thumb';
+  const entry = findImprovementEntryByName(name);
+  if (entry) loadReferenceListThumbnail('improvements', entry, holder);
+  return holder;
 }
 
 function makeDistrictOptionPreviewIcon(optionName) {
@@ -26577,7 +26796,7 @@ function renderSectionTab(tab, tabKey) {
     })();
 
     const previewFieldKeysByTab = {
-      districts: new Set(['img_paths', 'custom_width', 'custom_height']),
+      districts: new Set(['img_paths', 'custom_width', 'custom_height', 'vary_img_by_era', 'vary_img_by_culture', 'dependent_improvs']),
       wonders: new Set(['img_path', 'img_row', 'img_column', 'img_construct_row', 'img_construct_column', 'enable_img_alt_dir', 'img_alt_dir_construct_row', 'img_alt_dir_construct_column', 'img_alt_dir_row', 'img_alt_dir_column', 'custom_width', 'custom_height']),
       naturalWonders: new Set(['img_path', 'img_row', 'img_column', 'animation', 'custom_width', 'custom_height']),
       animations: new Set(['ini_path', 'frame_time_seconds'])
@@ -26791,7 +27010,8 @@ function renderActiveTab(options = {}) {
 }
 
 async function loadBundleAndRender(options = {}) {
-  if (state.isLoading) {
+  const reuseLoadingUi = options && options.reuseLoadingUi === true;
+  if (state.isLoading && !reuseLoadingUi) {
     state.pendingAutoReload = true;
     return;
   }

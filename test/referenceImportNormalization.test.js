@@ -54,6 +54,7 @@ function loadRendererImportHelpers(targetBundle) {
     'getBiqFieldByBaseKey',
     'buildNewReferenceEntryFromTemplate',
     'getImportReferenceIndexMap',
+    'getTargetReferenceEntries',
     'getTargetReferenceIndexByKey',
     'normalizeImportedIndexedListField',
     'normalizeImportedScalarReferenceField',
@@ -144,6 +145,15 @@ test('technology import remaps prerequisite tech indices by civilopedia key', ()
           makeEntry('TECH_ALPHA', 10),
           makeEntry('TECH_GAMMA', 12)
         ]
+      },
+      rules: {
+        sections: [{
+          code: 'ERAS',
+          records: [
+            makeEntry('ERA_ALPHA', 4),
+            makeEntry('ERA_GAMMA', 7)
+          ]
+        }]
       }
     }
   };
@@ -153,6 +163,11 @@ test('technology import remaps prerequisite tech indices by civilopedia key', ()
     biqIndex: 40,
     name: 'Imported Tech',
     _importReferenceIndexMaps: {
+      eras: [
+        { index: 0, civilopediaKey: 'ERA_ALPHA', name: 'Alpha Era' },
+        { index: 1, civilopediaKey: 'ERA_BETA', name: 'Beta Era' },
+        { index: 2, civilopediaKey: 'ERA_GAMMA', name: 'Gamma Era' }
+      ],
       technologies: [
         { index: 1, civilopediaKey: 'TECH_ALPHA' },
         { index: 2, civilopediaKey: 'TECH_BETA' },
@@ -161,6 +176,7 @@ test('technology import remaps prerequisite tech indices by civilopedia key', ()
     },
     biqFields: [
       makeField('civilopediaentry', 'TECH_SOURCE', { editable: false }),
+      makeField('era', '2'),
       makeField('prerequisite1', '1'),
       makeField('prerequisite2', '2'),
       makeField('prerequisite3', '3'),
@@ -168,6 +184,7 @@ test('technology import remaps prerequisite tech indices by civilopedia key', ()
     ]
   }, 'TECH_IMPORTED');
 
+  assert.equal(imported.biqFields.find((field) => field.baseKey === 'era').value, '7');
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'prerequisite1').value, '10');
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'prerequisite2').value, 'None');
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'prerequisite3').value, '12');
@@ -311,6 +328,37 @@ test('government import remaps prerequisite technology and relation rows by civi
     .filter((field) => field.baseKey === 'canbribe' || field.baseKey === 'resistancemodifier' || field.baseKey === 'briberymodifier')
     .map((field) => field.value);
   assert.deepEqual(Array.from(relationValues), ['1', '11', '21', '3', '13', '23']);
+});
+
+test('government import remaps immuneto by civilopedia key', () => {
+  const targetBundle = {
+    tabs: {
+      rules: {
+        sections: [{
+          code: 'ESPN',
+          records: [makeEntry('ESPN_ALPHA', 2)]
+        }]
+      }
+    }
+  };
+
+  const imported = buildImportedEntry(targetBundle, 'governments', {
+    civilopediaKey: 'GOVT_SOURCE',
+    biqIndex: 9,
+    name: 'Imported Government',
+    _importReferenceIndexMaps: {
+      espionage: [
+        { index: 10, civilopediaKey: 'ESPN_ALPHA' },
+        { index: 11, civilopediaKey: 'ESPN_BETA' }
+      ]
+    },
+    biqFields: [
+      makeField('civilopediaentry', 'GOVT_SOURCE', { editable: false }),
+      makeField('immuneto', '10')
+    ]
+  }, 'GOVT_IMPORTED');
+
+  assert.equal(imported.biqFields.find((field) => field.baseKey === 'immuneto').value, '2');
 });
 
 test('improvement import remaps unit, tech, resource, improvement, and government refs by civilopedia key', () => {

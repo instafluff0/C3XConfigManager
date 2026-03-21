@@ -3322,6 +3322,11 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const govtRemap = remaps.get('GOVT');
   const prtoRemap = remaps.get('PRTO');
   const raceRemap = remaps.get('RACE');
+  const erasRemap = remaps.get('ERAS');
+  const diffRemap = remaps.get('DIFF');
+  const espnRemap = remaps.get('ESPN');
+  const tfrmRemap = remaps.get('TFRM');
+  const terrRemap = remaps.get('TERR');
   const markModified = (section) => {
     if (section) section._modified = true;
   };
@@ -3348,18 +3353,20 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   }
 
   const techSection = getSectionByCode(parsed, 'TECH');
-  if (techSection && Array.isArray(techSection.records) && techRemap) {
+  if (techSection && Array.isArray(techSection.records)) {
     techSection.records.forEach((rec, index) => {
-      rec.prerequisites = remapDeletedSectionList(ensureArraySize(rec.prerequisites, 4, -1), techRemap, -1);
+      if (techRemap) rec.prerequisites = remapDeletedSectionList(ensureArraySize(rec.prerequisites, 4, -1), techRemap, -1);
+      if (erasRemap) rec.era = remapDeletedSectionIndex(rec.era, erasRemap, -1);
       rec.index = index;
     });
-    markModified(techSection);
+    if (techRemap || erasRemap) markModified(techSection);
   }
 
   const govtSection = getSectionByCode(parsed, 'GOVT');
   if (govtSection && Array.isArray(govtSection.records)) {
     govtSection.records.forEach((rec, index) => {
       if (techRemap) rec.prerequisiteTechnology = remapDeletedSectionIndex(rec.prerequisiteTechnology, techRemap, -1);
+      if (espnRemap) rec.immuneTo = remapDeletedSectionIndex(rec.immuneTo, espnRemap, -1);
       rec.index = index;
     });
     if (govtRemap) {
@@ -3378,7 +3385,15 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
         rec.numGovts = rec.relations.length;
       });
     }
-    if (techRemap || govtRemap) markModified(govtSection);
+    if (techRemap || govtRemap || espnRemap) markModified(govtSection);
+  }
+
+  const ctznSection = getSectionByCode(parsed, 'CTZN');
+  if (ctznSection && Array.isArray(ctznSection.records) && techRemap) {
+    ctznSection.records.forEach((rec) => {
+      rec.prerequisite = remapDeletedSectionIndex(rec.prerequisite, techRemap, -1);
+    });
+    markModified(ctznSection);
   }
 
   const bldgSection = getSectionByCode(parsed, 'BLDG');
@@ -3428,6 +3443,9 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const ruleSection = getSectionByCode(parsed, 'RULE');
   if (ruleSection && Array.isArray(ruleSection.records)) {
     ruleSection.records.forEach((rec) => {
+      if (diffRemap && Object.prototype.hasOwnProperty.call(rec, 'defaultDifficultyLevel')) {
+        rec.defaultDifficultyLevel = remapDeletedSectionIndex(rec.defaultDifficultyLevel, diffRemap, -1);
+      }
       if (goodRemap) rec.defaultMoneyResource = remapDeletedSectionIndex(rec.defaultMoneyResource, goodRemap, -1);
       if (prtoRemap) {
         [
@@ -3438,17 +3456,52 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
         });
       }
     });
-    if (goodRemap || prtoRemap) markModified(ruleSection);
+    if (diffRemap || goodRemap || prtoRemap) markModified(ruleSection);
   }
 
   const terrSection = getSectionByCode(parsed, 'TERR');
-  if (terrSection && Array.isArray(terrSection.records) && goodRemap) {
+  if (terrSection && Array.isArray(terrSection.records)) {
     terrSection.records.forEach((rec) => {
-      const next = shiftPossibleResourcesMask(rec.possibleResources, rec.numTotalResources, goodRemap);
-      rec.numTotalResources = next.numTotalResources;
-      rec.possibleResources = next.possibleResources;
+      if (goodRemap) {
+        const next = shiftPossibleResourcesMask(rec.possibleResources, rec.numTotalResources, goodRemap);
+        rec.numTotalResources = next.numTotalResources;
+        rec.possibleResources = next.possibleResources;
+      }
+      if (tfrmRemap) rec.workerJob = remapDeletedSectionIndex(rec.workerJob, tfrmRemap, -1);
+      if (terrRemap) rec.pollutionEffect = remapDeletedSectionIndex(rec.pollutionEffect, terrRemap, -1);
     });
-    markModified(terrSection);
+    if (goodRemap || tfrmRemap || terrRemap) markModified(terrSection);
+  }
+
+  const gameSection = getSectionByCode(parsed, 'GAME');
+  if (gameSection && Array.isArray(gameSection.records) && raceRemap) {
+    gameSection.records.forEach((rec) => {
+      const oldPlayable = Array.isArray(rec.playableCivIds) ? rec.playableCivIds : [];
+      const oldAlliances = Array.isArray(rec.civPartOfWhichAlliance) ? rec.civPartOfWhichAlliance : [];
+      const nextPlayable = [];
+      const nextAlliances = [];
+      oldPlayable.forEach((civId, index) => {
+        const nextCivId = remapDeletedSectionIndex(civId, raceRemap, null);
+        if (!Number.isFinite(nextCivId) || nextCivId < 0) return;
+        nextPlayable.push(nextCivId);
+        nextAlliances.push(oldAlliances[index] != null ? oldAlliances[index] : 4);
+      });
+      rec.playableCivIds = nextPlayable;
+      rec.civPartOfWhichAlliance = nextAlliances;
+    });
+    markModified(gameSection);
+  }
+
+  const tfrmSection = getSectionByCode(parsed, 'TFRM');
+  if (tfrmSection && Array.isArray(tfrmSection.records)) {
+    tfrmSection.records.forEach((rec) => {
+      if (techRemap) rec.requiredAdvance = remapDeletedSectionIndex(rec.requiredAdvance, techRemap, -1);
+      if (goodRemap) {
+        rec.requiredResource1 = remapDeletedSectionIndex(rec.requiredResource1, goodRemap, -1);
+        rec.requiredResource2 = remapDeletedSectionIndex(rec.requiredResource2, goodRemap, -1);
+      }
+    });
+    if (techRemap || goodRemap) markModified(tfrmSection);
   }
 
   const citySection = getSectionByCode(parsed, 'CITY');
@@ -3472,7 +3525,10 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   if (leadSection && Array.isArray(leadSection.records)) {
     leadSection.records.forEach((rec) => {
       if (techRemap) rec.techIndices = remapDeletedSectionList(Array.isArray(rec.techIndices) ? rec.techIndices : [], techRemap, -1).filter((value) => Number.isFinite(value) && value >= 0);
+      if (raceRemap) rec.civ = remapDeletedSectionIndex(rec.civ, raceRemap, -1);
       if (govtRemap) rec.government = remapDeletedSectionIndex(rec.government, govtRemap, -1);
+      if (diffRemap) rec.difficulty = remapDeletedSectionIndex(rec.difficulty, diffRemap, -1);
+      if (erasRemap) rec.initialEra = remapDeletedSectionIndex(rec.initialEra, erasRemap, -1);
       if (prtoRemap) {
         rec.startUnits = (Array.isArray(rec.startUnits) ? rec.startUnits : [])
           .map((entry) => ({
@@ -3484,7 +3540,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       }
       if (techRemap) rec.numStartTechs = Array.isArray(rec.techIndices) ? rec.techIndices.length : 0;
     });
-    if (techRemap || govtRemap || prtoRemap) markModified(leadSection);
+    if (techRemap || raceRemap || govtRemap || diffRemap || erasRemap || prtoRemap) markModified(leadSection);
   }
 
   return { ok: true };

@@ -864,6 +864,14 @@ button:disabled {
   width: 100%;
 }
 
+.entity-path-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.entity-path-row button {
+  white-space: nowrap;
+}
+
 .entity-import-toolbar {
   display: flex;
   align-items: center;
@@ -5640,4 +5648,96 @@ details > summary:focus-visible {
   .art-path-row {
     grid-template-columns: 1fr;
   }
+}
+
+/* District preview picker (PyTorch-style selector) */
+.district-preview-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 6px;
+  background: rgba(244, 246, 253, 0.7);
+  border: 1px solid rgba(73, 69, 98, 0.13);
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+}
+
+.district-preview-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.district-preview-picker-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--ink-dim);
+  min-width: 58px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.district-preview-picker-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.district-preview-picker-btn {
+  font-size: 0.72rem;
+  font-family: inherit;
+  padding: 3px 9px;
+  border-radius: 5px;
+  border: 1px solid rgba(73, 69, 98, 0.22);
+  background: #fff;
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  line-height: 1.4;
+}
+
+.district-preview-picker-btn:hover {
+  background: rgba(73, 69, 98, 0.08);
+  border-color: rgba(73, 69, 98, 0.4);
+  color: var(--ink);
+}
+
+.district-preview-picker-btn.active {
+  background: #5b5490;
+  border-color: #5b5490;
+  color: #fff;
+  font-weight: 600;
+}
+
+.district-preview-picker-btn.has-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.improvement-option-chip-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid rgba(73, 69, 98, 0.15);
+  background: rgba(255, 255, 255, 0.8);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.improvement-option-chip-thumb .entry-thumb-canvas {
+  width: 16px;
+  height: 16px;
+}
+
+.district-representative-preview-card .section-art-soft-frame {
+  border-radius: 0 0 10px 10px;
+}
+
+.district-representative-preview-card:not(:has(.district-preview-picker)) .section-art-soft-frame {
+  border-radius: 10px;
 }

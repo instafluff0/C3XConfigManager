@@ -1,0 +1,116 @@
+'use strict';
+
+const DELETE_REFERENCE_INVENTORY = [
+  { id: 'delete-tech-good-prerequisite', targetSection: 'TECH', sectionCode: 'GOOD', field: 'prerequisite', kind: 'scalar' },
+  { id: 'delete-tech-race-freetechs', targetSection: 'TECH', sectionCode: 'RACE', field: 'freeTechs', kind: 'fixed-list' },
+  { id: 'delete-tech-govt-prerequisite', targetSection: 'TECH', sectionCode: 'GOVT', field: 'prerequisiteTechnology', kind: 'scalar' },
+  { id: 'delete-tech-ctzn-prerequisite', targetSection: 'TECH', sectionCode: 'CTZN', field: 'prerequisite', kind: 'scalar' },
+  { id: 'delete-tech-prto-requiredtech', targetSection: 'TECH', sectionCode: 'PRTO', field: 'requiredTech', kind: 'scalar' },
+  { id: 'delete-tech-bldg-reqadvance', targetSection: 'TECH', sectionCode: 'BLDG', field: 'reqAdvance', kind: 'scalar' },
+  { id: 'delete-tech-bldg-obsoleteby', targetSection: 'TECH', sectionCode: 'BLDG', field: 'obsoleteBy', kind: 'scalar' },
+  { id: 'delete-tech-tech-prerequisites', targetSection: 'TECH', sectionCode: 'TECH', field: 'prerequisites', kind: 'fixed-list' },
+  { id: 'delete-tech-lead-techindices', targetSection: 'TECH', sectionCode: 'LEAD', field: 'techIndices', kind: 'list' },
+  { id: 'delete-tech-tfrm-requiredadvance', targetSection: 'TECH', sectionCode: 'TFRM', field: 'requiredAdvance', kind: 'scalar' },
+  { id: 'delete-eras-tech-era', targetSection: 'ERAS', sectionCode: 'TECH', field: 'era', kind: 'scalar' },
+
+  { id: 'delete-good-prto-requiredresource1', targetSection: 'GOOD', sectionCode: 'PRTO', field: 'requiredResource1', kind: 'scalar' },
+  { id: 'delete-good-prto-requiredresource2', targetSection: 'GOOD', sectionCode: 'PRTO', field: 'requiredResource2', kind: 'scalar' },
+  { id: 'delete-good-prto-requiredresource3', targetSection: 'GOOD', sectionCode: 'PRTO', field: 'requiredResource3', kind: 'scalar' },
+  { id: 'delete-good-bldg-reqresource1', targetSection: 'GOOD', sectionCode: 'BLDG', field: 'reqResource1', kind: 'scalar' },
+  { id: 'delete-good-bldg-reqresource2', targetSection: 'GOOD', sectionCode: 'BLDG', field: 'reqResource2', kind: 'scalar' },
+  { id: 'delete-good-rule-defaultmoneyresource', targetSection: 'GOOD', sectionCode: 'RULE', field: 'defaultMoneyResource', kind: 'scalar' },
+  { id: 'delete-good-terr-possibleresources', targetSection: 'GOOD', sectionCode: 'TERR', field: 'possibleResources', kind: 'mask' },
+  { id: 'delete-good-tfrm-requiredresource1', targetSection: 'GOOD', sectionCode: 'TFRM', field: 'requiredResource1', kind: 'scalar' },
+  { id: 'delete-good-tfrm-requiredresource2', targetSection: 'GOOD', sectionCode: 'TFRM', field: 'requiredResource2', kind: 'scalar' },
+
+  { id: 'delete-bldg-bldg-gainineverycity', targetSection: 'BLDG', sectionCode: 'BLDG', field: 'gainInEveryCity', kind: 'scalar' },
+  { id: 'delete-bldg-bldg-gainoncontinent', targetSection: 'BLDG', sectionCode: 'BLDG', field: 'gainOnContinent', kind: 'scalar' },
+  { id: 'delete-bldg-bldg-reqimprovement', targetSection: 'BLDG', sectionCode: 'BLDG', field: 'reqImprovement', kind: 'scalar' },
+  { id: 'delete-bldg-bldg-doubleshappiness', targetSection: 'BLDG', sectionCode: 'BLDG', field: 'doublesHappiness', kind: 'scalar' },
+  { id: 'delete-bldg-city-buildings', targetSection: 'BLDG', sectionCode: 'CITY', field: 'buildings', kind: 'list' },
+  { id: 'delete-bldg-prto-legalbuildingtelepads', targetSection: 'BLDG', sectionCode: 'PRTO', field: 'legalBuildingTelepads', kind: 'list' },
+
+  { id: 'delete-govt-race-favoritegovernment', targetSection: 'GOVT', sectionCode: 'RACE', field: 'favoriteGovernment', kind: 'scalar' },
+  { id: 'delete-govt-race-shunnedgovernment', targetSection: 'GOVT', sectionCode: 'RACE', field: 'shunnedGovernment', kind: 'scalar' },
+  { id: 'delete-govt-bldg-reqgovernment', targetSection: 'GOVT', sectionCode: 'BLDG', field: 'reqGovernment', kind: 'scalar' },
+  { id: 'delete-govt-lead-government', targetSection: 'GOVT', sectionCode: 'LEAD', field: 'government', kind: 'scalar' },
+  { id: 'delete-espn-govt-immuneto', targetSection: 'ESPN', sectionCode: 'GOVT', field: 'immuneTo', kind: 'scalar' },
+  { id: 'delete-govt-govt-relations', targetSection: 'GOVT', sectionCode: 'GOVT', field: 'relations', kind: 'relation-table' },
+
+  { id: 'delete-prto-prto-upgradeto', targetSection: 'PRTO', sectionCode: 'PRTO', field: 'upgradeTo', kind: 'scalar' },
+  { id: 'delete-prto-prto-enslaveresultsin', targetSection: 'PRTO', sectionCode: 'PRTO', field: 'enslaveResultsIn', kind: 'scalar' },
+  { id: 'delete-prto-prto-legalunittelepads', targetSection: 'PRTO', sectionCode: 'PRTO', field: 'legalUnitTelepads', kind: 'list' },
+  { id: 'delete-prto-prto-stealthtargets', targetSection: 'PRTO', sectionCode: 'PRTO', field: 'stealthTargets', kind: 'list' },
+  { id: 'delete-prto-race-kingunit', targetSection: 'PRTO', sectionCode: 'RACE', field: 'kingUnit', kind: 'scalar' },
+  { id: 'delete-prto-bldg-unitproduced', targetSection: 'PRTO', sectionCode: 'BLDG', field: 'unitProduced', kind: 'scalar' },
+  { id: 'delete-prto-rule-advancedbarbarian', targetSection: 'PRTO', sectionCode: 'RULE', field: 'advancedBarbarian', kind: 'scalar' },
+  { id: 'delete-prto-rule-basicbarbarian', targetSection: 'PRTO', sectionCode: 'RULE', field: 'basicBarbarian', kind: 'scalar' },
+  { id: 'delete-prto-rule-barbarianseaunit', targetSection: 'PRTO', sectionCode: 'RULE', field: 'barbarianSeaUnit', kind: 'scalar' },
+  { id: 'delete-prto-rule-battlecreatedunit', targetSection: 'PRTO', sectionCode: 'RULE', field: 'battleCreatedUnit', kind: 'scalar' },
+  { id: 'delete-prto-rule-buildarmyunit', targetSection: 'PRTO', sectionCode: 'RULE', field: 'buildArmyUnit', kind: 'scalar' },
+  { id: 'delete-prto-rule-scout', targetSection: 'PRTO', sectionCode: 'RULE', field: 'scout', kind: 'scalar' },
+  { id: 'delete-prto-rule-slave', targetSection: 'PRTO', sectionCode: 'RULE', field: 'slave', kind: 'scalar' },
+  { id: 'delete-prto-rule-startunit1', targetSection: 'PRTO', sectionCode: 'RULE', field: 'startUnit1', kind: 'scalar' },
+  { id: 'delete-prto-rule-startunit2', targetSection: 'PRTO', sectionCode: 'RULE', field: 'startUnit2', kind: 'scalar' },
+  { id: 'delete-prto-rule-flagunit', targetSection: 'PRTO', sectionCode: 'RULE', field: 'flagUnit', kind: 'scalar' },
+  { id: 'delete-prto-lead-startunits', targetSection: 'PRTO', sectionCode: 'LEAD', field: 'startUnits', kind: 'object-list' },
+  { id: 'delete-prto-unit-prtonumber', targetSection: 'PRTO', sectionCode: 'UNIT', field: 'pRTONumber', kind: 'scalar' },
+
+  { id: 'delete-race-prto-availableto', targetSection: 'RACE', sectionCode: 'PRTO', field: 'availableTo', kind: 'bitmask' },
+  { id: 'delete-race-game-playableciv', targetSection: 'RACE', sectionCode: 'GAME', field: 'playable_civ', kind: 'scalar' },
+  { id: 'delete-race-lead-civ', targetSection: 'RACE', sectionCode: 'LEAD', field: 'civ', kind: 'scalar' },
+  { id: 'delete-diff-lead-difficulty', targetSection: 'DIFF', sectionCode: 'LEAD', field: 'difficulty', kind: 'scalar' },
+  { id: 'delete-diff-rule-defaultdifficultylevel', targetSection: 'DIFF', sectionCode: 'RULE', field: 'defaultdifficultylevel', kind: 'scalar' },
+  { id: 'delete-eras-lead-initialera', targetSection: 'ERAS', sectionCode: 'LEAD', field: 'initialera', kind: 'scalar' },
+  { id: 'delete-tfrm-terr-workerjob', targetSection: 'TFRM', sectionCode: 'TERR', field: 'workerjob', kind: 'scalar' },
+  { id: 'delete-terr-terr-pollutioneffect', targetSection: 'TERR', sectionCode: 'TERR', field: 'pollutioneffect', kind: 'scalar' }
+];
+
+const IMPORT_REFERENCE_INVENTORY = [
+  { id: 'import-tech-prerequisite1', tabKey: 'technologies', field: 'prerequisite1', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
+  { id: 'import-tech-prerequisite2', tabKey: 'technologies', field: 'prerequisite2', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
+  { id: 'import-tech-prerequisite3', tabKey: 'technologies', field: 'prerequisite3', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
+  { id: 'import-tech-prerequisite4', tabKey: 'technologies', field: 'prerequisite4', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
+  { id: 'import-tech-era', tabKey: 'technologies', field: 'era', kind: 'scalar', sourceTabKey: 'eras', targetTabKey: 'eras', status: 'covered' },
+
+  { id: 'import-good-prerequisite', tabKey: 'resources', field: 'prerequisite', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
+
+  { id: 'import-race-freetech1index', tabKey: 'civilizations', field: 'freetech1index', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
+  { id: 'import-race-freetech2index', tabKey: 'civilizations', field: 'freetech2index', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
+  { id: 'import-race-freetech3index', tabKey: 'civilizations', field: 'freetech3index', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
+  { id: 'import-race-freetech4index', tabKey: 'civilizations', field: 'freetech4index', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
+  { id: 'import-race-favoritegovernment', tabKey: 'civilizations', field: 'favoritegovernment', kind: 'scalar', sourceTabKey: 'governments', targetTabKey: 'governments', status: 'covered' },
+  { id: 'import-race-shunnedgovernment', tabKey: 'civilizations', field: 'shunnedgovernment', kind: 'scalar', sourceTabKey: 'governments', targetTabKey: 'governments', status: 'covered' },
+  { id: 'import-race-kingunit', tabKey: 'civilizations', field: 'kingunit', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+
+  { id: 'import-govt-prerequisitetechnology', tabKey: 'governments', field: 'prerequisitetechnology', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
+  { id: 'import-govt-immuneto', tabKey: 'governments', field: 'immuneto', kind: 'scalar', sourceTabKey: 'espionage', targetTabKey: 'espionage', status: 'covered' },
+  { id: 'import-govt-relations', tabKey: 'governments', field: 'performance_of_this_government_versus_government_*', kind: 'relation-table', sourceTabKey: 'governments', targetTabKey: 'governments', status: 'covered' },
+
+  { id: 'import-bldg-unitproduced', tabKey: 'improvements', field: 'unitproduced', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-bldg-reqadvance', tabKey: 'improvements', field: 'reqadvance', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
+  { id: 'import-bldg-obsoleteby', tabKey: 'improvements', field: 'obsoleteby', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
+  { id: 'import-bldg-reqresource1', tabKey: 'improvements', field: 'reqresource1', kind: 'scalar', sourceTabKey: 'resources', targetTabKey: 'resources', status: 'covered' },
+  { id: 'import-bldg-reqresource2', tabKey: 'improvements', field: 'reqresource2', kind: 'scalar', sourceTabKey: 'resources', targetTabKey: 'resources', status: 'covered' },
+  { id: 'import-bldg-reqimprovement', tabKey: 'improvements', field: 'reqimprovement', kind: 'scalar', sourceTabKey: 'improvements', targetTabKey: 'improvements', status: 'covered' },
+  { id: 'import-bldg-doubleshappiness', tabKey: 'improvements', field: 'doubleshappiness', kind: 'scalar', sourceTabKey: 'improvements', targetTabKey: 'improvements', status: 'covered' },
+  { id: 'import-bldg-gainineverycity', tabKey: 'improvements', field: 'gainineverycity', kind: 'scalar', sourceTabKey: 'improvements', targetTabKey: 'improvements', status: 'covered' },
+  { id: 'import-bldg-gainoncontinent', tabKey: 'improvements', field: 'gainoncontinent', kind: 'scalar', sourceTabKey: 'improvements', targetTabKey: 'improvements', status: 'covered' },
+  { id: 'import-bldg-reqgovernment', tabKey: 'improvements', field: 'reqgovernment', kind: 'scalar', sourceTabKey: 'governments', targetTabKey: 'governments', status: 'covered' },
+
+  { id: 'import-prto-availableto', tabKey: 'units', field: 'availableto', kind: 'bitmask', sourceTabKey: 'civilizations', targetTabKey: 'civilizations', status: 'covered' },
+  { id: 'import-prto-requiredtech', tabKey: 'units', field: 'requiredtech', kind: 'scalar', sourceTabKey: 'technologies', targetTabKey: 'technologies', status: 'covered' },
+  { id: 'import-prto-requiredresource1', tabKey: 'units', field: 'requiredresource1', kind: 'scalar', sourceTabKey: 'resources', targetTabKey: 'resources', status: 'covered' },
+  { id: 'import-prto-requiredresource2', tabKey: 'units', field: 'requiredresource2', kind: 'scalar', sourceTabKey: 'resources', targetTabKey: 'resources', status: 'covered' },
+  { id: 'import-prto-requiredresource3', tabKey: 'units', field: 'requiredresource3', kind: 'scalar', sourceTabKey: 'resources', targetTabKey: 'resources', status: 'covered' },
+  { id: 'import-prto-upgradeto', tabKey: 'units', field: 'upgradeto', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-prto-enslaveresultsin', tabKey: 'units', field: 'enslaveresultsin', kind: 'scalar', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-prto-stealthtarget', tabKey: 'units', field: 'stealth_target', kind: 'list', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-prto-legalunittelepad', tabKey: 'units', field: 'legal_unit_telepad', kind: 'list', sourceTabKey: 'units', targetTabKey: 'units', status: 'covered' },
+  { id: 'import-prto-legalbuildingtelepad', tabKey: 'units', field: 'legal_building_telepad', kind: 'list', sourceTabKey: 'improvements', targetTabKey: 'improvements', status: 'covered' }
+];
+
+module.exports = {
+  DELETE_REFERENCE_INVENTORY,
+  IMPORT_REFERENCE_INVENTORY
+};
