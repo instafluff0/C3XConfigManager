@@ -6734,6 +6734,18 @@ function resolveUnitIniValuePath(iniPath, value, fallbackIniPath = '') {
   return `${baseDir}/${normalizeRelativePath(raw)}`;
 }
 
+function dedupeStrings(values) {
+  const seen = new Set();
+  const out = [];
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const normalized = String(value || '').trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  });
+  return out;
+}
+
 function toUnitIniRelativePath(filePath, iniPath, fallbackIniPath = '') {
   const full = toSlashPath(filePath).trim();
   if (!full) return '';
@@ -10942,24 +10954,30 @@ function setUnitListFieldValues(entry, key, values) {
   const targetKey = String(key || '').trim();
   const targetCanon = targetKey.toLowerCase().replace(/[^a-z0-9]/g, '');
   const cleaned = (Array.isArray(values) ? values : []).map((v) => String(v || '').trim()).filter(Boolean);
-  let firstRemoved = null;
+  const removedFields = [];
   let insertAt = -1;
   const kept = [];
   entry.biqFields.forEach((field) => {
     const canon = canonicalBiqFieldKey(field);
     if (canon === targetCanon) {
-      if (!firstRemoved) firstRemoved = field;
+      removedFields.push(field);
       if (insertAt < 0) insertAt = kept.length;
       return;
     }
     kept.push(field);
   });
   if (insertAt < 0) insertAt = kept.length;
-  const template = firstRemoved || { baseKey: targetKey, key: targetKey, label: toFriendlyKey(targetKey) };
-  const nextFields = cleaned.map((value) => ({
-    ...template,
-    value
-  }));
+  const template = removedFields[0] || { baseKey: targetKey, key: targetKey, label: toFriendlyKey(targetKey) };
+  const preservedCount = Math.max(cleaned.length, removedFields.length);
+  const nextFields = Array.from({ length: preservedCount }, (_, idx) => {
+    const prior = removedFields[idx] || template;
+    const value = idx < cleaned.length ? cleaned[idx] : '';
+    return {
+      ...prior,
+      value,
+      originalValue: String(prior && prior.originalValue || '')
+    };
+  });
   kept.splice(insertAt, 0, ...nextFields);
   entry.biqFields = kept;
   if (targetCanon === 'stealthtarget') {
@@ -16060,11 +16078,11 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
   } else if (mode === 'import') {
     entry.biqFields = entry.biqFields.map((field) => ({
       ...field,
-      originalValue: ''
+      originalValue: (tabKey === 'units' || tabKey === 'improvements')
+        ? String(field && field.value || '')
+        : ''
     }));
-    if (tabKey === 'units') {
-      normalizeImportedUnitReferenceFields(entry);
-    }
+    normalizeImportedReferenceFields(tabKey, entry);
   } else {
     entry.biqFields = entry.biqFields.map((field) => ({
       ...field,
@@ -16179,15 +16197,19 @@ async function loadImportEntriesForTab(tabKey, filePath) {
   const importScenarioPaths = Array.isArray(loaded.scenarioSearchPaths) ? loaded.scenarioSearchPaths : [];
   const buildReferenceIndexMap = (entries) => (Array.isArray(entries) ? entries : []).map((entry, fallbackIdx) => ({
     index: Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : fallbackIdx,
-    civilopediaKey: String(entry && entry.civilopediaKey || '').trim().toUpperCase()
-  })).filter((item) => Number.isFinite(item.index) && item.index >= 0 && item.civilopediaKey);
+    civilopediaKey: String(entry && entry.civilopediaKey || '').trim().toUpperCase(),
+    name: String(entry && entry.name || '').trim()
+  })).filter((item) => Number.isFinite(item.index) && item.index >= 0 && (item.civilopediaKey || item.name));
   return {
     entries: srcTab.entries,
     diplomacySlots: srcTab.diplomacySlots || [],
     importScenarioPaths,
     referenceIndexMaps: {
       civilizations: buildReferenceIndexMap(loaded.tabs.civilizations && loaded.tabs.civilizations.entries),
+      technologies: buildReferenceIndexMap(loaded.tabs.technologies && loaded.tabs.technologies.entries),
+      resources: buildReferenceIndexMap(loaded.tabs.resources && loaded.tabs.resources.entries),
       improvements: buildReferenceIndexMap(loaded.tabs.improvements && loaded.tabs.improvements.entries),
+      governments: buildReferenceIndexMap(loaded.tabs.governments && loaded.tabs.governments.entries),
       units: buildReferenceIndexMap(loaded.tabs.units && loaded.tabs.units.entries)
     }
   };
@@ -16212,6 +16234,22 @@ function getTargetReferenceIndexByKey(tabKey) {
   return out;
 }
 
+function getTargetReferenceIndexByName(tabKey) {
+  const tab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
+  const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+  const out = new Map();
+  const dupes = new Set();
+  entries.forEach((entry, fallbackIdx) => {
+    const name = String(entry && entry.name || '').trim();
+    const index = Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : fallbackIdx;
+    if (!name || !Number.isFinite(index) || index < 0) return;
+    if (dupes.has(name)) return;
+    if (out.has(name)) { out.delete(name); dupes.add(name); return; }
+    out.set(name, index);
+  });
+  return out;
+}
+
 function normalizeImportedIndexedListField(entry, {
   candidateKeys,
   fallbackKey,
@@ -16220,18 +16258,31 @@ function normalizeImportedIndexedListField(entry, {
 }) {
   const sourceValues = getUnitListFieldState(entry, candidateKeys, fallbackKey);
   if (!sourceValues.values.length) return;
-  const sourceIndexToKey = new Map(
-    getImportReferenceIndexMap(entry && entry._importReferenceIndexMaps, sourceTabKey)
-      .map((item) => [String(item.index), item.civilopediaKey])
+  const sourceItems = getImportReferenceIndexMap(entry && entry._importReferenceIndexMaps, sourceTabKey);
+  const sourceIndexToKey = new Map(sourceItems.map((item) => [String(item.index), item.civilopediaKey]));
+  const sourceIndexToName = new Map(
+    sourceItems.filter((item) => item.name).map((item) => [String(item.index), item.name])
   );
   const targetIndexByKey = getTargetReferenceIndexByKey(targetTabKey);
+  const targetIndexByName = getTargetReferenceIndexByName(targetTabKey);
   const remapped = [];
   sourceValues.values.forEach((value) => {
-    const key = sourceIndexToKey.get(String(value).trim());
-    if (!key) return;
-    const targetIndex = targetIndexByKey.get(key);
-    if (!Number.isFinite(targetIndex) || targetIndex < 0) return;
-    remapped.push(String(targetIndex));
+    const srcKey = String(value).trim();
+    const civKey = sourceIndexToKey.get(srcKey);
+    if (civKey) {
+      const targetIndex = targetIndexByKey.get(civKey);
+      if (Number.isFinite(targetIndex) && targetIndex >= 0) {
+        remapped.push(String(targetIndex));
+        return;
+      }
+    }
+    const name = sourceIndexToName.get(srcKey);
+    if (name) {
+      const targetIndex = targetIndexByName.get(name);
+      if (Number.isFinite(targetIndex) && targetIndex >= 0) {
+        remapped.push(String(targetIndex));
+      }
+    }
   });
   setUnitListFieldValues(entry, sourceValues.key, dedupeStrings(remapped));
 }
@@ -16253,9 +16304,220 @@ function normalizeImportedUnitAvailableTo(entry) {
   field.value = encodeAvailableToFromIndices(dedupeStrings(remapped));
 }
 
+function normalizeImportedScalarReferenceField(entry, {
+  candidateKeys,
+  sourceTabKey,
+  targetTabKey
+}) {
+  const keys = Array.isArray(candidateKeys) ? candidateKeys : [candidateKeys];
+  const field = keys.map((key) => getBiqFieldByBaseKey(entry, key)).find(Boolean);
+  if (!field) return;
+  const sourceIndex = parseIntFromDisplayValue(field.value);
+  if (!Number.isFinite(sourceIndex) || sourceIndex < 0) {
+    field.value = 'None';
+    return;
+  }
+  const sourceIndexToKey = new Map(
+    getImportReferenceIndexMap(entry && entry._importReferenceIndexMaps, sourceTabKey)
+      .map((item) => [Number(item.index), item.civilopediaKey])
+      .filter(([index, key]) => Number.isFinite(index) && index >= 0 && key)
+  );
+  const targetIndexByKey = getTargetReferenceIndexByKey(targetTabKey);
+  const sourceKey = sourceIndexToKey.get(sourceIndex);
+  const targetIndex = sourceKey ? targetIndexByKey.get(sourceKey) : NaN;
+  field.value = Number.isFinite(targetIndex) && targetIndex >= 0 ? String(targetIndex) : 'None';
+}
+
+function normalizeImportedTechnologyReferenceFields(entry) {
+  if (!entry || !Array.isArray(entry.biqFields)) return;
+  ['prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4'].forEach((key) => {
+    normalizeImportedScalarReferenceField(entry, {
+      candidateKeys: [key],
+      sourceTabKey: 'technologies',
+      targetTabKey: 'technologies'
+    });
+  });
+}
+
+function normalizeImportedResourceReferenceFields(entry) {
+  if (!entry || !Array.isArray(entry.biqFields)) return;
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['prerequisite'],
+    sourceTabKey: 'technologies',
+    targetTabKey: 'technologies'
+  });
+}
+
+function normalizeImportedCivilizationReferenceFields(entry) {
+  if (!entry || !Array.isArray(entry.biqFields)) return;
+  ['freetech1index', 'freetech2index', 'freetech3index', 'freetech4index'].forEach((key) => {
+    normalizeImportedScalarReferenceField(entry, {
+      candidateKeys: [key],
+      sourceTabKey: 'technologies',
+      targetTabKey: 'technologies'
+    });
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['favoritegovernment'],
+    sourceTabKey: 'governments',
+    targetTabKey: 'governments'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['shunnedgovernment'],
+    sourceTabKey: 'governments',
+    targetTabKey: 'governments'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['kingunit'],
+    sourceTabKey: 'units',
+    targetTabKey: 'units'
+  });
+}
+
+function buildGovernmentRelationRowFields(targetIndex, values, targetKeyToName) {
+  const targetName = String(targetKeyToName.get(targetIndex) || `Government ${Number(targetIndex) + 1}`).trim();
+  return [
+    {
+      key: `performance_of_this_government_versus_government_${targetIndex}`,
+      baseKey: `performance_of_this_government_versus_government_${targetIndex}`,
+      label: `Performance Vs ${targetName}`,
+      value: targetName,
+      originalValue: '',
+      editable: false
+    },
+    {
+      key: 'canbribe',
+      baseKey: 'canbribe',
+      label: 'Can Bribe',
+      value: String(values && values.canBribe != null ? values.canBribe : ''),
+      originalValue: '',
+      editable: true
+    },
+    {
+      key: 'resistancemodifier',
+      baseKey: 'resistancemodifier',
+      label: 'Resistance Modifier',
+      value: String(values && values.resistanceMod != null ? values.resistanceMod : ''),
+      originalValue: '',
+      editable: true
+    },
+    {
+      key: 'briberymodifier',
+      baseKey: 'briberymodifier',
+      label: 'Propaganda',
+      value: String(values && values.briberyMod != null ? values.briberyMod : ''),
+      originalValue: '',
+      editable: true
+    }
+  ];
+}
+
+function normalizeImportedGovernmentRelationFields(entry) {
+  if (!entry || !Array.isArray(entry.biqFields)) return;
+  const sourceIndexToKey = new Map(
+    getImportReferenceIndexMap(entry && entry._importReferenceIndexMaps, 'governments')
+      .map((item) => [Number(item.index), item.civilopediaKey])
+      .filter(([index, key]) => Number.isFinite(index) && index >= 0 && key)
+  );
+  const targetTab = state.bundle && state.bundle.tabs && state.bundle.tabs.governments;
+  const targetEntries = targetTab && Array.isArray(targetTab.entries) ? targetTab.entries : [];
+  const targetIndexByKey = new Map();
+  const targetKeyToName = new Map();
+  targetEntries.forEach((entryItem, fallbackIdx) => {
+    const key = String(entryItem && entryItem.civilopediaKey || '').trim().toUpperCase();
+    const index = Number.isFinite(entryItem && entryItem.biqIndex) ? Number(entryItem.biqIndex) : fallbackIdx;
+    if (!key || !Number.isFinite(index) || index < 0) return;
+    targetIndexByKey.set(key, index);
+    targetKeyToName.set(index, String(entryItem && entryItem.name || key));
+  });
+
+  const mappedRows = new Map();
+  let currentSourceIndex = null;
+  for (const field of entry.biqFields) {
+    const baseKey = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+    const relationMatch = baseKey.match(/^performance_of_this_government_versus_government_(\d+)$/);
+    if (relationMatch) {
+      currentSourceIndex = Number.parseInt(relationMatch[1], 10);
+      continue;
+    }
+    if (!Number.isFinite(currentSourceIndex) || currentSourceIndex < 0) continue;
+    const sourceKey = sourceIndexToKey.get(currentSourceIndex);
+    const targetIndex = sourceKey ? targetIndexByKey.get(sourceKey) : NaN;
+    if (!Number.isFinite(targetIndex) || targetIndex < 0) continue;
+    if (!mappedRows.has(targetIndex)) {
+      mappedRows.set(targetIndex, { canBribe: '0', resistanceMod: '0', briberyMod: '0' });
+    }
+    const row = mappedRows.get(targetIndex);
+    if (baseKey === 'canbribe') row.canBribe = String(field && field.value != null ? field.value : '0');
+    if (baseKey === 'resistancemodifier') row.resistanceMod = String(field && field.value != null ? field.value : '0');
+    if (baseKey === 'briberymodifier') row.briberyMod = String(field && field.value != null ? field.value : '0');
+  }
+
+  const nextFields = [];
+  let skippingRelationRow = false;
+  for (const field of entry.biqFields) {
+    const baseKey = String(field && (field.baseKey || field.key) || '').trim().toLowerCase();
+    if (/^performance_of_this_government_versus_government_\d+$/.test(baseKey)) {
+      skippingRelationRow = true;
+      continue;
+    }
+    if (skippingRelationRow && (baseKey === 'canbribe' || baseKey === 'resistancemodifier' || baseKey === 'briberymodifier')) {
+      continue;
+    }
+    skippingRelationRow = false;
+    nextFields.push(field);
+  }
+  Array.from(mappedRows.entries())
+    .sort((a, b) => a[0] - b[0])
+    .forEach(([targetIndex, values]) => {
+      nextFields.push(...buildGovernmentRelationRowFields(targetIndex, values, targetKeyToName));
+    });
+  entry.biqFields = nextFields;
+}
+
+function normalizeImportedGovernmentReferenceFields(entry) {
+  if (!entry || !Array.isArray(entry.biqFields)) return;
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['prerequisitetechnology'],
+    sourceTabKey: 'technologies',
+    targetTabKey: 'technologies'
+  });
+  normalizeImportedGovernmentRelationFields(entry);
+}
+
 function normalizeImportedUnitReferenceFields(entry) {
   if (!entry || !Array.isArray(entry.biqFields)) return;
   normalizeImportedUnitAvailableTo(entry);
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['requiredtech'],
+    sourceTabKey: 'technologies',
+    targetTabKey: 'technologies'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['requiredresource1'],
+    sourceTabKey: 'resources',
+    targetTabKey: 'resources'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['requiredresource2'],
+    sourceTabKey: 'resources',
+    targetTabKey: 'resources'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['requiredresource3'],
+    sourceTabKey: 'resources',
+    targetTabKey: 'resources'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['upgradeto'],
+    sourceTabKey: 'units',
+    targetTabKey: 'units'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['enslaveresultsin'],
+    sourceTabKey: 'units',
+    targetTabKey: 'units'
+  });
   normalizeImportedIndexedListField(entry, {
     candidateKeys: ['stealth_target', 'stealthtarget'],
     fallbackKey: 'stealth_target',
@@ -16274,6 +16536,87 @@ function normalizeImportedUnitReferenceFields(entry) {
     sourceTabKey: 'improvements',
     targetTabKey: 'improvements'
   });
+}
+
+function normalizeImportedImprovementReferenceFields(entry) {
+  if (!entry || !Array.isArray(entry.biqFields)) return;
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['unitproduced'],
+    sourceTabKey: 'units',
+    targetTabKey: 'units'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['reqadvance'],
+    sourceTabKey: 'technologies',
+    targetTabKey: 'technologies'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['obsoleteby'],
+    sourceTabKey: 'technologies',
+    targetTabKey: 'technologies'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['reqresource1'],
+    sourceTabKey: 'resources',
+    targetTabKey: 'resources'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['reqresource2'],
+    sourceTabKey: 'resources',
+    targetTabKey: 'resources'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['reqimprovement'],
+    sourceTabKey: 'improvements',
+    targetTabKey: 'improvements'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['doubleshappiness'],
+    sourceTabKey: 'improvements',
+    targetTabKey: 'improvements'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['gainineverycity'],
+    sourceTabKey: 'improvements',
+    targetTabKey: 'improvements'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['gainoncontinent'],
+    sourceTabKey: 'improvements',
+    targetTabKey: 'improvements'
+  });
+  normalizeImportedScalarReferenceField(entry, {
+    candidateKeys: ['reqgovernment'],
+    sourceTabKey: 'governments',
+    targetTabKey: 'governments'
+  });
+}
+
+function normalizeImportedReferenceFields(tabKey, entry) {
+  if (!entry || !Array.isArray(entry.biqFields)) return;
+  if (tabKey === 'civilizations') {
+    normalizeImportedCivilizationReferenceFields(entry);
+    return;
+  }
+  if (tabKey === 'technologies') {
+    normalizeImportedTechnologyReferenceFields(entry);
+    return;
+  }
+  if (tabKey === 'resources') {
+    normalizeImportedResourceReferenceFields(entry);
+    return;
+  }
+  if (tabKey === 'governments') {
+    normalizeImportedGovernmentReferenceFields(entry);
+    return;
+  }
+  if (tabKey === 'units') {
+    normalizeImportedUnitReferenceFields(entry);
+    return;
+  }
+  if (tabKey === 'improvements') {
+    normalizeImportedImprovementReferenceFields(entry);
+  }
 }
 
 async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initialMode = 'blank', lockMode = false }) {
@@ -16549,6 +16892,14 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
       const name = String(nameInput.value || '').trim();
       const mode = String(modeSelect.value || 'blank');
       const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, keyInput.value || name || `NEW_${Date.now()}`);
+      appendDebugLog('ref-create:confirm', {
+        tabKey,
+        mode,
+        name,
+        key,
+        importFilePath,
+        selectedImportKey
+      });
       if (!name) {
         setStatus('Name is required.', true);
         return;
@@ -16563,6 +16914,14 @@ async function promptReferenceCreateAction({ tab, tabKey, selectedEntry, initial
           setStatus('Select one import entry from the list.', true);
           return;
         }
+        appendDebugLog('ref-create:confirm:import-picked', {
+          tabKey,
+          importFilePath,
+          selectedImportKey,
+          pickedName: String(picked && picked.name || ''),
+          pickedKey: String(picked && picked.civilopediaKey || ''),
+          fieldCount: Array.isArray(picked && picked.biqFields) ? picked.biqFields.length : -1
+        });
         resolveEntityModal({ mode, name, key, importedEntry: picked, importFilePath, importDiplomacySlots });
         return;
       }
@@ -16784,72 +17143,157 @@ function renderReferenceTab(tab, tabKey) {
     });
 
     importBtn.addEventListener('click', async () => {
-      const result = await promptReferenceCreateAction({ tab, tabKey, selectedEntry, initialMode: 'import', lockMode: true });
-      if (!result || result.mode !== 'import' || !result.importedEntry) return;
-      const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, result.key || result.name);
-      const newEntry = buildNewReferenceEntryFromTemplate({
-        tabKey,
-        sourceEntry: result.importedEntry,
-        civilopediaKey: key,
-        mode: 'import',
-        displayName: result.name
-      });
-      if (tabKey === 'units') {
-        const sourceIconField = getBiqFieldByBaseKey(result.importedEntry, 'iconindex');
-        const sourceIconIndex = parseIntLoose(sourceIconField && sourceIconField.value, NaN);
-        if (Number.isFinite(sourceIconIndex) && sourceIconIndex >= 0) {
-          newEntry._pendingImportedUnitIcon = {
-            sourceScenarioPath: result.importFilePath,
-            sourceScenarioPaths: Array.isArray(result.importedEntry && result.importedEntry._importScenarioPaths)
-              ? [...result.importedEntry._importScenarioPaths]
-              : [],
-            sourceIconIndex,
-            plannedIndex: sourceIconIndex,
-            requiresAtlasSplice: false
-          };
-        }
-      }
-      if (tabKey === 'civilizations' && Array.isArray(result.importDiplomacySlots) && Array.isArray(tab.diplomacySlots)) {
-        const textIndexField = getBiqFieldByBaseKey(newEntry, 'diplomacytextindex');
-        const sourceSlotIndex = textIndexField ? Number(textIndexField.value) : -1;
-        if (Number.isFinite(sourceSlotIndex) && sourceSlotIndex >= 0) {
-          const sourceSlot = result.importDiplomacySlots.find((s) => Number(s.index) === sourceSlotIndex);
-          if (sourceSlot && (sourceSlot.firstContact || sourceSlot.firstDeal)) {
-            const usedIndices = new Set(tab.diplomacySlots.map((s) => Number(s.index)));
-            let newSlotIndex = tab.diplomacySlots.length;
-            while (usedIndices.has(newSlotIndex)) newSlotIndex++;
-            tab.diplomacySlots.push({
-              index: newSlotIndex,
-              firstContact: String(sourceSlot.firstContact || ''),
-              originalFirstContact: '',
-              firstDeal: String(sourceSlot.firstDeal || ''),
-              originalFirstDeal: ''
-            });
-            if (textIndexField) textIndexField.value = String(newSlotIndex);
+      try {
+        appendDebugLog('reference-import:click', {
+          tabKey,
+          selectedEntryKey: String(selectedEntry && selectedEntry.civilopediaKey || ''),
+          selectedEntryName: String(selectedEntry && selectedEntry.name || '')
+        });
+        const result = await promptReferenceCreateAction({ tab, tabKey, selectedEntry, initialMode: 'import', lockMode: true });
+        appendDebugLog('reference-import:modal-result', {
+          tabKey,
+          hasResult: !!result,
+          mode: String(result && result.mode || ''),
+          importFilePath: String(result && result.importFilePath || ''),
+          importedEntryKey: String(result && result.importedEntry && result.importedEntry.civilopediaKey || ''),
+          importedEntryName: String(result && result.importedEntry && result.importedEntry.name || '')
+        });
+        if (!result || result.mode !== 'import' || !result.importedEntry) return;
+        const key = makeUniqueReferenceCivilopediaKey(tab, tabKey, result.key || result.name);
+        appendDebugLog('reference-import:begin', {
+          tabKey,
+          targetKey: key,
+          sourceKey: String(result.importedEntry.civilopediaKey || ''),
+          sourceName: String(result.importedEntry.name || ''),
+          beforeCount: Array.isArray(tab && tab.entries) ? tab.entries.length : -1
+        });
+        const newEntry = buildNewReferenceEntryFromTemplate({
+          tabKey,
+          sourceEntry: result.importedEntry,
+          civilopediaKey: key,
+          mode: 'import',
+          displayName: result.name
+        });
+        appendDebugLog('reference-import:entry-built', {
+          tabKey,
+          targetKey: String(newEntry && newEntry.civilopediaKey || ''),
+          targetName: String(newEntry && newEntry.name || ''),
+          biqFieldCount: Array.isArray(newEntry && newEntry.biqFields) ? newEntry.biqFields.length : -1,
+          animationName: String(newEntry && newEntry.animationName || '')
+        });
+        if (tabKey === 'units') {
+          const sourceIconField = getBiqFieldByBaseKey(result.importedEntry, 'iconindex');
+          const sourceIconIndex = parseIntLoose(sourceIconField && sourceIconField.value, NaN);
+          appendDebugLog('reference-import:unit-icon-source', {
+            sourceKey: String(result.importedEntry && result.importedEntry.civilopediaKey || ''),
+            sourceIconValue: String(sourceIconField && sourceIconField.value || ''),
+            sourceIconIndex
+          });
+          if (Number.isFinite(sourceIconIndex) && sourceIconIndex >= 0) {
+            newEntry._pendingImportedUnitIcon = {
+              sourceScenarioPath: result.importFilePath,
+              sourceScenarioPaths: Array.isArray(result.importedEntry && result.importedEntry._importScenarioPaths)
+                ? [...result.importedEntry._importScenarioPaths]
+                : [],
+              sourceIconIndex,
+              plannedIndex: sourceIconIndex,
+              requiresAtlasSplice: false
+            };
           }
         }
-      }
-      const ops = ensureReferenceRecordOps(tab);
-      ops.push({
-        op: 'add',
-        newRecordRef: key,
-        importArtFrom: result.importFilePath
-      });
-      rememberUndoSnapshot();
-      tab.entries.unshift(newEntry);
-      if (tabKey === 'units') {
-        if (!units32AtlasMetricsCache || units32AtlasMetricsCacheKey !== getUnits32TargetAtlasCacheKey()) {
-          await ensureCurrentUnits32AtlasMetrics().catch(() => null);
+        if (tabKey === 'civilizations' && Array.isArray(result.importDiplomacySlots) && Array.isArray(tab.diplomacySlots)) {
+          const textIndexField = getBiqFieldByBaseKey(newEntry, 'diplomacytextindex');
+          const sourceSlotIndex = textIndexField ? Number(textIndexField.value) : -1;
+          if (Number.isFinite(sourceSlotIndex) && sourceSlotIndex >= 0) {
+            const sourceSlot = result.importDiplomacySlots.find((s) => Number(s.index) === sourceSlotIndex);
+            if (sourceSlot && (sourceSlot.firstContact || sourceSlot.firstDeal)) {
+              const usedIndices = new Set(tab.diplomacySlots.map((s) => Number(s.index)));
+              let newSlotIndex = tab.diplomacySlots.length;
+              while (usedIndices.has(newSlotIndex)) newSlotIndex++;
+              tab.diplomacySlots.push({
+                index: newSlotIndex,
+                firstContact: String(sourceSlot.firstContact || ''),
+                originalFirstContact: '',
+                firstDeal: String(sourceSlot.firstDeal || ''),
+                originalFirstDeal: ''
+              });
+              if (textIndexField) textIndexField.value = String(newSlotIndex);
+            }
+          }
         }
-        refreshPendingImportedUnitIconAssignments(tab);
+        const ops = ensureReferenceRecordOps(tab);
+        ops.push({
+          op: 'add',
+          newRecordRef: key,
+          sourceRef: String(result.importedEntry.civilopediaKey || '').toUpperCase(),
+          importArtFrom: result.importFilePath
+        });
+        appendDebugLog('reference-import:op-added', {
+          tabKey,
+          targetKey: key,
+          opCount: Array.isArray(tab && tab.recordOps) ? tab.recordOps.length : -1
+        });
+        rememberUndoSnapshot();
+        tab.entries.unshift(newEntry);
+        appendDebugLog('reference-import:entry-inserted', {
+          tabKey,
+          targetKey: key,
+          afterCount: Array.isArray(tab && tab.entries) ? tab.entries.length : -1
+        });
+        if (tabKey === 'units') {
+          if (units32AtlasMetricsCache && units32AtlasMetricsCacheKey === getUnits32TargetAtlasCacheKey()) {
+            refreshPendingImportedUnitIconAssignments(tab);
+            appendDebugLog('reference-import:unit-icon-refresh-immediate', {
+              targetKey: key,
+              cacheKey: units32AtlasMetricsCacheKey
+            });
+          }
+        }
+        if (tabKey === 'civilizations') {
+          setCivilizationPlayableState(newEntry, true);
+        }
+        state.referenceSelection[tabKey] = 0;
+        setDirty(true);
+        setStatus(`Imported "${result.importedEntry.name || result.importedEntry.civilopediaKey}" into this scenario as a new entry.`);
+        appendDebugLog('reference-import:pre-render', {
+          tabKey,
+          targetKey: key,
+          selectedIndex: state.referenceSelection[tabKey],
+          isDirty: !!state.isDirty
+        });
+        renderActiveTab({ preserveTabScroll: true });
+        appendDebugLog('reference-import:post-render', {
+          tabKey,
+          targetKey: key
+        });
+        if (tabKey === 'units' && (!units32AtlasMetricsCache || units32AtlasMetricsCacheKey !== getUnits32TargetAtlasCacheKey())) {
+          appendDebugLog('reference-import:unit-metrics-request', {
+            targetKey: key,
+            cacheKey: units32AtlasMetricsCacheKey,
+            targetCacheKey: getUnits32TargetAtlasCacheKey()
+          });
+          ensureCurrentUnits32AtlasMetrics().then((metrics) => {
+            if (!metrics) return;
+            appendDebugLog('reference-import:unit-metrics-ready', {
+              targetKey: key,
+              cols: metrics.cols,
+              rows: metrics.rows
+            });
+            refreshPendingImportedUnitIconAssignments(tab);
+            renderActiveTab({ preserveTabScroll: true });
+            appendDebugLog('reference-import:unit-post-metrics-render', {
+              targetKey: key
+            });
+          }).catch(() => {});
+        }
+      } catch (err) {
+        appendDebugLog('reference-import:error', {
+          tabKey,
+          error: err && err.message ? err.message : String(err || 'unknown error'),
+          stack: err && err.stack ? String(err.stack) : ''
+        });
+        setStatus(err && err.message ? err.message : 'Import failed.', true);
       }
-      if (tabKey === 'civilizations') {
-        setCivilizationPlayableState(newEntry, true);
-      }
-      state.referenceSelection[tabKey] = 0;
-      setDirty(true);
-      setStatus(`Imported "${result.importedEntry.name || result.importedEntry.civilopediaKey}" into this scenario as a new entry.`);
-      renderActiveTab({ preserveTabScroll: true });
     });
 
     deleteBtn.addEventListener('click', async () => {

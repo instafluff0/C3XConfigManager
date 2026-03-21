@@ -3004,9 +3004,10 @@ function createDefaultRecord(code, civKey, io) {
     case 'BLDG': {
       const rec = { description: '', name, civilopediaEntry: civKey };
       for (const sn of BLDG_SCALAR_NAMES) rec[sn] = 0;
+      rec.doublesHappiness = -1; rec.gainInEveryCity = -1; rec.gainOnContinent = -1;
       rec.reqImprovement = -1; rec.reqAdvance = -1; rec.obsoleteBy = -1;
       rec.reqResource1 = -1; rec.reqResource2 = -1; rec.reqGovernment = -1;
-      rec.unitProduced = -1; rec.improvements = -1;
+      rec.spaceshipPart = -1; rec.unitProduced = -1;
       return rec;
     }
     case 'GOOD': return {
@@ -3051,6 +3052,13 @@ function createDefaultRecord(code, civKey, io) {
         prtoRec[key] = (key === 'upgradeTo' || key === 'requiredTech' || key.startsWith('requiredResource')) ? -1 : 0;
       });
       PRTO_MID_SCALAR_FIELDS.forEach((key) => { prtoRec[key] = 0; });
+      // Match Quint's new PRTO path: new PRTO(...); setNewUnitDefaults()
+      prtoRec.movement = 1;
+      prtoRec.AIStrategy = 3;
+      prtoRec.availableTo = -2;
+      prtoRec.otherStrategy = -1;
+      prtoRec.PTWStandardOrders = 127;
+      prtoRec.PTWSpecialActions = 781;
       return prtoRec;
     }
     case 'CITY': return {
@@ -3264,6 +3272,27 @@ function shiftPossibleResourcesMask(mask, totalCount, remap) {
   return { numTotalResources: nextCount, possibleResources: nextMask };
 }
 
+function remapDeletedCivilizationAvailabilityMask(maskValue, remap) {
+  const parsedMask = Number.parseInt(String(maskValue), 10);
+  const unsignedMask = Number.isFinite(parsedMask) ? (parsedMask >>> 0) : 0;
+  if (!remap) return unsignedMask | 0;
+  let nextMask = 0 >>> 0;
+  const upperBound = Math.min(32, Number.isFinite(remap.oldCount) ? remap.oldCount : 32);
+  for (let oldIndex = 0; oldIndex < upperBound; oldIndex += 1) {
+    if (((unsignedMask >>> oldIndex) & 1) !== 1) continue;
+    const nextIndex = remapDeletedSectionIndex(oldIndex, remap, null);
+    if (!Number.isFinite(nextIndex) || nextIndex < 0 || nextIndex >= 32) continue;
+    nextMask = (nextMask | ((1 << nextIndex) >>> 0)) >>> 0;
+  }
+  if (upperBound < 32) {
+    for (let bit = upperBound; bit < 32; bit += 1) {
+      if (((unsignedMask >>> bit) & 1) !== 1) continue;
+      nextMask = (nextMask | ((1 << bit) >>> 0)) >>> 0;
+    }
+  }
+  return nextMask | 0;
+}
+
 function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection) {
   const deleteTouchedCodes = new Set((Array.isArray(edits) ? edits : [])
     .filter((edit) => String(edit && edit.op || '').trim().toLowerCase() === 'delete')
@@ -3292,6 +3321,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const bldgRemap = remaps.get('BLDG');
   const govtRemap = remaps.get('GOVT');
   const prtoRemap = remaps.get('PRTO');
+  const raceRemap = remaps.get('RACE');
   const markModified = (section) => {
     if (section) section._modified = true;
   };
@@ -3377,6 +3407,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const prtoSection = getSectionByCode(parsed, 'PRTO');
   if (prtoSection && Array.isArray(prtoSection.records)) {
     prtoSection.records.forEach((rec) => {
+      if (raceRemap) rec.availableTo = remapDeletedCivilizationAvailabilityMask(rec.availableTo, raceRemap);
       if (goodRemap) {
         rec.requiredResource1 = remapDeletedSectionIndex(rec.requiredResource1, goodRemap, -1);
         rec.requiredResource2 = remapDeletedSectionIndex(rec.requiredResource2, goodRemap, -1);
@@ -3391,7 +3422,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       }
       if (bldgRemap) rec.legalBuildingTelepads = remapDeletedSectionListRemovingDeleted(rec.legalBuildingTelepads, bldgRemap);
     });
-    if (goodRemap || techRemap || prtoRemap || bldgRemap) markModified(prtoSection);
+    if (raceRemap || goodRemap || techRemap || prtoRemap || bldgRemap) markModified(prtoSection);
   }
 
   const ruleSection = getSectionByCode(parsed, 'RULE');
@@ -3686,6 +3717,7 @@ function applyEdits(buf, edits) {
     if (op === 'add' || op === 'copy') {
       const newRef = String(edit.newRecordRef || '').trim().toUpperCase();
       const sourceRef = String(edit.sourceRef || edit.copyFromRef || '').trim().toUpperCase();
+      const externalRecord = edit && typeof edit.externalRecord === 'object' ? edit.externalRecord : null;
       if (!newRef) { skipped++; warnings.push(`${op}: missing newRecordRef for ${code}`); continue; }
       if (!section) { skipped++; warnings.push(`${op}: section ${code} not found`); continue; }
 
@@ -3701,6 +3733,10 @@ function applyEdits(buf, edits) {
         const src = findRecordByRef(section.records, sourceRef);
         if (src) {
           newRec = copyRecord(src);
+          newRec.civilopediaEntry = newRef;
+          if (newRec._rawRecord) delete newRec._rawRecord; // force re-serialize
+        } else if (externalRecord) {
+          newRec = copyRecord(externalRecord);
           newRec.civilopediaEntry = newRef;
           if (newRec._rawRecord) delete newRec._rawRecord; // force re-serialize
         } else {

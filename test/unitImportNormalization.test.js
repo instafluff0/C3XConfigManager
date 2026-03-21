@@ -66,14 +66,31 @@ function loadRendererImportHelpers(targetBundle) {
     'buildNewReferenceEntryFromTemplate',
     'getImportReferenceIndexMap',
     'getTargetReferenceIndexByKey',
+    'getTargetReferenceIndexByName',
     'normalizeImportedIndexedListField',
+    'normalizeImportedScalarReferenceField',
+    'normalizeImportedTechnologyReferenceFields',
+    'normalizeImportedResourceReferenceFields',
+    'normalizeImportedCivilizationReferenceFields',
+    'buildGovernmentRelationRowFields',
+    'normalizeImportedGovernmentRelationFields',
+    'normalizeImportedGovernmentReferenceFields',
     'normalizeImportedUnitAvailableTo',
-    'normalizeImportedUnitReferenceFields'
+    'normalizeImportedUnitReferenceFields',
+    'normalizeImportedImprovementReferenceFields',
+    'normalizeImportedReferenceFields'
   ];
 
   const sandbox = {
     state: { bundle: targetBundle },
-    REFERENCE_PREFIX_BY_TAB: { units: 'PRTO_' },
+    REFERENCE_PREFIX_BY_TAB: {
+      civilizations: 'RACE_',
+      technologies: 'TECH_',
+      resources: 'GOOD_',
+      improvements: 'BLDG_',
+      governments: 'GOVT_',
+      units: 'PRTO_'
+    },
     inferReferenceNameFromKey: () => '',
     dedupeStrings: (values) => {
       const out = [];
@@ -128,6 +145,16 @@ test('unit import remaps mutual references by civilopedia key and filters non-ma
           makeEntry('RACE_GAMMA', 7)
         ]
       },
+      technologies: {
+        entries: [
+          makeEntry('TECH_ALPHA', 13)
+        ]
+      },
+      resources: {
+        entries: [
+          makeEntry('GOOD_ALPHA', 17)
+        ]
+      },
       units: {
         entries: [
           makeEntry('PRTO_ALPHA', 10),
@@ -153,6 +180,12 @@ test('unit import remaps mutual references by civilopedia key and filters non-ma
         { index: 2, civilopediaKey: 'RACE_BETA' },
         { index: 3, civilopediaKey: 'RACE_GAMMA' }
       ],
+      technologies: [
+        { index: 21, civilopediaKey: 'TECH_ALPHA' }
+      ],
+      resources: [
+        { index: 31, civilopediaKey: 'GOOD_ALPHA' }
+      ],
       units: [
         { index: 4, civilopediaKey: 'PRTO_ALPHA' },
         { index: 5, civilopediaKey: 'PRTO_BETA' },
@@ -166,6 +199,10 @@ test('unit import remaps mutual references by civilopedia key and filters non-ma
     biqFields: [
       makeField('civilopediaentry', 'PRTO_SOURCE', { editable: false }),
       makeField('availableto', '-1'),
+      makeField('requiredtech', '21'),
+      makeField('requiredresource1', '31'),
+      makeField('upgradeto', '4'),
+      makeField('enslaveresultsin', '6'),
       makeField('numstealthtargets', '3'),
       makeField('stealth_target', '4'),
       makeField('stealth_target', '5', { key: 'stealth_target_2' }),
@@ -192,11 +229,24 @@ test('unit import remaps mutual references by civilopedia key and filters non-ma
   const availableTo = imported.biqFields.find((field) => field.baseKey === 'availableto');
 
   assert.deepEqual(Array.from(decodeAvailableToIndices(availableTo.value)), [5, 7]);
-  assert.deepEqual(Array.from(byBaseKey('stealth_target'), (field) => field.value), ['10', '22']);
+  assert.equal(imported.biqFields.find((field) => field.baseKey === 'requiredtech').value, '13');
+  assert.equal(imported.biqFields.find((field) => field.baseKey === 'requiredresource1').value, '17');
+  assert.equal(imported.biqFields.find((field) => field.baseKey === 'upgradeto').value, '10');
+  assert.equal(imported.biqFields.find((field) => field.baseKey === 'enslaveresultsin').value, '22');
+  assert.deepEqual(
+    Array.from(byBaseKey('stealth_target'), (field) => field.value).filter(Boolean),
+    ['10', '22']
+  );
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'numstealthtargets').value, '2');
-  assert.deepEqual(Array.from(byBaseKey('legal_unit_telepad'), (field) => field.value), ['10']);
+  assert.deepEqual(
+    Array.from(byBaseKey('legal_unit_telepad'), (field) => field.value).filter(Boolean),
+    ['10']
+  );
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'numlegalunittelepads').value, '1');
-  assert.deepEqual(Array.from(byBaseKey('legal_building_telepad'), (field) => field.value), ['9']);
+  assert.deepEqual(
+    Array.from(byBaseKey('legal_building_telepad'), (field) => field.value).filter(Boolean),
+    ['9']
+  );
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'numlegalbuildingtelepads').value, '1');
 });
 
@@ -204,6 +254,8 @@ test('unit import clears orphaned list references and zeroes count fields when n
   const targetBundle = {
     tabs: {
       civilizations: { entries: [makeEntry('RACE_ALPHA', 5)] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
       units: { entries: [makeEntry('PRTO_ALPHA', 10)] },
       improvements: { entries: [makeEntry('BLDG_ALPHA', 9)] }
     }
@@ -216,12 +268,18 @@ test('unit import clears orphaned list references and zeroes count fields when n
     name: 'Imported Unit',
     _importReferenceIndexMaps: {
       civilizations: [{ index: 1, civilopediaKey: 'RACE_BETA' }],
+      technologies: [{ index: 21, civilopediaKey: 'TECH_BETA' }],
+      resources: [{ index: 31, civilopediaKey: 'GOOD_BETA' }],
       units: [{ index: 4, civilopediaKey: 'PRTO_BETA' }],
       improvements: [{ index: 11, civilopediaKey: 'BLDG_BETA' }]
     },
     biqFields: [
       makeField('civilopediaentry', 'PRTO_SOURCE', { editable: false }),
       makeField('availableto', String(1 << 1)),
+      makeField('requiredtech', '21'),
+      makeField('requiredresource1', '31'),
+      makeField('upgradeto', '4'),
+      makeField('enslaveresultsin', '4'),
       makeField('numstealthtargets', '1'),
       makeField('stealth_target', '4'),
       makeField('numlegalunittelepads', '1'),
@@ -239,11 +297,89 @@ test('unit import clears orphaned list references and zeroes count fields when n
     displayName: 'Imported Unit'
   });
 
-  assert.deepEqual(Array.from(decodeAvailableToIndices(imported.biqFields.find((field) => field.baseKey === 'availableto').value)), []);
-  assert.equal(imported.biqFields.filter((field) => field.baseKey === 'stealth_target').length, 0);
+  assert.equal(Array.from(decodeAvailableToIndices(imported.biqFields.find((field) => field.baseKey === 'availableto').value)).length, 0);
+  assert.equal(imported.biqFields.find((field) => field.baseKey === 'requiredtech').value, 'None');
+  assert.equal(imported.biqFields.find((field) => field.baseKey === 'requiredresource1').value, 'None');
+  assert.equal(imported.biqFields.find((field) => field.baseKey === 'upgradeto').value, 'None');
+  assert.equal(imported.biqFields.find((field) => field.baseKey === 'enslaveresultsin').value, 'None');
+  assert.equal(
+    imported.biqFields.filter((field) => field.baseKey === 'stealth_target').map((field) => field.value).filter(Boolean).length,
+    0
+  );
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'numstealthtargets').value, '0');
-  assert.equal(imported.biqFields.filter((field) => field.baseKey === 'legal_unit_telepad').length, 0);
+  assert.equal(
+    imported.biqFields.filter((field) => field.baseKey === 'legal_unit_telepad').map((field) => field.value).filter(Boolean).length,
+    0
+  );
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'numlegalunittelepads').value, '0');
-  assert.equal(imported.biqFields.filter((field) => field.baseKey === 'legal_building_telepad').length, 0);
+  assert.equal(
+    imported.biqFields.filter((field) => field.baseKey === 'legal_building_telepad').map((field) => field.value).filter(Boolean).length,
+    0
+  );
   assert.equal(imported.biqFields.find((field) => field.baseKey === 'numlegalbuildingtelepads').value, '0');
+});
+
+test('unit import falls back to name-based matching for stealth targets without civilopedia keys', () => {
+  const targetBundle = {
+    tabs: {
+      civilizations: { entries: [] },
+      technologies: { entries: [] },
+      resources: { entries: [] },
+      units: {
+        entries: [
+          makeEntry('PRTO_ALPHA', 10),
+          { civilopediaKey: '', biqIndex: 15, name: 'Hunter' },
+          { civilopediaKey: '', biqIndex: 20, name: 'Villager' }
+        ]
+      },
+      improvements: { entries: [] }
+    }
+  };
+  const { buildNewReferenceEntryFromTemplate } = loadRendererImportHelpers(targetBundle);
+
+  const sourceEntry = {
+    civilopediaKey: 'PRTO_SOURCE',
+    biqIndex: 99,
+    name: 'Imported Unit',
+    _importReferenceIndexMaps: {
+      civilizations: [],
+      technologies: [],
+      resources: [],
+      units: [
+        { index: 4, civilopediaKey: 'PRTO_ALPHA', name: 'Alpha' },
+        { index: 5, civilopediaKey: '', name: 'Hunter' },
+        { index: 6, civilopediaKey: '', name: 'Villager' },
+        { index: 7, civilopediaKey: '', name: 'Ambiguous' },
+        { index: 8, civilopediaKey: '', name: 'Ambiguous' }
+      ],
+      improvements: []
+    },
+    biqFields: [
+      makeField('civilopediaentry', 'PRTO_SOURCE', { editable: false }),
+      makeField('numstealthtargets', '5'),
+      makeField('stealth_target', '4'),
+      makeField('stealth_target', '5'),
+      makeField('stealth_target', '6'),
+      makeField('stealth_target', '7'),
+      makeField('stealth_target', '8')
+    ]
+  };
+
+  const imported = buildNewReferenceEntryFromTemplate({
+    tabKey: 'units',
+    sourceEntry,
+    civilopediaKey: 'PRTO_IMPORTED',
+    mode: 'import',
+    displayName: 'Imported Unit'
+  });
+
+  const stealthValues = imported.biqFields
+    .filter((f) => f.baseKey === 'stealth_target')
+    .map((f) => f.value)
+    .filter(Boolean);
+  // PRTO_ALPHA matched by civkey -> 10; Hunter matched by name -> 15; Villager matched by name -> 20
+  // Ambiguous (indices 7 and 8) dropped because name is duplicated in target (no, actually target has no Ambiguous)
+  // so indices 7 and 8 have name 'Ambiguous', target has no unit named 'Ambiguous' -> dropped
+  assert.deepEqual(Array.from(stealthValues).sort(), ['10', '15', '20'].sort());
+  assert.equal(imported.biqFields.find((f) => f.baseKey === 'numstealthtargets').value, '3');
 });

@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const vm = require('node:vm');
 
 const { loadBundle, saveBundle } = require('../src/configCore');
 
@@ -147,6 +148,116 @@ function getRawRecordInt(record, key, fallback = NaN) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function extractFunctionSource(sourceText, name) {
+  const needle = `function ${name}(`;
+  const start = sourceText.indexOf(needle);
+  if (start < 0) throw new Error(`Could not find function ${name}`);
+  let paramDepth = 0;
+  let signatureEnd = -1;
+  for (let i = start + needle.length - 1; i < sourceText.length; i += 1) {
+    const ch = sourceText[i];
+    if (ch === '(') paramDepth += 1;
+    if (ch === ')') {
+      paramDepth -= 1;
+      if (paramDepth === 0) {
+        signatureEnd = i;
+        break;
+      }
+    }
+  }
+  const bodyStart = sourceText.indexOf('{', signatureEnd);
+  let depth = 0;
+  let end = -1;
+  for (let i = bodyStart; i < sourceText.length; i += 1) {
+    const ch = sourceText[i];
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        end = i + 1;
+        break;
+      }
+    }
+  }
+  return sourceText.slice(start, end);
+}
+
+function loadRendererImportHelpers(targetBundle) {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const sourceText = fs.readFileSync(rendererPath, 'utf8');
+  const functionNames = [
+    'canonicalBiqFieldKey',
+    'setUnitListFieldValues',
+    'getUnitListFieldState',
+    'parseSigned32FromValue',
+    'toSigned32StringFromUnsigned',
+    'decodeAvailableToIndices',
+    'encodeAvailableToFromIndices',
+    'getBiqFieldByBaseKey',
+    'buildNewReferenceEntryFromTemplate',
+    'getImportReferenceIndexMap',
+    'getTargetReferenceIndexByKey',
+    'getTargetReferenceIndexByName',
+    'normalizeImportedIndexedListField',
+    'normalizeImportedScalarReferenceField',
+    'normalizeImportedTechnologyReferenceFields',
+    'normalizeImportedResourceReferenceFields',
+    'normalizeImportedCivilizationReferenceFields',
+    'buildGovernmentRelationRowFields',
+    'normalizeImportedGovernmentRelationFields',
+    'normalizeImportedGovernmentReferenceFields',
+    'normalizeImportedUnitAvailableTo',
+    'normalizeImportedUnitReferenceFields',
+    'normalizeImportedImprovementReferenceFields',
+    'normalizeImportedReferenceFields'
+  ];
+  const sandbox = {
+    state: { bundle: targetBundle },
+    REFERENCE_PREFIX_BY_TAB: {
+      civilizations: 'RACE_',
+      technologies: 'TECH_',
+      resources: 'GOOD_',
+      improvements: 'BLDG_',
+      governments: 'GOVT_',
+      units: 'PRTO_'
+    },
+    inferReferenceNameFromKey: () => '',
+    dedupeStrings: (values) => {
+      const out = [];
+      const seen = new Set();
+      (Array.isArray(values) ? values : []).forEach((value) => {
+        const next = String(value || '').trim();
+        if (!next || seen.has(next)) return;
+        seen.add(next);
+        out.push(next);
+      });
+      return out;
+    },
+    toFriendlyKey: (value) => String(value || ''),
+    parseIntFromDisplayValue: (value) => {
+      const match = String(value == null ? '' : value).match(/-?\d+/);
+      if (!match) return null;
+      const parsed = Number.parseInt(match[0], 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+  };
+  sandbox.globalThis = sandbox;
+  const scriptSource = functionNames.map((name) => extractFunctionSource(sourceText, name)).join('\n\n')
+    + '\n\nglobalThis.__helpers = { '
+    + functionNames.map((name) => `${name}: ${name}`).join(', ')
+    + ' };';
+  vm.runInNewContext(scriptSource, sandbox, { filename: 'renderer-unit-import.vm' });
+  return sandbox.__helpers;
+}
+
+function buildReferenceIndexMap(bundle, tabKey) {
+  const entries = bundle && bundle.tabs && bundle.tabs[tabKey] && bundle.tabs[tabKey].entries;
+  return (Array.isArray(entries) ? entries : []).map((entry, fallbackIdx) => ({
+    index: Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : fallbackIdx,
+    civilopediaKey: String(entry && entry.civilopediaKey || '').trim().toUpperCase()
+  })).filter((item) => Number.isFinite(item.index) && item.index >= 0 && item.civilopediaKey);
+}
+
 /**
  * Simulate exactly what the renderer does when the user clicks Import:
  *   - Deep-clones the source entry
@@ -175,11 +286,31 @@ function simulateImportEntry(sourceEntry, newKey) {
   return entry;
 }
 
+function simulateRendererImport(targetBundle, sourceBundle, tabKey, sourceEntry, newKey) {
+  const entry = JSON.parse(JSON.stringify(sourceEntry));
+  entry._importReferenceIndexMaps = {
+    civilizations: buildReferenceIndexMap(sourceBundle, 'civilizations'),
+    technologies: buildReferenceIndexMap(sourceBundle, 'technologies'),
+    resources: buildReferenceIndexMap(sourceBundle, 'resources'),
+    improvements: buildReferenceIndexMap(sourceBundle, 'improvements'),
+    governments: buildReferenceIndexMap(sourceBundle, 'governments'),
+    units: buildReferenceIndexMap(sourceBundle, 'units')
+  };
+  const { buildNewReferenceEntryFromTemplate } = loadRendererImportHelpers(targetBundle);
+  return buildNewReferenceEntryFromTemplate({
+    tabKey,
+    sourceEntry: entry,
+    civilopediaKey: newKey,
+    mode: 'import',
+    displayName: String(sourceEntry && sourceEntry.name || '')
+  });
+}
+
 /**
  * Save a single import op + the imported entry's field data into tmpBiq, then
  * return the save result.
  */
-function saveImport(c3xDir, biqPath, tabKey, newKey, importedEntry, sourceBiqPath) {
+function saveImport(c3xDir, biqPath, tabKey, newKey, importedEntry, sourceBiqPath, sourceRef = '') {
   return saveBundle({
     mode: 'scenario',
     c3xPath: c3xDir,
@@ -188,7 +319,12 @@ function saveImport(c3xDir, biqPath, tabKey, newKey, importedEntry, sourceBiqPat
     tabs: {
       [tabKey]: {
         entries: [importedEntry],
-        recordOps: [{ op: 'add', newRecordRef: newKey, importArtFrom: sourceBiqPath }]
+        recordOps: [{
+          op: 'add',
+          newRecordRef: newKey,
+          sourceRef: String(sourceRef || '').trim().toUpperCase(),
+          importArtFrom: sourceBiqPath
+        }]
       }
     }
   });
@@ -260,6 +396,39 @@ for (const { tabKey, sectionCode, prefix } of ADD_CASES) {
     }
   });
 }
+
+test('Add blank PRTO uses Quint-style new-unit defaults for serialized fields', (t) => {
+  const ctx = setupScenario(BASE_BIQ);
+  if (!ctx) return t.skip(`Source BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+
+  const newKey = `PRTO_ADD_DFLT_${Date.now()}`.toUpperCase();
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      units: { recordOps: [{ op: 'add', newRecordRef: newKey }] }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  const section = getSection(after, 'PRTO');
+  const added = (section && Array.isArray(section.records) ? section.records : []).find((record) => {
+    const field = getRawRecordField(record, 'civilopediaentry');
+    return String(field && field.value || '').trim().toUpperCase() === newKey;
+  });
+  assert.ok(added, `expected new unit ${newKey}`);
+
+  assert.equal(getRawRecordInt(added, 'movement'), 1);
+  assert.equal(getRawRecordInt(added, 'aistrategy'), 3);
+  assert.equal(getRawRecordInt(added, 'availableto'), -2);
+  assert.equal(getRawRecordInt(added, 'otherstrategy'), -1);
+  assert.equal(getRawRecordInt(added, 'ptwstandardorders'), 127);
+  assert.equal(getRawRecordInt(added, 'ptwspecialactions'), 781);
+});
 
 // ---------------------------------------------------------------------------
 // COPY tests — one per entity type
@@ -422,9 +591,17 @@ function runTidesImport(t, tabKey, sectionCode, prefix, srcPicker, targetBiqPath
 
   const before = reload(c3xDir, biqPath);
   const newKey = `${prefix}C3X_IMP_TEST_${Date.now()}`.toUpperCase();
-  const importedEntry = simulateImportEntry(srcEntry, newKey);
+  const importedEntry = simulateRendererImport(before, tidesBundle, tabKey, srcEntry, newKey);
 
-  const saveResult = saveImport(c3xDir, biqPath, tabKey, newKey, importedEntry, TIDES_BIQ);
+  const saveResult = saveImport(
+    c3xDir,
+    biqPath,
+    tabKey,
+    newKey,
+    importedEntry,
+    TIDES_BIQ,
+    String(srcEntry && srcEntry.civilopediaKey || '').trim().toUpperCase()
+  );
   const after = reload(c3xDir, biqPath);
 
   return { c3xDir, biqPath, before, after, saveResult, newKey, importedEntry, srcEntry };
@@ -458,6 +635,58 @@ test('Import Civ from Tides: scalar field values match source entry', (t) => {
       assert.equal(dstVal, srcVal, `expected field ${key} to match after import`);
     }
   }
+});
+
+test('Import Civ from Tides: free techs, governments, and king unit are remapped by civilopedia key or cleared', (t) => {
+  const tidesBundle = loadBundle({
+    mode: 'scenario',
+    civ3Path: CIV3_ROOT,
+    scenarioPath: TIDES_BIQ
+  });
+  const sourceTechMap = new Map(buildReferenceIndexMap(tidesBundle, 'technologies').map((item) => [item.index, item.civilopediaKey]));
+  const sourceGovtMap = new Map(buildReferenceIndexMap(tidesBundle, 'governments').map((item) => [item.index, item.civilopediaKey]));
+  const sourceUnitMap = new Map(buildReferenceIndexMap(tidesBundle, 'units').map((item) => [item.index, item.civilopediaKey]));
+  const r = runTidesImport(t, 'civilizations', 'RACE', 'RACE_',
+    (b) => b.tabs.civilizations.entries.find((e) => (
+      ['freetech1index', 'freetech2index', 'freetech3index', 'freetech4index', 'favoritegovernment', 'shunnedgovernment', 'kingunit']
+        .some((key) => {
+          const value = fieldVal(e, key);
+          return value !== undefined && value !== '-1' && value !== '' && value !== 'None';
+        })
+    )) || b.tabs.civilizations.entries[0],
+    TIDES_BIQ);
+  if (!r) return;
+  assert.equal(r.saveResult.ok, true, String(r.saveResult.error || 'save failed'));
+  const reloaded = getEntry(r.after, 'civilizations', r.newKey);
+  assert.ok(reloaded, 'expected reloaded civ entry');
+  const targetTechMap = new Map(buildReferenceIndexMap(r.before, 'technologies').map((item) => [item.civilopediaKey, item.index]));
+  const targetGovtMap = new Map(buildReferenceIndexMap(r.before, 'governments').map((item) => [item.civilopediaKey, item.index]));
+  const targetUnitMap = new Map(buildReferenceIndexMap(r.before, 'units').map((item) => [item.civilopediaKey, item.index]));
+  ['freetech1index', 'freetech2index', 'freetech3index', 'freetech4index'].forEach((key) => {
+    const srcIndex = Number.parseInt(String(fieldVal(r.srcEntry, key) || '').match(/-?\d+/)?.[0] || '', 10);
+    const sourceKey = sourceTechMap.get(srcIndex);
+    const expected = sourceKey ? targetTechMap.get(sourceKey) : undefined;
+    const actual = String(fieldVal(reloaded, key) || '');
+    const actualNumeric = actual.match(/-?\d+/)?.[0] || actual;
+    if (Number.isFinite(expected)) assert.equal(actualNumeric, String(expected), `expected ${key} to remap`);
+    else assert.equal(actual, 'None', `expected ${key} to clear`);
+  });
+  ['favoritegovernment', 'shunnedgovernment'].forEach((key) => {
+    const srcIndex = Number.parseInt(String(fieldVal(r.srcEntry, key) || '').match(/-?\d+/)?.[0] || '', 10);
+    const sourceKey = sourceGovtMap.get(srcIndex);
+    const expected = sourceKey ? targetGovtMap.get(sourceKey) : undefined;
+    const actual = String(fieldVal(reloaded, key) || '');
+    const actualNumeric = actual.match(/-?\d+/)?.[0] || actual;
+    if (Number.isFinite(expected)) assert.equal(actualNumeric, String(expected), `expected ${key} to remap`);
+    else assert.equal(actual, 'None', `expected ${key} to clear`);
+  });
+  const srcKingIndex = Number.parseInt(String(fieldVal(r.srcEntry, 'kingunit') || '').match(/-?\d+/)?.[0] || '', 10);
+  const sourceKingKey = sourceUnitMap.get(srcKingIndex);
+  const expectedKing = sourceKingKey ? targetUnitMap.get(sourceKingKey) : undefined;
+  const actualKing = String(fieldVal(reloaded, 'kingunit') || '');
+  const actualKingNumeric = actualKing.match(/-?\d+/)?.[0] || actualKing;
+  if (Number.isFinite(expectedKing)) assert.equal(actualKingNumeric, String(expectedKing), 'expected kingunit to remap');
+  else assert.equal(actualKing, 'None', 'expected kingunit to clear');
 });
 
 test('Import Civ from Tides: does NOT increase tech count (no baggage)', (t) => {
@@ -510,6 +739,38 @@ test('Import Tech from Tides: cost and era fields match source', (t) => {
   }
 });
 
+test('Import Tech from Tides: prerequisite tech fields are remapped by civilopedia key or cleared', (t) => {
+  const tidesBundle = loadBundle({
+    mode: 'scenario',
+    civ3Path: CIV3_ROOT,
+    scenarioPath: TIDES_BIQ
+  });
+  const sourceTechMap = new Map(buildReferenceIndexMap(tidesBundle, 'technologies').map((item) => [item.index, item.civilopediaKey]));
+  const r = runTidesImport(t, 'technologies', 'TECH', 'TECH_',
+    (b) => b.tabs.technologies.entries.find((e) => (
+      ['prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4'].some((key) => {
+        const value = fieldVal(e, key);
+        return value !== undefined && value !== '-1' && value !== '' && value !== 'None';
+      })
+    )) || b.tabs.technologies.entries[0]);
+  if (!r) return;
+  assert.equal(r.saveResult.ok, true, String(r.saveResult.error || 'save failed'));
+  const reloaded = getEntry(r.after, 'technologies', r.newKey);
+  assert.ok(reloaded, 'expected reloaded tech entry');
+  const targetTechMap = new Map(buildReferenceIndexMap(r.before, 'technologies').map((item) => [item.civilopediaKey, item.index]));
+  ['prerequisite1', 'prerequisite2', 'prerequisite3', 'prerequisite4'].forEach((key) => {
+    const srcIndex = Number.parseInt(String(fieldVal(r.srcEntry, key) || '').match(/-?\d+/)?.[0] || '', 10);
+    const sourceKey = sourceTechMap.get(srcIndex);
+    const expectedTargetIndex = sourceKey ? targetTechMap.get(sourceKey) : undefined;
+    const actual = String(fieldVal(reloaded, key) || '');
+    if (Number.isFinite(expectedTargetIndex)) {
+      assert.equal(actual, String(expectedTargetIndex), `expected ${key} to remap to ${expectedTargetIndex}`);
+    } else {
+      assert.equal(actual, 'None', `expected ${key} to clear when source tech is absent`);
+    }
+  });
+});
+
 test('Import Tech from Tides: does NOT increase civ or resource count (no baggage)', (t) => {
   const r = runTidesImport(t, 'technologies', 'TECH', 'TECH_', null);
   if (!r) return;
@@ -560,23 +821,36 @@ test('Import Resource from Tides: no baggage — tech count unchanged', (t) => {
     'improvement count must not change when importing a resource');
 });
 
-test('Import Resource from Tides: prerequisite field value is preserved as-is', (t) => {
-  // The raw prerequisite index is copied as-is (points into the target BIQ index space).
-  // What matters is that the field IS written — not that it resolves to anything Tides-specific.
-  const r = runTidesImport(t, 'resources', 'GOOD', 'GOOD_', null);
+test('Import Resource from Tides: prerequisite technology is remapped by civilopedia key or cleared', (t) => {
+  const r = runTidesImport(t, 'resources', 'GOOD', 'GOOD_',
+    (b) => b.tabs.resources.entries.find((e) => {
+      const prereq = fieldVal(e, 'prerequisite');
+      return prereq !== undefined && prereq !== '-1' && prereq !== '' && prereq !== 'None';
+    }) || b.tabs.resources.entries[0]);
   if (!r) return;
   assert.equal(r.saveResult.ok, true, String(r.saveResult.error || 'save failed'));
   const reloaded = getEntry(r.after, 'resources', r.newKey);
   assert.ok(reloaded, 'expected reloaded resource entry');
-  // prerequisite field should exist and contain a parseable integer value
-  // (may be raw like '-1', display like 'None', or formatted like 'Mysticism (9)')
   const prereqField = (reloaded.biqFields || []).find(
     (f) => String(f && (f.baseKey || f.key) || '').toLowerCase() === 'prerequisite'
   );
   assert.ok(prereqField, 'expected prerequisite field to exist on imported resource');
-  const prereqStr = String(prereqField.value || '');
-  const numericMatch = prereqStr.match(/-?\d+/);
-  assert.ok(numericMatch, `expected prerequisite to contain a numeric value, got: ${prereqStr}`);
+  const sourceTechIndex = Number.parseInt(String(fieldVal(r.srcEntry, 'prerequisite') || '').match(/-?\d+/)?.[0] || '', 10);
+  const sourceTechMap = new Map(buildReferenceIndexMap(loadBundle({
+    mode: 'scenario',
+    civ3Path: CIV3_ROOT,
+    scenarioPath: TIDES_BIQ
+  }), 'technologies').map((item) => [item.index, item.civilopediaKey]));
+  const targetTechMap = new Map(buildReferenceIndexMap(r.before, 'technologies').map((item) => [item.civilopediaKey, item.index]));
+  const sourceTechKey = sourceTechMap.get(sourceTechIndex);
+  const expectedTargetIndex = sourceTechKey ? targetTechMap.get(sourceTechKey) : undefined;
+  if (Number.isFinite(expectedTargetIndex)) {
+    const actualNumeric = String(prereqField.value || '').match(/-?\d+/)?.[0] || String(prereqField.value || '');
+    assert.equal(actualNumeric, String(expectedTargetIndex),
+      `expected prerequisite tech to remap to target index ${expectedTargetIndex}`);
+  } else {
+    assert.equal(String(prereqField.value), 'None', 'expected unmatched prerequisite tech to clear');
+  }
 });
 
 // --- Improvement import ---
@@ -635,6 +909,31 @@ test('Import Government from Tides: corruption level field matches source', (t) 
   }
 });
 
+test('Import Government from Tides: prerequisite technology is remapped by civilopedia key or cleared', (t) => {
+  const tidesBundle = loadBundle({
+    mode: 'scenario',
+    civ3Path: CIV3_ROOT,
+    scenarioPath: TIDES_BIQ
+  });
+  const sourceTechMap = new Map(buildReferenceIndexMap(tidesBundle, 'technologies').map((item) => [item.index, item.civilopediaKey]));
+  const r = runTidesImport(t, 'governments', 'GOVT', 'GOVT_',
+    (b) => b.tabs.governments.entries.find((e) => {
+      const value = fieldVal(e, 'prerequisitetechnology');
+      return value !== undefined && value !== '-1' && value !== '' && value !== 'None';
+    }) || b.tabs.governments.entries[0]);
+  if (!r) return;
+  assert.equal(r.saveResult.ok, true, String(r.saveResult.error || 'save failed'));
+  const reloaded = getEntry(r.after, 'governments', r.newKey);
+  assert.ok(reloaded, 'expected reloaded government entry');
+  const targetTechMap = new Map(buildReferenceIndexMap(r.before, 'technologies').map((item) => [item.civilopediaKey, item.index]));
+  const srcIndex = Number.parseInt(String(fieldVal(r.srcEntry, 'prerequisitetechnology') || '').match(/-?\d+/)?.[0] || '', 10);
+  const sourceKey = sourceTechMap.get(srcIndex);
+  const expected = sourceKey ? targetTechMap.get(sourceKey) : undefined;
+  const actual = String(fieldVal(reloaded, 'prerequisitetechnology') || '');
+  if (Number.isFinite(expected)) assert.equal(actual, String(expected), 'expected prerequisite technology to remap');
+  else assert.equal(actual, 'None', 'expected prerequisite technology to clear');
+});
+
 test('Import Government from Tides: no baggage — section counts unchanged', (t) => {
   const r = runTidesImport(t, 'governments', 'GOVT', 'GOVT_', null);
   if (!r) return;
@@ -668,6 +967,49 @@ test('Import Unit from Tides: attack/defense fields match source', (t) => {
   }
 });
 
+test('Import Arctic Ape from Tides preserves hit-point bonus and support flag', (t) => {
+  const r = runTidesImport(
+    t,
+    'units',
+    'PRTO',
+    'PRTO_',
+    (bundle) => pickEntry(bundle, 'units', (entry) => String(entry && entry.name || '') === 'Arctic Ape')
+  );
+  if (!r) return;
+  assert.equal(r.saveResult.ok, true, String(r.saveResult.error || 'save failed'));
+  const reloaded = getEntry(r.after, 'units', r.newKey);
+  assert.ok(reloaded, 'expected reloaded Arctic Ape entry');
+  assert.equal(fieldVal(reloaded, 'hitpointbonus'), fieldVal(r.srcEntry, 'hitpointbonus'));
+  assert.equal(fieldVal(reloaded, 'requiressupport'), fieldVal(r.srcEntry, 'requiressupport'));
+});
+
+test('Import Arctic Ape from Tides clears unmatched stealth targets before save and after reload', (t) => {
+  const r = runTidesImport(
+    t,
+    'units',
+    'PRTO',
+    'PRTO_',
+    (bundle) => pickEntry(bundle, 'units', (entry) => String(entry && entry.name || '') === 'Arctic Ape')
+  );
+  if (!r) return;
+  const preSaveTargets = (r.importedEntry.biqFields || [])
+    .filter((field) => String(field && (field.baseKey || field.key) || '') === 'stealth_target')
+    .map((field) => String(field.value || '').trim())
+    .filter(Boolean);
+  assert.equal(preSaveTargets.length, 0);
+  assert.equal(fieldVal(r.importedEntry, 'numstealthtargets'), '0');
+
+  assert.equal(r.saveResult.ok, true, String(r.saveResult.error || 'save failed'));
+  const reloaded = getEntry(r.after, 'units', r.newKey);
+  assert.ok(reloaded, 'expected reloaded Arctic Ape entry');
+  const postSaveTargets = (reloaded.biqFields || [])
+    .filter((field) => String(field && (field.baseKey || field.key) || '') === 'stealth_target')
+    .map((field) => String(field.value || '').trim())
+    .filter(Boolean);
+  assert.equal(postSaveTargets.length, 0);
+  assert.equal(fieldVal(reloaded, 'numstealthtargets'), '0');
+});
+
 test('Import Unit from Tides: no baggage — no extra sections added', (t) => {
   const r = runTidesImport(t, 'units', 'PRTO', 'PRTO_', null);
   if (!r) return;
@@ -676,6 +1018,76 @@ test('Import Unit from Tides: no baggage — no extra sections added', (t) => {
     assert.equal(countSection(r.after, code), countSection(r.before, code),
       `${code} count must not change when importing a unit`);
   }
+});
+
+test('Delete civ shifts unit Available To bitmasks', (t) => {
+  const ctx = setupScenario(BASE_BIQ);
+  if (!ctx) return t.skip(`Source BIQ not found: ${BASE_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+
+  const before = reload(c3xDir, biqPath);
+  const unit = getEntry(before, 'units', 'PRTO_WARRIOR') || before.tabs.units.entries[0];
+  assert.ok(unit, 'expected a unit to edit');
+  const availableField = unit.biqFields.find((field) => String(field.baseKey || field.key || '').toLowerCase() === 'availableto');
+  assert.ok(availableField, 'expected availableto field');
+
+  // Step 1: persist a known mask to disk. Bit 0 is barbarians; delete Rome (raw RACE index 1).
+  availableField.value = String((1 << 0) | (1 << 1) | (1 << 2) | (1 << 5));
+  const setMaskResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      units: { entries: [unit] }
+    }
+  });
+  assert.equal(setMaskResult.ok, true, String(setMaskResult.error || 'save failed'));
+
+  // Step 2: delete the civ with no concurrent unit edit, so we observe pure cascade behavior.
+  const deleteResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      civilizations: { recordOps: [{ op: 'delete', recordRef: 'RACE_ROMANS' }] }
+    }
+  });
+  assert.equal(deleteResult.ok, true, String(deleteResult.error || 'delete save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  const reloadedUnit = getEntry(after, 'units', String(unit.civilopediaKey || ''));
+  assert.ok(reloadedUnit, 'expected reloaded unit');
+  assert.equal(fieldVal(reloadedUnit, 'availableto'), String((1 << 0) | (1 << 1) | (1 << 4)));
+});
+
+test('Adding a civ does not rewrite existing unit Available To bitmasks', (t) => {
+  const ctx = setupScenario(TIDES_BIQ);
+  if (!ctx) return t.skip(`Source BIQ not found: ${TIDES_BIQ}`);
+  const { c3xDir, biqPath } = ctx;
+
+  const before = reload(c3xDir, biqPath);
+  const beforeUnit = getEntry(before, 'units', 'PRTO_WARRIOR') || before.tabs.units.entries[0];
+  assert.ok(beforeUnit, 'expected comparable unit before civ add');
+  const beforeMask = fieldVal(beforeUnit, 'availableto');
+
+  const newKey = `RACE_ADD_AVAIL_${Date.now()}`.toUpperCase();
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3xDir,
+    civ3Path: CIV3_ROOT,
+    scenarioPath: biqPath,
+    tabs: {
+      civilizations: { recordOps: [{ op: 'add', newRecordRef: newKey }] }
+    }
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const after = reload(c3xDir, biqPath);
+  const afterUnit = getEntry(after, 'units', String(beforeUnit.civilopediaKey || ''));
+  assert.ok(afterUnit, 'expected comparable unit after civ add');
+  assert.equal(fieldVal(afterUnit, 'availableto'), beforeMask);
 });
 
 // ---------------------------------------------------------------------------

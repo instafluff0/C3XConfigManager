@@ -11,6 +11,7 @@ const { projectResourceBiqFields, collapseResourceBiqFields } = require('./biq/g
 const { projectGovernmentBiqFields, collapseGovernmentBiqFields } = require('./biq/govtCodec');
 const { projectTechnologyBiqFields, collapseTechnologyBiqFields } = require('./biq/techCodec');
 const { projectUnitBiqFields, collapseUnitBiqFields } = require('./biq/unitCodec');
+const { parseAllSections } = require('./biq/biqSections');
 
 const FILE_SPECS = {
   base: {
@@ -1843,7 +1844,13 @@ function deriveScenarioPathContext({
   }
 
   const writableRoots = dedupePathList([biqRoot, ...searchRoots]);
-  const contentWriteRoot = pickPreferredScenarioContentRoot(searchRoots);
+  const localSearchRoots = biqRoot
+    ? searchRoots.filter((root) => isPathWithinRoot(root, biqRoot))
+    : [];
+  const contentRootCandidates = biqInSharedScenarios
+    ? searchRoots
+    : dedupePathList([biqRoot, ...localSearchRoots]);
+  const contentWriteRoot = pickPreferredScenarioContentRoot(contentRootCandidates);
   return {
     biqRoot,
     searchRoots,
@@ -5163,7 +5170,10 @@ function buildSavePlan(payload) {
       saveReport
     });
 
-    const biqRecordOps = collectBiqReferenceRecordOps(payload.tabs || {});
+    const biqRecordOps = resolveExternalImportedPrtoRecordOps(
+      collectBiqReferenceRecordOps(payload.tabs || {}),
+      civ3Path
+    );
     const biqStructureRecordOps = collectBiqStructureRecordOps(payload.tabs || {});
     const biqMapStructureOps = collectBiqMapStructureOps(payload.tabs || {});
     const biqMapRecordOps = collectBiqMapRecordOps(payload.tabs || {});
@@ -6038,12 +6048,17 @@ function collectBiqReferenceRecordOps(tabs) {
         const newRecordRef = String(op.newRecordRef || '').trim().toUpperCase();
         if (!newRecordRef) return;
         const copyFromRef = String(op.copyFromRef || '').trim().toUpperCase();
-        ops.push({
+        const sourceRef = String(op.sourceRef || '').trim().toUpperCase();
+        const importArtFrom = String(op.importArtFrom || '').trim();
+        const nextOp = {
           op: copyFromRef ? 'copy' : 'add',
           sectionCode,
           newRecordRef,
           copyFromRef
-        });
+        };
+        if (sourceRef) nextOp.sourceRef = sourceRef;
+        if (importArtFrom) nextOp.importArtFrom = importArtFrom;
+        ops.push(nextOp);
         return;
       }
       if (kind === 'copy') {
@@ -6070,6 +6085,47 @@ function collectBiqReferenceRecordOps(tabs) {
     });
   }
   return ops;
+}
+
+function resolveExternalImportedPrtoRecordOps(ops, civ3Path) {
+  if (!Array.isArray(ops) || ops.length === 0) return [];
+  const parsedCache = new Map();
+  const loadParsedScenario = (scenarioPath) => {
+    const key = String(scenarioPath || '').trim();
+    if (!key) return null;
+    if (parsedCache.has(key)) return parsedCache.get(key);
+    const inflated = inflateBiqIfNeeded(key, civ3Path);
+    if (!inflated.ok) {
+      parsedCache.set(key, null);
+      return null;
+    }
+    const parsed = parseAllSections(inflated.buffer);
+    const value = parsed && parsed.ok ? parsed : null;
+    parsedCache.set(key, value);
+    return value;
+  };
+  const findExternalRecord = (parsed, sectionCode, recordRef) => {
+    const code = String(sectionCode || '').trim().toUpperCase();
+    const targetRef = String(recordRef || '').trim().toUpperCase();
+    const section = ((parsed && parsed.sections) || []).find((entry) => String(entry && entry.code || '').trim().toUpperCase() === code);
+    if (!section || !Array.isArray(section.records) || !targetRef) return null;
+    return section.records.find((record) => String(record && record.civilopediaEntry || '').trim().toUpperCase() === targetRef) || null;
+  };
+  return ops.map((op) => {
+    const kind = String(op && op.op || '').trim().toLowerCase();
+    const sectionCode = String(op && op.sectionCode || '').trim().toUpperCase();
+    const sourceScenarioPath = String(op && op.importArtFrom || '').trim();
+    const sourceRef = String((op && (op.sourceRef || op.copyFromRef)) || '').trim().toUpperCase();
+    if (kind !== 'add' || !sourceScenarioPath || !sourceRef) return op;
+    const parsed = loadParsedScenario(sourceScenarioPath);
+    const externalRecord = findExternalRecord(parsed, sectionCode, sourceRef);
+    if (!externalRecord) return op;
+    return {
+      ...op,
+      op: 'copy',
+      externalRecord
+    };
+  });
 }
 
 function collectBiqStructureRecordOps(tabs) {

@@ -182,3 +182,23 @@ test('delete cascade remaps supported unit references', () => {
   assert.equal(parsed.sections.find((s) => s.code === 'LEAD').records[0].numStartUnits, 1);
   assert.equal(parsed.sections.find((s) => s.code === 'UNIT').records[0].pRTONumber, 1);
 });
+
+test('delete cascade shifts PRTO availableTo bitmask when a civilization is deleted', () => {
+  const parsed = runCascade({
+    sections: [
+      section('RACE', [
+        { civilopediaEntry: 'RACE_0' },
+        { civilopediaEntry: 'RACE_2' }
+      ]),
+      section('PRTO', [
+        { availableTo: (1 << 0) | (1 << 1) | (1 << 2) | (1 << 5) }
+      ])
+    ],
+    edits: [{ op: 'delete', sectionCode: 'RACE', recordRef: 'RACE_1' }],
+    originalRefsBySection: { RACE: ['RACE_0', 'RACE_1', 'RACE_2'] }
+  });
+
+  // Quint-style behavior: remove deleted civ bit and shift later civ bits down within the live civ range.
+  // Bits beyond the existing civ list are left alone.
+  assert.equal(parsed.sections.find((s) => s.code === 'PRTO').records[0].availableTo, (1 << 0) | (1 << 1) | (1 << 5));
+});
