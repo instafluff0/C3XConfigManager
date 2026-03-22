@@ -10,16 +10,28 @@
 // Privacy: all absolute paths should go through log.rel() before logging.
 // log.rel() returns a path relative to the Civ3 root, so user home-directory
 // components (e.g. /Users/johndoe/...) are never written to the log.
+//
+// In-app debug log forwarding:
+//   log.setForwarder((level, category, msg) => { ... });
+//   Call this from main.js after the BrowserWindow is ready to forward log
+//   entries to the renderer's in-app debug log panel via IPC.
 
 const path = require('node:path');
 const os = require('node:os');
 
 let _civ3Root = '';
+let _forwarder = null;
 
 // Set the Civ3 root path used by rel() for path sanitization.
 // Call this whenever civ3Path is known (settings load, bundle load, etc.).
 function setCiv3Root(root) {
   _civ3Root = String(root || '').replace(/[/\\]+$/, '');
+}
+
+// Set a forwarding function called on every log entry in addition to console output.
+// Used by main.js to push log messages to the renderer's in-app debug log panel.
+function setForwarder(fn) {
+  _forwarder = typeof fn === 'function' ? fn : null;
 }
 
 // Returns a privacy-safe representation of an absolute path for logging:
@@ -66,9 +78,19 @@ function _fmt(level, category, msg) {
   return `[C3X][${_stamp()}][${level}][${category}] ${msg}`;
 }
 
-function debug(category, msg) { console.log(_fmt('DBG', category, msg)); }
-function info(category, msg)  { console.log(_fmt('INF', category, msg)); }
-function warn(category, msg)  { console.warn(_fmt('WRN', category, msg)); }
-function error(category, msg) { console.error(_fmt('ERR', category, msg)); }
+function _dispatch(level, category, msg) {
+  const formatted = _fmt(level, category, msg);
+  if (level === 'WRN') console.warn(formatted);
+  else if (level === 'ERR') console.error(formatted);
+  else console.log(formatted);
+  if (_forwarder) {
+    try { _forwarder(level, category, msg); } catch (_) {}
+  }
+}
 
-module.exports = { debug, info, warn, error, rel, relList, setCiv3Root };
+function debug(category, msg) { _dispatch('DBG', category, msg); }
+function info(category, msg)  { _dispatch('INF', category, msg); }
+function warn(category, msg)  { _dispatch('WRN', category, msg); }
+function error(category, msg) { _dispatch('ERR', category, msg); }
+
+module.exports = { debug, info, warn, error, rel, relList, setCiv3Root, setForwarder };

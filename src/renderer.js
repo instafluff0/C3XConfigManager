@@ -15,9 +15,9 @@ function _dbgRelPath(p) {
   return raw.replace(/\\/g, '/').split('/').pop() || raw;
 }
 function _dbgStamp() { return new Date().toISOString().slice(0, 23).replace('T', ' '); }
-function _dbgLog(level, cat, msg) { console.log(`[C3X][${_dbgStamp()}][${level}][${cat}] ${msg}`); }
-function _dbgWarn(cat, msg)  { console.warn(`[C3X][${_dbgStamp()}][WRN][${cat}] ${msg}`); }
-function _dbgError(cat, msg) { console.error(`[C3X][${_dbgStamp()}][ERR][${cat}] ${msg}`); }
+function _dbgLog(level, cat, msg) { appendDebugLog(`[${level}][${cat}] ${msg}`); }
+function _dbgWarn(cat, msg)  { appendDebugLog(`[WRN][${cat}] ${msg}`); }
+function _dbgError(cat, msg) { appendDebugLog(`[ERR][${cat}] ${msg}`); }
 // ---------------------------------------------------------------------------
 
 const state = {
@@ -28362,6 +28362,12 @@ async function init() {
         state.performanceMenuUnsubscribe = null;
       }
     }, { once: true });
+  }
+
+  if (window.c3xManager && typeof window.c3xManager.onLog === 'function') {
+    window.c3xManager.onLog((entry) => {
+      appendDebugLog(`[${entry.level}][${entry.category}] ${entry.msg}`);
+    });
   }
 
   [el.c3xPath, el.civ3Path, el.scenarioPath].forEach((input) => {

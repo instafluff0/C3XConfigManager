@@ -21,6 +21,16 @@ contextBridge.exposeInMainWorld('c3xManager', {
       ipcRenderer.removeListener('manager:performance-mode-selected', listener);
     };
   },
+  onLog: (handler) => {
+    if (typeof handler !== 'function') {
+      return () => {};
+    }
+    const listener = (_event, entry) => handler(entry);
+    ipcRenderer.on('manager:log', listener);
+    return () => {
+      ipcRenderer.removeListener('manager:log', listener);
+    };
+  },
   getPreview: (payload) => ipcRenderer.invoke('manager:get-preview', payload),
   loadBundle: (payload) => ipcRenderer.invoke('manager:load-bundle', payload),
   saveBundle: (payload) => ipcRenderer.invoke('manager:save-bundle', payload),

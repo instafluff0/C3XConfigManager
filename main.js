@@ -208,6 +208,18 @@ function createWindow() {
     }
   });
 
+  // Forward main-process log entries to the renderer's in-app debug log panel.
+  win.webContents.on('did-finish-load', () => {
+    log.setForwarder((level, category, msg) => {
+      if (!win.isDestroyed()) {
+        win.webContents.send('manager:log', { level, category, msg });
+      }
+    });
+  });
+  win.on('closed', () => {
+    log.setForwarder(null);
+  });
+
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
 }
 

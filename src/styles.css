@@ -762,6 +762,10 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.about-modal {
+  width: 700px;
+}
+
 .scenario-search-folder-modal {
   width: min(520px, 100%);
   gap: 14px;
@@ -5443,69 +5447,6 @@ details > summary:focus-visible {
   line-height: 1;
   letter-spacing: 0.03em;
   user-select: none;
-}
-
-.app-version-btn {
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-
-.app-version-btn:hover {
-  background: rgba(255, 255, 255, 0.85);
-  border-color: rgba(36, 25, 64, 0.28);
-  color: #5b4fc7;
-}
-
-.about-modal {
-  width: min(560px, 100%);
-}
-
-.about-version {
-  font-size: 0.8rem;
-  color: #7a86b0;
-  margin: -4px 0 0;
-}
-
-.about-desc {
-  margin-top: 2px;
-}
-
-.about-colophon {
-  font-size: 0.84rem;
-  color: #4f5a80;
-  line-height: 1.5;
-}
-
-.about-thanks-heading {
-  margin: 4px 0 2px;
-  font-size: 0.9rem;
-  letter-spacing: -0.01em;
-}
-
-.about-thanks-list {
-  margin: 0;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.about-thanks-list li {
-  font-size: 0.84rem;
-  color: #4f5a80;
-  line-height: 1.45;
-}
-
-.about-thanks-list a,
-.about-colophon a {
-  color: #5b4fc7;
-  text-decoration: none;
-}
-
-.about-thanks-list a:hover,
-.about-colophon a:hover {
-  text-decoration: underline;
 }
 
 .app-credit {
