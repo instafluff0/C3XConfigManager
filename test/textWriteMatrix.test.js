@@ -137,10 +137,10 @@ function setupScenarioTextFiles() {
 function makeEntry(civilopediaKey, overrides = {}) {
   return {
     civilopediaKey,
-    overview: `Updated ${civilopediaKey} overview`,
-    originalOverview: `Original ${civilopediaKey} overview`,
-    description: `Updated ${civilopediaKey} description`,
-    originalDescription: `Original ${civilopediaKey} description`,
+    civilopediaSection1: `Updated ${civilopediaKey} overview`,
+    originalCivilopediaSection1: `Original ${civilopediaKey} overview`,
+    civilopediaSection2: `Updated ${civilopediaKey} description`,
+    originalCivilopediaSection2: `Original ${civilopediaKey} description`,
     iconPaths: [],
     originalIconPaths: [],
     racePaths: [],
@@ -161,10 +161,10 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
       type: 'reference',
       entries: [
         makeEntry('RACE_TEST_CIV', {
-          overview: 'Updated civ overview text.',
-          originalOverview: 'Original civ overview line.',
-          description: 'Updated civ description text.',
-          originalDescription: 'Original civ description.',
+          civilopediaSection1: 'Updated civ overview text.',
+          originalCivilopediaSection1: 'Original civ overview line.',
+          civilopediaSection2: 'Updated civ description text.',
+          originalCivilopediaSection2: 'Original civ description.',
           iconPaths: [
             'art\\civilopedia\\icons\\races\\new-civ-large.pcx',
             'art\\civilopedia\\icons\\races\\new-civ-small.pcx'
@@ -185,10 +185,10 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
       type: 'reference',
       entries: [
         makeEntry('TECH_TEST_TECH', {
-          overview: 'Updated tech overview text.',
-          originalOverview: 'Original tech overview.',
-          description: 'Updated tech description text.',
-          originalDescription: 'Original tech description.',
+          civilopediaSection1: 'Updated tech overview text.',
+          originalCivilopediaSection1: 'Original tech overview.',
+          civilopediaSection2: 'Updated tech description text.',
+          originalCivilopediaSection2: 'Original tech description.',
           iconPaths: [
             'art\\civilopedia\\icons\\tech chooser\\new-tech-small.pcx',
             'art\\civilopedia\\icons\\tech chooser\\new-tech-large.pcx'
@@ -205,10 +205,10 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
       type: 'reference',
       entries: [
         makeEntry('GOOD_TEST_RESOURCE', {
-          overview: 'Updated resource overview text.',
-          originalOverview: 'Original resource overview.',
-          description: 'Updated resource description text.',
-          originalDescription: 'Original resource description.',
+          civilopediaSection1: 'Updated resource overview text.',
+          originalCivilopediaSection1: 'Original resource overview.',
+          civilopediaSection2: 'Updated resource description text.',
+          originalCivilopediaSection2: 'Original resource description.',
           iconPaths: [
             'art\\civilopedia\\icons\\resources\\new-resource-large.pcx',
             'art\\civilopedia\\icons\\resources\\new-resource-small.pcx'
@@ -225,10 +225,10 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
       type: 'reference',
       entries: [
         makeEntry('BLDG_TEST_IMPROVEMENT', {
-          overview: 'Updated improvement overview text.',
-          originalOverview: 'Original improvement overview.',
-          description: 'Updated improvement description text.',
-          originalDescription: 'Original improvement description.',
+          civilopediaSection1: 'Updated improvement overview text.',
+          originalCivilopediaSection1: 'Original improvement overview.',
+          civilopediaSection2: 'Updated improvement description text.',
+          originalCivilopediaSection2: 'Original improvement description.',
           iconPaths: [
             'art\\civilopedia\\icons\\buildings\\new-impr-large.pcx',
             'art\\civilopedia\\icons\\buildings\\new-impr-small.pcx'
@@ -245,10 +245,10 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
       type: 'reference',
       entries: [
         makeEntry('GOVT_TEST_GOV', {
-          overview: 'Updated government overview text.',
-          originalOverview: 'Original government overview.',
-          description: 'Updated government description text.',
-          originalDescription: 'Original government description.'
+          civilopediaSection1: 'Updated government overview text.',
+          originalCivilopediaSection1: 'Original government overview.',
+          civilopediaSection2: 'Updated government description text.',
+          originalCivilopediaSection2: 'Original government description.'
         })
       ]
     },
@@ -257,10 +257,10 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
       type: 'reference',
       entries: [
         makeEntry('PRTO_TEST_UNIT', {
-          overview: 'Updated unit overview text.',
-          originalOverview: 'Original unit overview.',
-          description: 'Updated unit description text.',
-          originalDescription: 'Original unit description.',
+          civilopediaSection1: 'Updated unit overview text.',
+          originalCivilopediaSection1: 'Original unit overview.',
+          civilopediaSection2: 'Updated unit description text.',
+          originalCivilopediaSection2: 'Original unit description.',
           animationName: 'TestUnitNew',
           originalAnimationName: 'TestUnit',
           unitIniEditor: {}
@@ -272,10 +272,10 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
       type: 'reference',
       entries: [
         makeEntry('GCON_TEST_CONCEPT', {
-          overview: 'Updated concept overview text.',
-          originalOverview: 'Original concept overview.',
-          description: 'Updated concept description text.',
-          originalDescription: 'Original concept description.'
+          civilopediaSection1: 'Updated concept overview text.',
+          originalCivilopediaSection1: 'Original concept overview.',
+          civilopediaSection2: 'Updated concept description text.',
+          originalCivilopediaSection2: 'Original concept description.'
         })
       ]
     },
@@ -284,10 +284,10 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
       type: 'reference',
       entries: [
         makeEntry('TERR_TEST_TERRAIN', {
-          overview: 'Updated terrain overview text.',
-          originalOverview: 'Original terrain overview.',
-          description: 'Updated terrain description text.',
-          originalDescription: 'Original terrain description.'
+          civilopediaSection1: 'Updated terrain overview text.',
+          originalCivilopediaSection1: 'Original terrain overview.',
+          civilopediaSection2: 'Updated terrain description text.',
+          originalCivilopediaSection2: 'Original terrain description.'
         })
       ]
     },
@@ -296,10 +296,10 @@ test('text write matrix: all supported Civilopedia/PediaIcons edit kinds persist
       type: 'reference',
       entries: [
         makeEntry('TFRM_TEST_WORK', {
-          overview: 'Updated worker overview text.',
-          originalOverview: 'Original worker action overview.',
-          description: 'Updated worker description text.',
-          originalDescription: 'Original worker action description.'
+          civilopediaSection1: 'Updated worker overview text.',
+          originalCivilopediaSection1: 'Original worker action overview.',
+          civilopediaSection2: 'Updated worker description text.',
+          originalCivilopediaSection2: 'Original worker action description.'
         })
       ]
     }
@@ -397,10 +397,10 @@ test('large Civilopedia file: single-entry edit keeps all other entries parseabl
       entries: [
         {
           civilopediaKey: 'GCON_BULK_111',
-          overview: 'Overview 111 edited',
-          originalOverview: 'Overview 111',
-          description: 'Description 111 edited',
-          originalDescription: 'Description 111',
+          civilopediaSection1: 'Overview 111 edited',
+          originalCivilopediaSection1: 'Overview 111',
+          civilopediaSection2: 'Description 111 edited',
+          originalCivilopediaSection2: 'Description 111',
           iconPaths: [],
           originalIconPaths: [],
           racePaths: [],

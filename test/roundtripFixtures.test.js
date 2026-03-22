@@ -147,10 +147,10 @@ test('saveBundle refuses writing protected base Civ3 files', () => {
         entries: [
           {
             civilopediaKey: 'RACE_TEST',
-            overview: 'Changed',
-            originalOverview: 'Legacy',
-            description: '',
-            originalDescription: '',
+            civilopediaSection1: 'Changed',
+            originalCivilopediaSection1: 'Legacy',
+            civilopediaSection2: '',
+            originalCivilopediaSection2: '',
             iconPaths: [],
             originalIconPaths: [],
             racePaths: [],
@@ -203,10 +203,10 @@ test('saveBundle refuses writing outside scenario write roots', () => {
         entries: [
           {
             civilopediaKey: 'RACE_TEST',
-            overview: 'Changed',
-            originalOverview: 'Legacy',
-            description: '',
-            originalDescription: '',
+            civilopediaSection1: 'Changed',
+            originalCivilopediaSection1: 'Legacy',
+            civilopediaSection2: '',
+            originalCivilopediaSection2: '',
             iconPaths: [],
             originalIconPaths: [],
             racePaths: [],

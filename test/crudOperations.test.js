@@ -281,8 +281,8 @@ function simulateImportEntry(sourceEntry, newKey) {
   entry.originalIconPaths = [];
   entry.originalRacePaths = [];
   entry.originalAnimationName = '';
-  entry.originalOverview = '';
-  entry.originalDescription = '';
+  entry.originalCivilopediaSection1 = '';
+  entry.originalCivilopediaSection2 = '';
   return entry;
 }
 

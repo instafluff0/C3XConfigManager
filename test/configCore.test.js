@@ -266,10 +266,10 @@ test('scenario Civilopedia save preserves windows-1252 text while applying edits
       entries: [
         {
           civilopediaKey: 'RACE_AZTECS',
-          overview: 'Updated overview text',
-          originalOverview: 'Legacy Aztecs overview',
-          description: 'Legacy entry',
-          originalDescription: 'Legacy entry',
+          civilopediaSection1: 'Updated overview text',
+          originalCivilopediaSection1: 'Legacy Aztecs overview',
+          civilopediaSection2: 'Legacy entry',
+          originalCivilopediaSection2: 'Legacy entry',
           iconPaths: [],
           originalIconPaths: [],
           racePaths: [],
@@ -333,10 +333,10 @@ test('saveBundle rolls back earlier file writes if a later target fails', () => 
       entries: [
         {
           civilopediaKey: 'RACE_AZTECS',
-          overview: 'Changed overview text',
-          originalOverview: 'Original overview text',
-          description: '',
-          originalDescription: '',
+          civilopediaSection1: 'Changed overview text',
+          originalCivilopediaSection1: 'Original overview text',
+          civilopediaSection2: '',
+          originalCivilopediaSection2: '',
           iconPaths: [],
           originalIconPaths: [],
           racePaths: [],

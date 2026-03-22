@@ -1285,16 +1285,16 @@ function collectPendingWritePathsFromDirtyTabs() {
       const cleanEntry = key ? getCleanReferenceEntry(tabKey, key) : null;
       if (!hasReferenceEntryChangedFromClean(entry, cleanEntry)) return;
       const meta = entry && entry.sourceMeta ? entry.sourceMeta : {};
-      const changedOverview = !isEqual(String(entry && entry.overview || ''), String(cleanEntry && cleanEntry.overview || ''));
-      const changedDescription = !isEqual(String(entry && entry.description || ''), String(cleanEntry && cleanEntry.description || ''));
+      const changedCivilopediaSection1 = !isEqual(String(entry && entry.civilopediaSection1 || ''), String(cleanEntry && cleanEntry.civilopediaSection1 || ''));
+      const changedCivilopediaSection2 = !isEqual(String(entry && entry.civilopediaSection2 || ''), String(cleanEntry && cleanEntry.civilopediaSection2 || ''));
       const changedIconPaths = !isEqual(normalizeRefList(entry && entry.iconPaths), normalizeRefList(cleanEntry && cleanEntry.iconPaths));
       const changedAnimationName = !isEqual(String(entry && entry.animationName || ''), String(cleanEntry && cleanEntry.animationName || ''));
       const changedRacePaths = !isEqual(normalizeRefList(entry && entry.racePaths), normalizeRefList(cleanEntry && cleanEntry.racePaths));
       const changedBiq = !isEqual(normalizeBiqFields(entry && entry.biqFields), normalizeBiqFields(cleanEntry && cleanEntry.biqFields));
 
-      if (changedOverview || changedDescription) {
-        addPath((meta && meta.overview && meta.overview.writePath) || scenarioCivilopediaFallback);
-        addPath((meta && meta.description && meta.description.writePath) || scenarioCivilopediaFallback);
+      if (changedCivilopediaSection1 || changedCivilopediaSection2) {
+        addPath((meta && meta.civilopediaSection1 && meta.civilopediaSection1.writePath) || scenarioCivilopediaFallback);
+        addPath((meta && meta.civilopediaSection2 && meta.civilopediaSection2.writePath) || scenarioCivilopediaFallback);
       }
       if (changedIconPaths || changedAnimationName || changedRacePaths) {
         addPath((meta && meta.iconPaths && meta.iconPaths.writePath) || scenarioPediaIconsFallback);
@@ -3648,10 +3648,10 @@ function makeSyntheticReferenceEntryFromBiqRecord(tabKey, record, sectionCode) {
     civilopediaKey,
     biqIndex: Number.isFinite(idx) ? idx : null,
     name,
-    overview: '',
-    originalOverview: '',
-    description: '',
-    originalDescription: '',
+    civilopediaSection1: '',
+    originalCivilopediaSection1: '',
+    civilopediaSection2: '',
+    originalCivilopediaSection2: '',
     techDependencies: [],
     iconPaths: [],
     originalIconPaths: [],
@@ -8963,8 +8963,7 @@ const QUINT_CIV_RULE_VISIBLE_KEYS = new Set([
   'freetech1index', 'freetech2index', 'freetech3index', 'freetech4index',
   'managecitizens', 'manageproduction', 'nowonders', 'nosmallwonders', 'emphasizefood', 'emphasizeshields', 'emphasizetrade',
   'flavor_1', 'flavor_2', 'flavor_3', 'flavor_4', 'flavor_5', 'flavor_6', 'flavor_7',
-  'uniquecolor', 'defaultcolor',
-  'diplomacytextindex', 'questionmark'
+  'uniquecolor', 'defaultcolor'
 ]);
 
 const QUINT_TECH_RULE_VISIBLE_KEYS = new Set([
@@ -12182,7 +12181,7 @@ function replaceDiplomacySectionBodyForUi(tab, sectionKey, newSectionBodyText) {
   applyDiplomacyTextToCivilizationSlots(tab);
 }
 
-function renderCivilizationDiplomacySectionsCard(tab, referenceEditable) {
+function renderCivilizationDiplomacySectionsCard(tab, entry, referenceEditable) {
   const outer = document.createElement('details');
   outer.className = 'rule-group-card';
   const title = document.createElement('summary');
@@ -12193,16 +12192,104 @@ function renderCivilizationDiplomacySectionsCard(tab, referenceEditable) {
   attachRichTooltip(title, formatSourceInfo({ source: 'diplomacy.txt', readPath: sourceMeta, writePath }, 'diplomacy.txt'));
   outer.appendChild(title);
 
+  // Diplomacy Text Index + slot fields
+  const slotFieldsWrap = document.createElement('div');
+  slotFieldsWrap.style.marginTop = '8px';
+  const indexField = getBiqFieldByBaseKey(entry, 'diplomacytextindex');
+  if (indexField) {
+    const indexRow = document.createElement('div');
+    indexRow.className = 'rule-row';
+    const indexLabel = document.createElement('label');
+    indexLabel.className = 'field-meta';
+    indexLabel.textContent = 'Diplomacy Text Index';
+    attachRichTooltip(indexLabel, 'Selects which diplomacy.txt dialogue set this civilization uses.');
+    indexRow.appendChild(indexLabel);
+    const indexControl = document.createElement('div');
+    indexControl.className = 'rule-control';
+    const civTab = state.bundle && state.bundle.tabs && state.bundle.tabs.civilizations;
+    let diplomacyOptions = civTab && Array.isArray(civTab.diplomacyOptions) ? civTab.diplomacyOptions : [];
+    if ((!diplomacyOptions || diplomacyOptions.length === 0) && civTab && Array.isArray(civTab.diplomacySlots)) {
+      diplomacyOptions = rebuildCivilizationDiplomacyOptions(civTab);
+      civTab.diplomacyOptions = diplomacyOptions;
+    }
+    if (referenceEditable) {
+      const select = document.createElement('select');
+      const noneOpt = document.createElement('option');
+      noneOpt.value = '-1';
+      noneOpt.textContent = '(none)';
+      select.appendChild(noneOpt);
+      diplomacyOptions.forEach((opt) => {
+        const o = document.createElement('option');
+        o.value = String(opt.value);
+        o.textContent = String(opt.label || opt.value);
+        select.appendChild(o);
+      });
+      const parsedIndex = parseIntFromDisplayValue(indexField.value);
+      select.value = parsedIndex == null ? '-1' : String(parsedIndex);
+      select.addEventListener('change', () => {
+        rememberUndoSnapshot();
+        indexField.value = String(select.value);
+        setDirty(true);
+        renderActiveTab({ preserveTabScroll: true });
+      });
+      indexControl.appendChild(select);
+    } else {
+      const parsedIndex = parseIntFromDisplayValue(indexField.value);
+      const matched = diplomacyOptions.find((opt) => String(opt.value) === String(parsedIndex));
+      const text = document.createElement('div');
+      text.className = 'field-meta';
+      text.textContent = matched ? matched.label : String(indexField.value || '(not set)');
+      indexControl.appendChild(text);
+    }
+    indexRow.appendChild(indexControl);
+    slotFieldsWrap.appendChild(indexRow);
+  }
+  if (indexField) {
+    const slotIndex = getCivilizationDiplomacySlotIndex(entry);
+    const slot = slotIndex != null ? findOrCreateDiplomacySlotForIndex(tab, slotIndex) : null;
+    const makeSlotRow = (labelText, key) => {
+      const row = document.createElement('div');
+      row.className = 'rule-row';
+      const label = document.createElement('label');
+      label.className = 'field-meta';
+      label.textContent = labelText;
+      row.appendChild(label);
+      const controlWrap = document.createElement('div');
+      controlWrap.className = 'rule-control';
+      if (!slot) {
+        const note = document.createElement('div');
+        note.className = 'field-meta';
+        note.textContent = '(no index selected)';
+        controlWrap.appendChild(note);
+      } else if (referenceEditable) {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = String(slot[key] || '');
+        input.placeholder = labelText;
+        input.addEventListener('input', () => {
+          rememberUndoSnapshot();
+          slot[key] = input.value;
+          tab.diplomacyOptions = rebuildCivilizationDiplomacyOptions(tab);
+          syncCivilizationDiplomacyTextFromSlots(tab);
+          setDirty(true);
+        });
+        controlWrap.appendChild(input);
+      } else {
+        const text = document.createElement('div');
+        text.className = 'field-meta';
+        text.textContent = String(slot[key] || '(none)');
+        controlWrap.appendChild(text);
+      }
+      row.appendChild(controlWrap);
+      return row;
+    };
+    slotFieldsWrap.appendChild(makeSlotRow('First Contact', 'firstContact'));
+    slotFieldsWrap.appendChild(makeSlotRow('Trade Intro', 'firstDeal'));
+  }
+  outer.appendChild(slotFieldsWrap);
+
   const doc = parseDiplomacyDocumentWithOrderForUi(String((tab && tab.diplomacyText) || ''));
   const sections = Array.isArray(doc.sections) ? doc.sections : [];
-  if (!sections.length) {
-    const empty = document.createElement('div');
-    empty.className = 'field-meta';
-    empty.textContent = 'No diplomacy sections found.';
-    outer.appendChild(empty);
-    outer.open = true;
-    return outer;
-  }
   const totalNonEmptyLines = sections.reduce((sum, section) => {
     const lines = Array.isArray(section && section.lines) ? section.lines : [];
     return sum + lines.filter((line) => String(line || '').trim()).length;
@@ -12217,6 +12304,13 @@ function renderCivilizationDiplomacySectionsCard(tab, referenceEditable) {
 
   const bodyWrap = document.createElement('div');
   bodyWrap.style.marginTop = '8px';
+
+  if (!sections.length) {
+    const empty = document.createElement('div');
+    empty.className = 'field-meta';
+    empty.textContent = 'No diplomacy sections found.';
+    bodyWrap.appendChild(empty);
+  }
 
   sections.forEach((section, sectionIdx) => {
     const key = String(section && section.key || '').trim().toUpperCase();
@@ -14518,6 +14612,25 @@ function getCivilopediaEntryForKey(civilopediaKey) {
   return entry ? { tabKey, entry } : null;
 }
 
+const PEDIA_MORE_MARKER = '[---more---]';
+const PEDIA_MORE_MARKER_RE = /^[ \t]*\[---more---\][ \t]*$/im;
+
+function joinCivilopediaFields(overview, description) {
+  const a = String(overview || '').replace(/\n+$/, '');
+  const b = String(description || '').replace(/^\n+/, '');
+  if (!b) return a;
+  return `${a}\n${PEDIA_MORE_MARKER}\n${b}`;
+}
+
+function splitCivilopediaAtMarker(combined) {
+  const text = String(combined || '');
+  const match = PEDIA_MORE_MARKER_RE.exec(text);
+  if (!match) return { section1: text, section2: '' };
+  const before = text.slice(0, match.index).replace(/\n+$/, '');
+  const after = text.slice(match.index + match[0].length).replace(/^\n+/, '');
+  return { section1: before, section2: after };
+}
+
 function plainCivilopediaText(raw) {
   if (CIVILOPEDIA_TEXT_UTILS && typeof CIVILOPEDIA_TEXT_UTILS.toPlainText === 'function') {
     return CIVILOPEDIA_TEXT_UTILS.toPlainText(raw);
@@ -14531,13 +14644,10 @@ function plainCivilopediaText(raw) {
 
 function getCivilopediaPreviewSnippet(entry) {
   if (!entry) return '';
-  const overview = plainCivilopediaText(String(entry.overview || ''));
-  if (overview) {
-    return overview.length > 220 ? `${overview.slice(0, 217)}...` : overview;
-  }
-  const desc = plainCivilopediaText(String(entry.description || ''));
-  if (!desc) return 'No Civilopedia preview text available.';
-  return desc.length > 220 ? `${desc.slice(0, 217)}...` : desc;
+  const combined = joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2);
+  const plain = plainCivilopediaText(combined.replace(PEDIA_MORE_MARKER_RE, ' '));
+  if (!plain) return 'No Civilopedia preview text available.';
+  return plain.length > 220 ? `${plain.slice(0, 217)}...` : plain;
 }
 
 function positionPediaLinkPreview(anchor) {
@@ -14692,9 +14802,24 @@ function appendCivilopediaInlineNodes(container, value) {
 }
 
 function renderCivilopediaRichText(container, text) {
+  const rawText = String(text || '');
+  const moreMatch = PEDIA_MORE_MARKER_RE.exec(rawText);
+  if (moreMatch) {
+    const beforeText = rawText.slice(0, moreMatch.index);
+    const afterText = rawText.slice(moreMatch.index + moreMatch[0].length);
+    if (beforeText.trim()) renderCivilopediaRichText(container, beforeText);
+    const divider = document.createElement('div');
+    divider.className = 'pedia-more-divider';
+    const label = document.createElement('span');
+    label.textContent = '· More ·';
+    divider.appendChild(label);
+    container.appendChild(divider);
+    if (afterText.trim()) renderCivilopediaRichText(container, afterText);
+    return;
+  }
   const blocks = CIVILOPEDIA_TEXT_UTILS && typeof CIVILOPEDIA_TEXT_UTILS.toReadBlocks === 'function'
-    ? CIVILOPEDIA_TEXT_UTILS.toReadBlocks(text)
-    : String(text || '')
+    ? CIVILOPEDIA_TEXT_UTILS.toReadBlocks(rawText)
+    : rawText
       .split(/\n+/)
       .map((line) => String(line || '').trim())
       .filter(Boolean)
@@ -14738,7 +14863,9 @@ function renderCivilopediaRichText(container, text) {
   });
 }
 
-function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, emptyText }) {
+function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, emptyText, getValue, setValue }) {
+  const getVal = getValue || (() => String(entry[fieldKey] || ''));
+  const setVal = setValue || ((v) => { entry[fieldKey] = v; });
   const editorKey = `${String(entry && entry.civilopediaKey || '').toUpperCase()}:${fieldKey}`;
   const isEditing = !!state.civilopediaEditorOpen[editorKey];
   const block = document.createElement('div');
@@ -14766,7 +14893,7 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   block.appendChild(title);
 
   if (!isEditing) {
-    const value = String(entry[fieldKey] || '').trim();
+    const value = getVal().trim();
     if (value) {
       renderCivilopediaRichText(block, value);
     } else {
@@ -14817,16 +14944,16 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
   editor.className = 'civilopedia-editor';
   editor.rows = 7;
   editor.placeholder = emptyText || '';
-  editor.value = String(entry[fieldKey] || '');
+  editor.value = getVal();
   let livePreview = null;
   const refreshLivePreview = () => {
     if (!livePreview) return;
     livePreview.innerHTML = '';
-    renderCivilopediaRichText(livePreview, String(entry[fieldKey] || ''));
+    renderCivilopediaRichText(livePreview, getVal());
   };
   editor.addEventListener('input', () => {
     rememberUndoSnapshot();
-    entry[fieldKey] = editor.value;
+    setVal(editor.value);
     refreshLivePreview();
     setDirty(true);
   });
@@ -14883,7 +15010,7 @@ function createCivilopediaEditorBlock({ entry, fieldKey, titleText, sourceMeta, 
         const next = `${before}${spacerBefore}${token}${spacerAfter}${after}`;
         rememberUndoSnapshot();
         editor.value = next;
-        entry[fieldKey] = next;
+        setVal(next);
         setDirty(true);
         linkPanel.classList.add('hidden');
         renderActiveTab({ preserveTabScroll: true });
@@ -16093,8 +16220,8 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
   }
   if (!Array.isArray(entry.biqFields)) entry.biqFields = [];
   if (mode === 'blank') {
-    entry.overview = '';
-    entry.description = '';
+    entry.civilopediaSection1 = '';
+    entry.civilopediaSection2 = '';
     entry.iconPaths = [];
     entry.racePaths = [];
     entry.animationName = '';
@@ -16117,8 +16244,8 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
       originalValue: String(field && field.value || '')
     }));
   }
-  entry.originalOverview = '';
-  entry.originalDescription = '';
+  entry.originalCivilopediaSection1 = '';
+  entry.originalCivilopediaSection2 = '';
   // For import mode: keep icon/race/animation originals in sync with current values so they are
   // not treated as new changes. These paths are typically base-game values, not scenario-specific
   // overrides, and writing them to the scenario's PediaIcons.txt would be redundant. The user
@@ -16138,8 +16265,8 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
     const clearWritePath = (meta) => {
       if (meta && typeof meta === 'object' && 'writePath' in meta) meta.writePath = '';
     };
-    clearWritePath(entry.sourceMeta.overview);
-    clearWritePath(entry.sourceMeta.description);
+    clearWritePath(entry.sourceMeta.civilopediaSection1);
+    clearWritePath(entry.sourceMeta.civilopediaSection2);
     clearWritePath(entry.sourceMeta.iconPaths);
     clearWritePath(entry.sourceMeta.animationName);
     clearWritePath(entry.sourceMeta.racePaths);
@@ -18344,9 +18471,7 @@ function renderReferenceTab(tab, tabKey) {
         if (relCard) rulesGrid.appendChild(relCard);
       }
       if (tabKey === 'civilizations') {
-        const diplomacyCard = renderCivilizationDiplomacyCard(tab, entry, referenceEditable);
-        if (diplomacyCard) rulesGrid.appendChild(diplomacyCard);
-        const diplomacySectionsCard = renderCivilizationDiplomacySectionsCard(tab, referenceEditable);
+        const diplomacySectionsCard = renderCivilizationDiplomacySectionsCard(tab, entry, referenceEditable);
         if (diplomacySectionsCard) rulesGrid.appendChild(diplomacySectionsCard);
         const buildCard = renderCivilizationBuildPriorityCard(entry, referenceEditable);
         if (buildCard) rulesGrid.appendChild(buildCard);
@@ -18360,34 +18485,14 @@ function renderReferenceTab(tab, tabKey) {
     if (referenceEditable) {
       textCol.appendChild(createCivilopediaEditorBlock({
         entry,
-        fieldKey: 'overview',
-        titleText: 'Overview',
-        sourceMeta: entry.sourceMeta && entry.sourceMeta.overview,
-        emptyText: 'Overview text'
-      }));
-      textCol.appendChild(createCivilopediaEditorBlock({
-        entry,
-        fieldKey: 'description',
+        fieldKey: 'civilopedia',
         titleText: 'Civilopedia',
-        sourceMeta: entry.sourceMeta && entry.sourceMeta.description,
-        emptyText: 'Civilopedia description'
+        sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
+        emptyText: 'Civilopedia text',
+        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2),
+        setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
       }));
     } else {
-      if (entry.overview) {
-        const overviewBlock = document.createElement('div');
-        overviewBlock.className = 'section-card source-section';
-        overviewBlock.style.marginTop = '8px';
-        const title = document.createElement('div');
-        title.className = 'section-top';
-        const left = document.createElement('strong');
-        left.textContent = 'Overview';
-        title.appendChild(left);
-        attachRichTooltip(title, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.overview, 'Civilopedia'));
-        overviewBlock.appendChild(title);
-        renderCivilopediaRichText(overviewBlock, entry.overview);
-        textCol.appendChild(overviewBlock);
-      }
-
       const textBlock = document.createElement('div');
       textBlock.className = 'section-card source-section';
       textBlock.style.marginTop = '8px';
@@ -18396,9 +18501,10 @@ function renderReferenceTab(tab, tabKey) {
       const descLeft = document.createElement('strong');
       descLeft.textContent = 'Civilopedia';
       descTitle.appendChild(descLeft);
-      attachRichTooltip(descTitle, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.description, 'Civilopedia'));
+      attachRichTooltip(descTitle, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'));
       textBlock.appendChild(descTitle);
-      renderCivilopediaRichText(textBlock, entry.description || '(No Civilopedia body found)');
+      const combined = joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2);
+      renderCivilopediaRichText(textBlock, combined || '(No Civilopedia text found)');
       textCol.appendChild(textBlock);
     }
     deferredInfoBlocks.forEach((block) => textCol.appendChild(block));
@@ -19070,33 +19176,14 @@ function renderBiqTab(tab) {
       if (isScenarioMode()) {
         textCol.appendChild(createCivilopediaEditorBlock({
           entry: terrainPediaEntry,
-          fieldKey: 'overview',
-          titleText: 'Overview',
-          sourceMeta: terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.overview,
-          emptyText: 'Overview text'
-        }));
-        textCol.appendChild(createCivilopediaEditorBlock({
-          entry: terrainPediaEntry,
-          fieldKey: 'description',
+          fieldKey: 'civilopedia',
           titleText: 'Civilopedia',
-          sourceMeta: terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.description,
-          emptyText: 'Civilopedia description'
+          sourceMeta: terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.civilopediaSection1,
+          emptyText: 'Civilopedia text',
+          getValue: () => joinCivilopediaFields(terrainPediaEntry.civilopediaSection1, terrainPediaEntry.civilopediaSection2),
+          setValue: (v) => { const parts = splitCivilopediaAtMarker(v); terrainPediaEntry.civilopediaSection1 = parts.section1; terrainPediaEntry.civilopediaSection2 = parts.section2; }
         }));
       } else {
-        if (terrainPediaEntry.overview) {
-          const overviewBlock = document.createElement('div');
-          overviewBlock.className = 'section-card source-section';
-          overviewBlock.style.marginTop = '8px';
-          const title = document.createElement('div');
-          title.className = 'section-top';
-          const left = document.createElement('strong');
-          left.textContent = 'Overview';
-          title.appendChild(left);
-          attachRichTooltip(title, formatSourceInfo(terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.overview, 'Civilopedia'));
-          overviewBlock.appendChild(title);
-          renderCivilopediaRichText(overviewBlock, terrainPediaEntry.overview);
-          textCol.appendChild(overviewBlock);
-        }
         const textBlock = document.createElement('div');
         textBlock.className = 'section-card source-section';
         textBlock.style.marginTop = '8px';
@@ -19105,9 +19192,10 @@ function renderBiqTab(tab) {
         const descLeft = document.createElement('strong');
         descLeft.textContent = 'Civilopedia';
         descTitle.appendChild(descLeft);
-        attachRichTooltip(descTitle, formatSourceInfo(terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.description, 'Civilopedia'));
+        attachRichTooltip(descTitle, formatSourceInfo(terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.civilopediaSection1, 'Civilopedia'));
         textBlock.appendChild(descTitle);
-        renderCivilopediaRichText(textBlock, terrainPediaEntry.description || '(No Civilopedia body found)');
+        const terrainCombined = joinCivilopediaFields(terrainPediaEntry.civilopediaSection1, terrainPediaEntry.civilopediaSection2);
+        renderCivilopediaRichText(textBlock, terrainCombined || '(No Civilopedia text found)');
         textCol.appendChild(textBlock);
       }
 
@@ -28049,8 +28137,8 @@ function markReferenceTabEntryOriginals(tab) {
   tab.entries.forEach((entry) => {
     if (!entry) return;
     entry.isNew = false;
-    entry.originalOverview = String(entry.overview || '');
-    entry.originalDescription = String(entry.description || '');
+    entry.originalCivilopediaSection1 = String(entry.civilopediaSection1 || '');
+    entry.originalCivilopediaSection2 = String(entry.civilopediaSection2 || '');
     entry.originalIconPaths = Array.isArray(entry.iconPaths) ? [...entry.iconPaths] : [];
     entry.originalRacePaths = Array.isArray(entry.racePaths) ? [...entry.racePaths] : [];
     entry.originalAnimationName = String(entry.animationName || '');

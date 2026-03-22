@@ -40,10 +40,10 @@ test('scenario Civilopedia save preserves source header casing for existing sect
         entries: [
           {
             civilopediaKey: 'GCON_CITY_SIZES',
-            overview: 'Updated concept text',
-            originalOverview: 'Original concept text',
-            description: '',
-            originalDescription: '',
+            civilopediaSection1: 'Updated concept text',
+            originalCivilopediaSection1: 'Original concept text',
+            civilopediaSection2: '',
+            originalCivilopediaSection2: '',
             iconPaths: [],
             originalIconPaths: [],
             racePaths: [],
@@ -85,10 +85,10 @@ test('scenario Civilopedia save preserves trailing header whitespace for existin
         entries: [
           {
             civilopediaKey: 'GCON_TERRITORY',
-            overview: 'Original territory text z',
-            originalOverview: 'Original territory text',
-            description: '',
-            originalDescription: '',
+            civilopediaSection1: 'Original territory text z',
+            originalCivilopediaSection1: 'Original territory text',
+            civilopediaSection2: '',
+            originalCivilopediaSection2: '',
             iconPaths: [],
             originalIconPaths: [],
             racePaths: [],
@@ -135,10 +135,10 @@ test('scenario PediaIcons save preserves source header casing and avoids duplica
         entries: [
           {
             civilopediaKey: 'RACE_TEST_CIV',
-            overview: 'Original overview',
-            originalOverview: 'Original overview',
-            description: '',
-            originalDescription: '',
+            civilopediaSection1: 'Original overview',
+            originalCivilopediaSection1: 'Original overview',
+            civilopediaSection2: '',
+            originalCivilopediaSection2: '',
             iconPaths: [
               'art\\civilopedia\\icons\\races\\new-large.pcx',
               'art\\civilopedia\\icons\\races\\new-small.pcx'

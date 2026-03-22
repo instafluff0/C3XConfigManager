@@ -2967,10 +2967,10 @@ function buildSyntheticUnitReferenceEntry(record, biqSourcePath, mode) {
     civilopediaKey: civilopediaEntry || '',
     biqIndex: Number.isFinite(index) ? index : null,
     name,
-    overview: '',
-    originalOverview: '',
-    description: '',
-    originalDescription: '',
+    civilopediaSection1: '',
+    originalCivilopediaSection1: '',
+    civilopediaSection2: '',
+    originalCivilopediaSection2: '',
     techDependencies: [],
     improvementKind: null,
     iconPaths: [],
@@ -2990,8 +2990,8 @@ function buildSyntheticUnitReferenceEntry(record, biqSourcePath, mode) {
     civilizationFlavorCount: 0,
     technologyFlavorCount: 0,
     sourceMeta: {
-      overview: { source: 'BIQ', readPath: biqSourcePath || '', writePath: mode === 'scenario' ? (biqSourcePath || '') : '' },
-      description: { source: 'BIQ', readPath: biqSourcePath || '', writePath: mode === 'scenario' ? (biqSourcePath || '') : '' },
+      civilopediaSection1: { source: 'BIQ', readPath: biqSourcePath || '', writePath: mode === 'scenario' ? (biqSourcePath || '') : '' },
+      civilopediaSection2: { source: 'BIQ', readPath: biqSourcePath || '', writePath: mode === 'scenario' ? (biqSourcePath || '') : '' },
       iconPaths: { source: 'BIQ', readPath: biqSourcePath || '', writePath: mode === 'scenario' ? (biqSourcePath || '') : '' },
       animationName: { source: 'BIQ', readPath: biqSourcePath || '', writePath: mode === 'scenario' ? (biqSourcePath || '') : '' },
       biq: {
@@ -3235,12 +3235,12 @@ function buildReferenceTabs(civ3Path, options = {}) {
         const shortKey = entry.civilopediaKey.slice(prefix.length);
         const inferredDisplayName = inferDisplayNameFromKey(shortKey);
         const pedia = mapPediaIconsForKey(pediaBlocks, entry.civilopediaKey);
-        const overviewLines = parseBodyFromCivilopediaSection(civilopediaSection, { displayName: inferredDisplayName });
-        const descLines = parseBodyFromCivilopediaSection(descSection, { displayName: inferredDisplayName });
-        const overviewRawText = (civilopediaSection && Array.isArray(civilopediaSection.rawLines))
+        const section1Lines = parseBodyFromCivilopediaSection(civilopediaSection, { displayName: inferredDisplayName });
+        const section2Lines = parseBodyFromCivilopediaSection(descSection, { displayName: inferredDisplayName });
+        const section1RawText = (civilopediaSection && Array.isArray(civilopediaSection.rawLines))
           ? civilopediaSection.rawLines.join('\n')
           : '';
-        const descriptionRawText = (descSection && Array.isArray(descSection.rawLines))
+        const section2RawText = (descSection && Array.isArray(descSection.rawLines))
           ? descSection.rawLines.join('\n')
           : '';
         const thumbPath =
@@ -3248,9 +3248,9 @@ function buildReferenceTabs(civ3Path, options = {}) {
             ? (pedia.iconPaths[0] || pedia.racePaths[0] || pedia.iconPaths[pedia.iconPaths.length - 1] || '')
             : (pedia.iconPaths[pedia.iconPaths.length - 1] || pedia.iconPaths[0] || '');
 
-        const overviewSourcePath = findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, entry.civilopediaKey, layerOrder);
-        const descSourcePath = findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, `DESC_${entry.civilopediaKey}`, layerOrder)
-          || overviewSourcePath;
+        const section1SourcePath = findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, entry.civilopediaKey, layerOrder);
+        const section2SourcePath = findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, `DESC_${entry.civilopediaKey}`, layerOrder)
+          || section1SourcePath;
         const iconBlockSourcePath = findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ICON_${entry.civilopediaKey}`, layerOrder)
           || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, entry.civilopediaKey, layerOrder)
           || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `${entry.civilopediaKey}_LARGE`, layerOrder)
@@ -3315,7 +3315,7 @@ function buildReferenceTabs(civ3Path, options = {}) {
           ? null
           : biqFields.find((field) => String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === 'name');
         const biqDisplayName = String(((biqNameField || fallbackBiqNameField) && (biqNameField || fallbackBiqNameField).value) || '').trim();
-        const pediaHeadingName = String((overviewLines && overviewLines[0]) || '').trim();
+        const pediaHeadingName = String((section1Lines && section1Lines[0]) || '').trim();
         let displayName = inferredDisplayName;
         if (tabSpec.key === 'improvements') {
           if (biqDisplayName) displayName = biqDisplayName;
@@ -3329,11 +3329,11 @@ function buildReferenceTabs(civ3Path, options = {}) {
           civilopediaKey: entry.civilopediaKey,
           biqIndex: biqRecord ? Number(biqRecord.index) : null,
           name: displayName,
-          overview: overviewRawText,
-          originalOverview: overviewRawText,
-          description: descriptionRawText,
-          originalDescription: descriptionRawText,
-          techDependencies: tabSpec.key === 'technologies' ? [] : extractTechDependenciesFromText(overviewLines),
+          civilopediaSection1: section1RawText,
+          originalCivilopediaSection1: section1RawText,
+          civilopediaSection2: section2RawText,
+          originalCivilopediaSection2: section2RawText,
+          techDependencies: tabSpec.key === 'technologies' ? [] : extractTechDependenciesFromText(section1Lines),
           improvementKind: tabSpec.key === 'improvements' ? (improvementKindsByKey[entry.civilopediaKey] || 'normal') : null,
           iconPaths: pedia.iconPaths,
           originalIconPaths: [...pedia.iconPaths],
@@ -3349,8 +3349,8 @@ function buildReferenceTabs(civ3Path, options = {}) {
           civilizationFlavorCount: tabSpec.key === 'civilizations' ? flavorCount : 0,
           technologyFlavorCount: tabSpec.key === 'technologies' ? flavorCount : 0,
           sourceMeta: {
-            overview: { source: 'Civilopedia', readPath: overviewSourcePath, writePath: scenarioCivilopediaWritePath },
-            description: { source: 'Civilopedia', readPath: descSourcePath, writePath: scenarioCivilopediaWritePath },
+            civilopediaSection1: { source: 'Civilopedia', readPath: section1SourcePath, writePath: scenarioCivilopediaWritePath },
+            civilopediaSection2: { source: 'Civilopedia', readPath: section2SourcePath, writePath: scenarioCivilopediaWritePath },
             iconPaths: { source: 'PediaIcons', readPath: iconBlockSourcePath, writePath: scenarioPediaIconsWritePath },
             animationName: { source: 'PediaIcons', readPath: animSourcePath, writePath: scenarioPediaIconsWritePath },
             biq: {
@@ -3431,10 +3431,10 @@ function buildReferenceTabs(civ3Path, options = {}) {
           civilopediaKey: civilopediaEntry || '',
           biqIndex: Number.isFinite(idx) ? idx : null,
           name: displayName,
-          overview: '',
-          originalOverview: '',
-          description: '',
-          originalDescription: '',
+          civilopediaSection1: '',
+          originalCivilopediaSection1: '',
+          civilopediaSection2: '',
+          originalCivilopediaSection2: '',
           techDependencies: [],
           improvementKind: null,
           iconPaths: syntheticPedia.iconPaths,
@@ -3451,8 +3451,8 @@ function buildReferenceTabs(civ3Path, options = {}) {
           civilizationFlavorCount: tabSpec.key === 'civilizations' ? flavorCount : 0,
           technologyFlavorCount: 0,
           sourceMeta: {
-            overview: { source: 'BIQ', readPath: biqSourcePath, writePath: mode === 'scenario' ? biqSourcePath : '' },
-            description: { source: 'BIQ', readPath: biqSourcePath, writePath: mode === 'scenario' ? biqSourcePath : '' },
+            civilopediaSection1: { source: 'BIQ', readPath: biqSourcePath, writePath: mode === 'scenario' ? biqSourcePath : '' },
+            civilopediaSection2: { source: 'BIQ', readPath: biqSourcePath, writePath: mode === 'scenario' ? biqSourcePath : '' },
             iconPaths: { source: 'BIQ', readPath: biqSourcePath, writePath: mode === 'scenario' ? biqSourcePath : '' },
             animationName: { source: 'BIQ', readPath: biqSourcePath, writePath: mode === 'scenario' ? biqSourcePath : '' },
             biq: { source: 'BIQ', readPath: biqSourcePath, writePath: mode === 'scenario' ? biqSourcePath : '' }
@@ -6507,15 +6507,15 @@ function collectCivilopediaReferenceEdits(tabs) {
     tab.entries.forEach((entry) => {
       const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
       if (!key) return;
-      const overview = normalizeCivilopediaTextValue(entry && entry.overview);
-      const originalOverview = normalizeCivilopediaTextValue(entry && entry.originalOverview);
-      if (overview !== originalOverview || forcedUpserts.has(key)) {
-        upsert(key, overview);
+      const section1 = normalizeCivilopediaTextValue(entry && entry.civilopediaSection1);
+      const originalSection1 = normalizeCivilopediaTextValue(entry && entry.originalCivilopediaSection1);
+      if (section1 !== originalSection1 || forcedUpserts.has(key)) {
+        upsert(key, section1);
       }
-      const description = normalizeCivilopediaTextValue(entry && entry.description);
-      const originalDescription = normalizeCivilopediaTextValue(entry && entry.originalDescription);
-      if (description !== originalDescription || forcedUpserts.has(`DESC_${key}`)) {
-        upsert(`DESC_${key}`, description);
+      const section2 = normalizeCivilopediaTextValue(entry && entry.civilopediaSection2);
+      const originalSection2 = normalizeCivilopediaTextValue(entry && entry.originalCivilopediaSection2);
+      if (section2 !== originalSection2 || forcedUpserts.has(`DESC_${key}`)) {
+        upsert(`DESC_${key}`, section2);
       }
     });
   }
@@ -6530,15 +6530,15 @@ function collectCivilopediaReferenceEdits(tabs) {
     tab.entries.forEach((entry) => {
       const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
       if (!key) return;
-      const overview = normalizeCivilopediaTextValue(entry && entry.overview);
-      const originalOverview = normalizeCivilopediaTextValue(entry && entry.originalOverview);
-      if (overview !== originalOverview) {
-        upsert(key, overview);
+      const section1 = normalizeCivilopediaTextValue(entry && entry.civilopediaSection1);
+      const originalSection1 = normalizeCivilopediaTextValue(entry && entry.originalCivilopediaSection1);
+      if (section1 !== originalSection1) {
+        upsert(key, section1);
       }
-      const description = normalizeCivilopediaTextValue(entry && entry.description);
-      const originalDescription = normalizeCivilopediaTextValue(entry && entry.originalDescription);
-      if (description !== originalDescription) {
-        upsert(`DESC_${key}`, description);
+      const section2 = normalizeCivilopediaTextValue(entry && entry.civilopediaSection2);
+      const originalSection2 = normalizeCivilopediaTextValue(entry && entry.originalCivilopediaSection2);
+      if (section2 !== originalSection2) {
+        upsert(`DESC_${key}`, section2);
       }
     });
   });

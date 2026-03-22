@@ -78,11 +78,15 @@ function _fmt(level, category, msg) {
   return `[C3X][${_stamp()}][${level}][${category}] ${msg}`;
 }
 
+const _inTest = !!process.env.NODE_TEST_CONTEXT;
+
 function _dispatch(level, category, msg) {
-  const formatted = _fmt(level, category, msg);
-  if (level === 'WRN') console.warn(formatted);
-  else if (level === 'ERR') console.error(formatted);
-  else console.log(formatted);
+  if (!_inTest) {
+    const formatted = _fmt(level, category, msg);
+    if (level === 'WRN') console.warn(formatted);
+    else if (level === 'ERR') console.error(formatted);
+    else console.log(formatted);
+  }
   if (_forwarder) {
     try { _forwarder(level, category, msg); } catch (_) {}
   }

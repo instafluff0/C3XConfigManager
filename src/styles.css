@@ -5276,6 +5276,26 @@ details > summary:focus-visible {
   line-height: 1.42;
 }
 
+.pedia-more-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 10px;
+  color: rgba(93, 101, 130, 0.5);
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  user-select: none;
+}
+
+.pedia-more-divider::before,
+.pedia-more-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(93, 101, 130, 0.2);
+}
+
 .pedia-stat-table {
   margin: 2px 0 10px;
   border: 1px solid rgba(66, 82, 123, 0.2);

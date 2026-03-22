@@ -46,10 +46,10 @@ test('previewFileDiff returns surgical Civilopedia hunk with line numbers', () =
       entries: [
         {
           civilopediaKey: 'RACE_AZTECS',
-          overview: 'Updated Aztecs overview',
-          originalOverview: 'Legacy Aztecs overview',
-          description: 'Legacy entry',
-          originalDescription: 'Legacy entry',
+          civilopediaSection1: 'Updated Aztecs overview',
+          originalCivilopediaSection1: 'Legacy Aztecs overview',
+          civilopediaSection2: 'Legacy entry',
+          originalCivilopediaSection2: 'Legacy entry',
           iconPaths: [],
           originalIconPaths: [],
           racePaths: [],
@@ -118,10 +118,10 @@ test('previewFileDiff is case-sensitive for text changes', () => {
       entries: [
         {
           civilopediaKey: 'RACE_TEST_CIV',
-          overview: 'mixed case entry',
-          originalOverview: 'Mixed Case Entry',
-          description: 'Original Description',
-          originalDescription: 'Original Description',
+          civilopediaSection1: 'mixed case entry',
+          originalCivilopediaSection1: 'Mixed Case Entry',
+          civilopediaSection2: 'Original Description',
+          originalCivilopediaSection2: 'Original Description',
           iconPaths: [],
           originalIconPaths: [],
           racePaths: [],
@@ -182,10 +182,10 @@ test('previewFileDiff does not add newline-only churn for single Civilopedia lin
       entries: [
         {
           civilopediaKey: 'GCON_CITY_SIZES',
-          overview: 'Updated concept line',
-          originalOverview: 'Original concept line',
-          description: 'Original desc line',
-          originalDescription: 'Original desc line',
+          civilopediaSection1: 'Updated concept line',
+          originalCivilopediaSection1: 'Original concept line',
+          civilopediaSection2: 'Original desc line',
+          originalCivilopediaSection2: 'Original desc line',
           iconPaths: [],
           originalIconPaths: [],
           racePaths: [],
@@ -257,10 +257,10 @@ test('previewFileDiff for caret-formatted unit entry changes only edited line', 
       entries: [
         {
           civilopediaKey: 'PRTO_Bamboo_Warrior',
-          overview: afterOverviewLines.join('\n'),
-          originalOverview: beforeOverviewLines.join('\n'),
-          description: '',
-          originalDescription: '',
+          civilopediaSection1: afterOverviewLines.join('\n'),
+          originalCivilopediaSection1: beforeOverviewLines.join('\n'),
+          civilopediaSection2: '',
+          originalCivilopediaSection2: '',
           iconPaths: [],
           originalIconPaths: [],
           racePaths: [],
@@ -327,10 +327,10 @@ test('previewFileDiff does not remove duplicate unrelated sections when editing 
       entries: [
         {
           civilopediaKey: 'BLDG_ALTAR_OF_KHAZ',
-          overview: '',
-          originalOverview: '',
-          description: 'sdfsdfsdfds',
-          originalDescription: 'Old text',
+          civilopediaSection1: '',
+          originalCivilopediaSection1: '',
+          civilopediaSection2: 'sdfsdfsdfds',
+          originalCivilopediaSection2: 'Old text',
           iconPaths: [],
           originalIconPaths: [],
           racePaths: [],
@@ -388,16 +388,16 @@ test('previewFileDiff does not trim untouched trailing spaces in Civilopedia lin
       entries: [
         {
           civilopediaKey: 'RACE_ENGLISH',
-          overview: [
+          civilopediaSection1: [
             '^In CHANGE HERE this scenario the nations are strong.',
             'and New Zealand Army Corps, was often used when referring to troops from both countries. '
           ].join('\n'),
-          originalOverview: [
+          originalCivilopediaSection1: [
             '^In this scenario the nations are strong.',
             'and New Zealand Army Corps, was often used when referring to troops from both countries. '
           ].join('\n'),
-          description: '^',
-          originalDescription: '^',
+          civilopediaSection2: '^',
+          originalCivilopediaSection2: '^',
           iconPaths: [],
           originalIconPaths: [],
           racePaths: [],
