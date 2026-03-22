@@ -172,7 +172,7 @@ test('C3X base structured editor families persist and appear in file diff previe
     'building_prereqs_for_units = ["Barracks": "Warrior" "Archer"]',
     'buildings_generating_resources = ["Temple": local "Incense", "Marketplace": yields "Dyes"]',
     'great_wall_auto_build_wonder_name = "Pyramids"'
-  ].forEach((line) => assert.match(newText, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))));
+  ].forEach((line) => assert.match(newText, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(' = ', '\\s*=\\s*'))));
 
   const save = saveBundle({
     mode: 'global',
@@ -399,9 +399,9 @@ test('C3X scenario mode writes edited scenario base values even when custom over
   assert.equal(preview.ok, true, String(preview.error || 'preview failed'));
   assert.equal(preview.found, true, 'Expected pending write for scenario.c3x_config.ini');
   const newText = String(preview.newText || '');
-  assert.match(newText, /flag = true/);
-  assert.match(newText, /limit = 10/);
-  assert.match(newText, /enable_stack_bombard = true/);
+  assert.match(newText, /flag\s*=\s*true/);
+  assert.match(newText, /limit\s*=\s*10/);
+  assert.match(newText, /enable_stack_bombard\s*=\s*true/);
   assert.doesNotMatch(newText, /enable_stack_unit_commands = false/);
 
   const saved = saveBundle({

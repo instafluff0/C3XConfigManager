@@ -4142,12 +4142,11 @@ function serializeSectionedConfig(model, marker, options = null) {
         lines.push(String(line || ''));
       });
     }
-    for (const field of section.fields) {
-      if (!field.key) {
-        continue;
-      }
+    const sectionFields = section.fields.filter((f) => f.key);
+    const maxKeyLen = sectionFields.reduce((m, f) => Math.max(m, f.key.length), 0);
+    for (const field of sectionFields) {
       const normalized = normalizeSectionFieldValueForWrite(kind, field.key, field.value ?? '');
-      lines.push(`${field.key} = ${normalized}`);
+      lines.push(`${field.key.padEnd(maxKeyLen)} = ${normalized}`);
     }
     if (i !== model.sections.length - 1) {
       lines.push('');
@@ -4163,20 +4162,23 @@ function serializeBaseConfig(baseRows, defaultMap, mode, commentsByKey = {}) {
   lines.push(`; Mode: ${mode}`);
   lines.push('');
 
-  for (const row of baseRows) {
-    const key = row.key;
+  const rowsToWrite = baseRows.filter((row) => {
     const val = String(row.value ?? '').trim();
-    const defaultVal = String(defaultMap[key] ?? '').trim();
-    const shouldWrite = mode === 'scenario'
+    const defaultVal = String(defaultMap[row.key] ?? '').trim();
+    return mode === 'scenario'
       ? val !== '' && val !== String(((row && row.hasCustomValue) ? row.customValue : defaultVal) ?? '').trim()
       : val !== '' && val !== defaultVal;
-    if (shouldWrite) {
-      const comments = commentsByKey[key];
-      if (comments && comments.length > 0) {
-        for (const c of comments) lines.push(c);
-      }
-      lines.push(`${key} = ${val}`);
+  });
+  const maxKeyLen = rowsToWrite.reduce((m, row) => Math.max(m, row.key.length), 0);
+
+  for (const row of rowsToWrite) {
+    const key = row.key;
+    const val = String(row.value ?? '').trim();
+    const comments = commentsByKey[key];
+    if (comments && comments.length > 0) {
+      for (const c of comments) lines.push(c);
     }
+    lines.push(`${key.padEnd(maxKeyLen)} = ${val}`);
   }
 
   return ensureTrailingNewline(lines.join('\n'));

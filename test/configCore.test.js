@@ -51,7 +51,7 @@ test('sectioned config parsing round-trips marker blocks', () => {
 
   const serialized = serializeSectionedConfig(parsed, '#District');
   assert.match(serialized, /#District/);
-  assert.match(serialized, /name = Encampment/);
+  assert.match(serialized, /name\s*=\s*Encampment/);
   assert.ok(serialized.endsWith('\n'));
 });
 
@@ -230,7 +230,7 @@ test('saving new sectioned override file does not copy default docs/comments', (
   assert.doesNotMatch(saved, /\[======================================================================= NOTE/);
   assert.doesNotMatch(saved, /default comment that should not be copied/);
   assert.match(saved, /#District/);
-  assert.match(saved, /name = "Changed Name"/);
+  assert.match(saved, /name\s*=\s*"Changed Name"/);
 });
 
 test('scenario Civilopedia save preserves windows-1252 text while applying edits', () => {

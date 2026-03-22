@@ -116,8 +116,8 @@ test('Sectioned fixture parse/serialize is idempotent', () => {
   const out2 = serializeSectionedConfig(model2, '#District');
 
   assert.equal(out1, out2);
-  assert.match(out1, /name = Encampment/);
-  assert.match(out1, /name = Campus/);
+  assert.match(out1, /name\s*=\s*Encampment/);
+  assert.match(out1, /name\s*=\s*Campus/);
 });
 
 test('saveBundle refuses writing protected base Civ3 files', () => {
