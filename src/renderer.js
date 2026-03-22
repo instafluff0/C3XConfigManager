@@ -14612,14 +14612,14 @@ function getCivilopediaEntryForKey(civilopediaKey) {
   return entry ? { tabKey, entry } : null;
 }
 
-const PEDIA_MORE_MARKER = '[---more---]';
-const PEDIA_MORE_MARKER_RE = /^[ \t]*\[---more---\][ \t]*$/im;
+const PEDIA_MORE_MARKER_RE = /^#DESC_\S+[ \t]*$/im;
 
-function joinCivilopediaFields(overview, description) {
-  const a = String(overview || '').replace(/\n+$/, '');
-  const b = String(description || '').replace(/^\n+/, '');
+function joinCivilopediaFields(section1, section2, civilopediaKey) {
+  const a = String(section1 || '').replace(/\n+$/, '');
+  const b = String(section2 || '').replace(/^\n+/, '');
   if (!b) return a;
-  return `${a}\n${PEDIA_MORE_MARKER}\n${b}`;
+  const marker = civilopediaKey ? `#DESC_${civilopediaKey}` : '#DESC_UNKNOWN';
+  return `${a}\n${marker}\n${b}`;
 }
 
 function splitCivilopediaAtMarker(combined) {
@@ -14644,7 +14644,7 @@ function plainCivilopediaText(raw) {
 
 function getCivilopediaPreviewSnippet(entry) {
   if (!entry) return '';
-  const combined = joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2);
+  const combined = joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, entry.civilopediaKey);
   const plain = plainCivilopediaText(combined.replace(PEDIA_MORE_MARKER_RE, ' '));
   if (!plain) return 'No Civilopedia preview text available.';
   return plain.length > 220 ? `${plain.slice(0, 217)}...` : plain;
@@ -18489,7 +18489,7 @@ function renderReferenceTab(tab, tabKey) {
         titleText: 'Civilopedia',
         sourceMeta: entry.sourceMeta && entry.sourceMeta.civilopediaSection1,
         emptyText: 'Civilopedia text',
-        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2),
+        getValue: () => joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, entry.civilopediaKey),
         setValue: (v) => { const parts = splitCivilopediaAtMarker(v); entry.civilopediaSection1 = parts.section1; entry.civilopediaSection2 = parts.section2; }
       }));
     } else {
@@ -18503,7 +18503,7 @@ function renderReferenceTab(tab, tabKey) {
       descTitle.appendChild(descLeft);
       attachRichTooltip(descTitle, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.civilopediaSection1, 'Civilopedia'));
       textBlock.appendChild(descTitle);
-      const combined = joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2);
+      const combined = joinCivilopediaFields(entry.civilopediaSection1, entry.civilopediaSection2, entry.civilopediaKey);
       renderCivilopediaRichText(textBlock, combined || '(No Civilopedia text found)');
       textCol.appendChild(textBlock);
     }
@@ -19180,7 +19180,7 @@ function renderBiqTab(tab) {
           titleText: 'Civilopedia',
           sourceMeta: terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.civilopediaSection1,
           emptyText: 'Civilopedia text',
-          getValue: () => joinCivilopediaFields(terrainPediaEntry.civilopediaSection1, terrainPediaEntry.civilopediaSection2),
+          getValue: () => joinCivilopediaFields(terrainPediaEntry.civilopediaSection1, terrainPediaEntry.civilopediaSection2, terrainPediaEntry.civilopediaKey),
           setValue: (v) => { const parts = splitCivilopediaAtMarker(v); terrainPediaEntry.civilopediaSection1 = parts.section1; terrainPediaEntry.civilopediaSection2 = parts.section2; }
         }));
       } else {
@@ -19194,7 +19194,7 @@ function renderBiqTab(tab) {
         descTitle.appendChild(descLeft);
         attachRichTooltip(descTitle, formatSourceInfo(terrainPediaEntry.sourceMeta && terrainPediaEntry.sourceMeta.civilopediaSection1, 'Civilopedia'));
         textBlock.appendChild(descTitle);
-        const terrainCombined = joinCivilopediaFields(terrainPediaEntry.civilopediaSection1, terrainPediaEntry.civilopediaSection2);
+        const terrainCombined = joinCivilopediaFields(terrainPediaEntry.civilopediaSection1, terrainPediaEntry.civilopediaSection2, terrainPediaEntry.civilopediaKey);
         renderCivilopediaRichText(textBlock, terrainCombined || '(No Civilopedia text found)');
         textCol.appendChild(textBlock);
       }
