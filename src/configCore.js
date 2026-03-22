@@ -3,6 +3,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { resolveUnitIniPath, decodePcx, encodePcx } = require('./artPreview');
+const log = require('./log');
 const { decompress: biqDecompress } = require('./biq/decompress');
 const { parseBiqBuffer: jsParseBiqBuffer, applyBiqEdits: jsApplyBiqEdits } = require('./biq/biqBridgeJs');
 const { projectImprovementBiqFields, collapseImprovementBiqFields } = require('./biq/bldgCodec');
@@ -129,18 +130,24 @@ function readBiqTag(buf, offset) {
 
 function inflateBiqIfNeeded(filePath, civ3Path) {
   if (!filePath || !fs.existsSync(filePath)) {
+    log.warn('inflateBiq', `File not found: ${log.rel(filePath)}`);
     return { ok: false, error: `BIQ file not found: ${filePath || '(empty path)'}` };
   }
   const raw = fs.readFileSync(filePath);
   const magic = raw.subarray(0, 4).toString('latin1');
+  log.debug('inflateBiq', `${log.rel(filePath)} — size=${raw.length} bytes, magic="${magic.replace(/[^\x20-\x7e]/g, '?')}"`);
   if (magic.startsWith('BIC')) {
+    log.debug('inflateBiq', 'Already decompressed (BIC magic), using as-is.');
     return { ok: true, buffer: raw, compressed: false, decompressorPath: '' };
   }
 
+  log.debug('inflateBiq', 'Compressed BIQ — running JS decompressor...');
   const jsResult = biqDecompress(raw);
   if (jsResult.ok) {
+    log.debug('inflateBiq', `JS decompression OK — decompressed size=${jsResult.data && jsResult.data.length} bytes`);
     return { ok: true, buffer: jsResult.data, compressed: true, decompressorPath: 'js' };
   }
+  log.error('inflateBiq', `JS decompression failed: ${jsResult.error}`);
   return { ok: false, error: `BIQ decompression failed: ${jsResult.error}` };
 }
 
@@ -1547,6 +1554,9 @@ function resolveBiqPath({ mode, civ3Path, scenarioPath }) {
 function loadBiqTab({ mode, civ3Path, scenarioPath }) {
   const biqPath = resolveBiqPath({ mode, civ3Path, scenarioPath });
   if (!biqPath) {
+    log.warn('loadBiqTab', mode === 'scenario'
+      ? 'No scenario BIQ path — pick a .biq file.'
+      : `Cannot resolve conquests.biq from civ3Path=${log.rel(civ3Path)}`);
     return {
       title: 'BIQ',
       type: 'biq',
@@ -1558,8 +1568,10 @@ function loadBiqTab({ mode, civ3Path, scenarioPath }) {
       sections: []
     };
   }
+  log.info('loadBiqTab', `Loading: ${log.rel(biqPath)}`);
   const inflated = inflateBiqIfNeeded(biqPath, civ3Path);
   if (!inflated.ok) {
+    log.error('loadBiqTab', `Inflate failed: ${inflated.error}`);
     return {
       title: 'BIQ',
       type: 'biq',
@@ -1573,6 +1585,7 @@ function loadBiqTab({ mode, civ3Path, scenarioPath }) {
     const headerMeta = parseBiqHeaderMetadata(inflated.buffer);
     const bridged = runBiqBridgeOnInflatedBuffer({ buffer: inflated.buffer });
     if (bridged.ok) {
+      log.info('loadBiqTab', `Parsed via JS bridge — ${bridged.sections && bridged.sections.length} section(s)`);
       return {
         title: 'BIQ',
         type: 'biq',
@@ -1586,7 +1599,9 @@ function loadBiqTab({ mode, civ3Path, scenarioPath }) {
       };
     }
 
+    log.warn('loadBiqTab', `JS bridge failed (${bridged.error || 'unknown'}) — falling back to binary parser`);
     const parsed = parseBiqSectionsFromBuffer(inflated.buffer);
+    log.info('loadBiqTab', `Parsed via binary parser — ${parsed.sections && parsed.sections.length} section(s)`);
     return {
       title: 'BIQ',
       type: 'biq',
@@ -1599,6 +1614,7 @@ function loadBiqTab({ mode, civ3Path, scenarioPath }) {
       ...parsed
     };
   } catch (err) {
+    log.error('loadBiqTab', `Parse threw: ${err.message}`);
     return {
       title: 'BIQ',
       type: 'biq',
@@ -1898,8 +1914,12 @@ function createScenario(payload = {}) {
   try {
     const template = String(payload.template || 'base').trim().toLowerCase() === 'copy' ? 'copy' : 'base';
     const scenarioStem = sanitizeScenarioStem(payload.scenarioName);
+    log.info('createScenario', `template=${template}, name="${scenarioStem}"`);
     const stemErr = validateScenarioStem(scenarioStem);
-    if (stemErr) return { ok: false, error: stemErr };
+    if (stemErr) {
+      log.warn('createScenario', `Validation error: ${stemErr}`);
+      return { ok: false, error: stemErr };
+    }
 
     const c3xPath = String(payload.c3xPath || '').trim();
     const civ3Root = resolveCiv3RootPath(String(payload.civ3Path || '').trim());
@@ -2149,6 +2169,7 @@ function createScenario(payload = {}) {
       return { ok: false, error: `Failed to create scenario: ${err.message}` };
     }
 
+    log.info('createScenario', `Created OK: biq=${log.rel(scenarioBiqPath)}, files=${copiedFiles.length}`);
     return {
       ok: true,
       template,
@@ -2159,6 +2180,7 @@ function createScenario(payload = {}) {
       copiedFiles
     };
   } catch (err) {
+    log.error('createScenario', `Threw: ${err.message}`);
     return { ok: false, error: `Failed to create scenario: ${err.message}` };
   }
 }
@@ -4192,6 +4214,11 @@ function resolvePaths({ c3xPath, scenarioPath, mode }) {
 
     const targetPath = mode === 'scenario' ? scenarioFilePath : userPath;
 
+    const defaultExists = !!(defaultPath && fs.existsSync(defaultPath));
+    const userExists = !!(userPath && fs.existsSync(userPath));
+    const scenarioExists = !!(scenarioFilePath && fs.existsSync(scenarioFilePath));
+    log.debug('resolvePaths', `${kind}: source=${effectiveSource}, default=${defaultExists ? 'Y' : 'N'}, user=${userExists ? 'Y' : 'N'}, scenario=${scenarioExists ? 'Y' : 'N'} -> ${log.rel(effectivePath)}`);
+
     paths[kind] = {
       defaultPath,
       userPath,
@@ -4212,6 +4239,11 @@ function loadBundle(payload) {
   const civ3Path = payload.civ3Path || '';
   const scenarioPath = payload.scenarioPath || '';
   const scenarioSearchFolderOverride = normalizeScenarioSearchFolderOverride(payload.scenarioSearchFolderOverride);
+  log.setCiv3Root(civ3Path);
+  log.info('loadBundle', `mode=${mode}`);
+  if (!c3xPath) log.warn('loadBundle', 'c3xPath is empty — config files will not load.');
+  if (!civ3Path) log.warn('loadBundle', 'civ3Path is empty — reference data will not load.');
+  if (mode === 'scenario' && !scenarioPath) log.warn('loadBundle', 'scenarioPath is empty in scenario mode.');
   try {
     const biqTab = loadBiqTab({ mode, civ3Path, scenarioPath });
     const scenarioContext = mode === 'scenario'
@@ -4346,6 +4378,10 @@ function loadBundle(payload) {
     }
 
     bundle.readFiles = Array.from(readPaths).sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' }));
+    log.info('loadBundle', `Complete — ${bundle.readFiles.length} file(s) read, tabs=[${Object.keys(bundle.tabs).join(', ')}]`);
+    if (mode === 'scenario') {
+      log.info('loadBundle', `scenarioDir=${log.rel(bundle.scenarioPath)}, searchPaths=${log.relList(bundle.scenarioSearchPaths)}`);
+    }
     return bundle;
   } finally {
     activeReadCollector = null;
@@ -4618,6 +4654,7 @@ function writeAtomicFileSync(targetPath, data, options = {}) {
 function commitWritesWithRollback(writes) {
   const ordered = uniqueWritesByPath(writes);
   if (ordered.length === 0) return { ok: true, writeResults: [] };
+  log.info('commitWrites', `Starting transaction: ${ordered.length} file(s) to write`);
   const backupDir = fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-save-backup-'));
   const backups = new Map();
   const committed = [];
@@ -4629,8 +4666,10 @@ function commitWritesWithRollback(writes) {
         const backupPath = path.join(backupDir, `${idx}.bak`);
         fs.copyFileSync(targetPath, backupPath);
         backups.set(targetPath, { existed: true, backupPath });
+        log.debug('commitWrites', `Backed up: ${log.rel(targetPath)}`);
       } else {
         backups.set(targetPath, { existed: false, backupPath: '' });
+        log.debug('commitWrites', `New file (no backup needed): ${log.rel(targetPath)}`);
       }
     });
 
@@ -4638,14 +4677,18 @@ function commitWritesWithRollback(writes) {
       const targetPath = String(entry && entry.path || '').trim();
       if (!targetPath) continue;
       try {
+        const dataSize = Buffer.isBuffer(entry.data) ? entry.data.length : String(entry.data || '').length;
+        log.info('commitWrites', `Writing: ${log.rel(targetPath)} (kind=${entry.kind || '?'}, size=${dataSize} bytes)`);
         writeAtomicFileSync(targetPath, entry.data, { encoding: entry.encoding || 'utf8' });
         committed.push(targetPath);
+        log.info('commitWrites', `Wrote OK: ${log.rel(targetPath)}`);
         writeResults.push({
           path: targetPath,
           kind: String(entry && entry.kind || ''),
           status: 'saved'
         });
       } catch (err) {
+        log.error('commitWrites', `Write FAILED for ${log.rel(targetPath)}: ${err.message}`);
         writeResults.push({
           path: targetPath,
           kind: String(entry && entry.kind || ''),
@@ -4656,8 +4699,10 @@ function commitWritesWithRollback(writes) {
       }
     }
 
+    log.info('commitWrites', `Transaction complete — ${committed.length} file(s) saved successfully`);
     return { ok: true, writeResults };
   } catch (err) {
+    log.error('commitWrites', `Transaction failed: ${err.message} — initiating rollback of ${committed.length} file(s)`);
     const rollbackErrors = [];
     const rollbackResults = [];
     for (let i = committed.length - 1; i >= 0; i -= 1) {
@@ -4668,6 +4713,7 @@ function commitWritesWithRollback(writes) {
         if (backup.existed && backup.backupPath && fs.existsSync(backup.backupPath)) {
           const original = fs.readFileSync(backup.backupPath);
           writeAtomicFileSync(targetPath, original);
+          log.info('commitWrites', `Rolled back (restored): ${log.rel(targetPath)}`);
           rollbackResults.push({
             path: targetPath,
             action: 'restore',
@@ -4675,6 +4721,7 @@ function commitWritesWithRollback(writes) {
           });
         } else if (fs.existsSync(targetPath)) {
           fs.unlinkSync(targetPath);
+          log.info('commitWrites', `Rolled back (removed new file): ${log.rel(targetPath)}`);
           rollbackResults.push({
             path: targetPath,
             action: 'removeNewFile',
@@ -4688,6 +4735,7 @@ function commitWritesWithRollback(writes) {
           });
         }
       } catch (rollbackErr) {
+        log.error('commitWrites', `Rollback FAILED for ${log.rel(targetPath)}: ${rollbackErr.message}`);
         rollbackErrors.push(`${targetPath}: ${rollbackErr.message}`);
         rollbackResults.push({
           path: targetPath,
@@ -4697,6 +4745,8 @@ function commitWritesWithRollback(writes) {
         });
       }
     }
+    const rollbackFailed = rollbackResults.filter((entry) => entry.status === 'rollbackFailed').length;
+    log.warn('commitWrites', `Rollback complete — attempted=${rollbackResults.length}, failed=${rollbackFailed}`);
     const rollbackSuffix = rollbackErrors.length > 0
       ? ` Rollback encountered errors: ${rollbackErrors.join(' | ')}`
       : '';
@@ -4706,7 +4756,7 @@ function commitWritesWithRollback(writes) {
       writeResults,
       rollback: {
         attempted: rollbackResults.length,
-        failed: rollbackResults.filter((entry) => entry.status === 'rollbackFailed').length,
+        failed: rollbackFailed,
         results: rollbackResults
       }
     };
@@ -5213,13 +5263,25 @@ function buildSavePlan(payload) {
       .concat(structureEdits)
       .concat(mapEdits)
       .concat(autoSearchEdits);
+    log.info('BiqSave', `buildSavePlan: BIQ edit summary for ${log.rel(scenarioPath)}`
+      + ` — referenceRecordOps=${biqRecordOps.length}`
+      + ` structureRecordOps=${biqStructureRecordOps.length}`
+      + ` mapStructureOps=${biqMapStructureOps.length}`
+      + ` mapRecordOps=${biqMapRecordOps.length}`
+      + ` referenceEdits=${biqEdits.length}`
+      + ` structureEdits=${structureEdits.length}`
+      + ` mapEdits=${mapEdits.length}`
+      + ` autoSearchEdits=${autoSearchEdits.length}`
+      + ` total=${allBiqEdits.length}`);
     const currentBundle = loadBundle({ mode, c3xPath, civ3Path, scenarioPath });
     const validationTabs = mergeTabsForDeleteValidation((currentBundle && currentBundle.tabs) || {}, payload.tabs || {});
     const unsafeDeleteIssues = collectUnsafeReferenceDeleteIssues({ tabs: validationTabs, biqTab });
     if (unsafeDeleteIssues.length > 0) {
+      log.warn('BiqSave', `buildSavePlan: unsafe delete check failed — ${unsafeDeleteIssues.length} issue(s): ${unsafeDeleteIssues.map((i) => String(i && i.message || i)).slice(0, 3).join('; ')}`);
       return { ok: false, error: formatUnsafeReferenceDeleteError(unsafeDeleteIssues) };
     }
     if (allBiqEdits.length > 0) {
+      log.debug('BiqSave', `buildSavePlan: unsafe delete check passed — proceeding to apply ${allBiqEdits.length} BIQ edit(s)`);
       const biqSave = applyBiqReferenceEdits({
         biqPath: scenarioPath,
         edits: allBiqEdits,
@@ -5381,6 +5443,7 @@ function buildSavePlan(payload) {
     }
   }
 
+  log.info('buildSavePlan', `Plan complete: ${plannedWrites.length} write(s) — [${plannedWrites.map((w) => `${w.kind}:${log.rel(w.path)}`).join(', ')}]`);
   return {
     ok: true,
     plannedWrites,
@@ -5393,8 +5456,14 @@ function buildSavePlan(payload) {
 }
 
 function saveBundle(payload) {
+  const mode = (payload && payload.mode) === 'scenario' ? 'scenario' : 'global';
+  log.setCiv3Root(payload && payload.civ3Path || '');
+  log.info('saveBundle', `mode=${mode}, dirtyTabs=[${Array.isArray(payload && payload.dirtyTabs) ? payload.dirtyTabs.join(', ') : '(all)'}]`);
   const plan = buildSavePlan(payload);
-  if (!plan.ok) return plan;
+  if (!plan.ok) {
+    log.error('saveBundle', `Save plan failed: ${plan.error}`);
+    return plan;
+  }
   const committed = commitWritesWithRollback(plan.plannedWrites);
   if (!committed.ok) {
     return {
@@ -5835,21 +5904,25 @@ function collectUnsafeReferenceDeleteIssues({ tabs, biqTab }) {
     const sectionCode = String(op && op.sectionCode || '').trim().toUpperCase();
     const recordRef = String(op && op.recordRef || '').trim().toUpperCase();
     const ruleSet = dependencyRules[sectionCode];
-    if (!sectionCode || !recordRef || !Array.isArray(ruleSet) || ruleSet.length === 0) return;
-
-    const original = getCurrentReferenceRecordInfo(tabs, sectionCode, recordRef)
-      || getOriginalReferenceRecordInfo(biqTab, sectionCode, recordRef);
-    if (!original || !Number.isFinite(original.index) || original.index < 0) return;
+    if (!sectionCode || !recordRef || !Array.isArray(ruleSet)) return;
 
     if ((sectionCode === 'PRTO' || sectionCode === 'RACE') && mapDataExists) {
+      const original = getCurrentReferenceRecordInfo(tabs, sectionCode, recordRef)
+        || getOriginalReferenceRecordInfo(biqTab, sectionCode, recordRef);
+      const fallbackName = cleanDisplayText(recordRef) || `Deleted ${getBiqSectionTitle(sectionCode).replace(/s$/, '')}`;
       issues.push({
-        title: `${original.name} (${getBiqSectionTitle(sectionCode).replace(/s$/, '')})`,
+        title: `${(original && original.name) || fallbackName} (${getBiqSectionTitle(sectionCode).replace(/s$/, '')})`,
         reason: sectionCode === 'PRTO'
           ? 'This scenario has map data, so deleting a unit could break placed units or other map links.'
           : 'This scenario has map data, so deleting a civilization could break ownership, players, or other map links.'
       });
       return;
     }
+
+    const original = getCurrentReferenceRecordInfo(tabs, sectionCode, recordRef)
+      || getOriginalReferenceRecordInfo(biqTab, sectionCode, recordRef);
+    if (!original || !Number.isFinite(original.index) || original.index < 0) return;
+    if (ruleSet.length === 0) return;
 
     const matches = [];
     ruleSet.forEach((rule) => {
@@ -5917,6 +5990,7 @@ function collectBiqReferenceEdits(tabs) {
     if (!tab || !Array.isArray(tab.entries)) continue;
     const sectionCode = getSectionCodeForReferenceTabKey(spec.key);
     if (!sectionCode) continue;
+    const beforeCount = edits.length;
     tab.entries.forEach((entry) => {
       const civKey = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
       if (!civKey || !Array.isArray(entry.biqFields)) return;
@@ -6042,6 +6116,17 @@ function collectBiqReferenceEdits(tabs) {
         });
       });
     });
+    const tabEdits = edits.length - beforeCount;
+    if (tabEdits > 0) {
+      log.debug('BiqCollect', `collectBiqReferenceEdits: ${sectionCode} (${spec.key}) — ${tabEdits} field edit(s)`);
+    }
+  }
+  if (edits.length > 0) {
+    log.info('BiqCollect', `collectBiqReferenceEdits total: ${edits.length} field edit(s) across reference tabs`);
+    edits.forEach((e) => {
+      const displayVal = String(e.value != null ? e.value : '').slice(0, 40);
+      log.debug('BiqCollect', `  set ${e.sectionCode}[${e.recordRef}].${e.fieldKey} = "${displayVal}"`);
+    });
   }
   return edits;
 }
@@ -6070,6 +6155,11 @@ function collectBiqReferenceRecordOps(tabs) {
         if (sourceRef) nextOp.sourceRef = sourceRef;
         if (importArtFrom) nextOp.importArtFrom = importArtFrom;
         ops.push(nextOp);
+        if (copyFromRef) {
+          log.debug('BiqCollect', `collectBiqReferenceRecordOps: op=copy ${sectionCode} ${copyFromRef} -> ${newRecordRef}${importArtFrom ? ' [importArt]' : ''}`);
+        } else {
+          log.debug('BiqCollect', `collectBiqReferenceRecordOps: op=add ${sectionCode} newRef=${newRecordRef}${importArtFrom ? ' [importArt]' : ''}`);
+        }
         return;
       }
       if (kind === 'copy') {
@@ -6082,6 +6172,7 @@ function collectBiqReferenceRecordOps(tabs) {
           sourceRef,
           newRecordRef
         });
+        log.debug('BiqCollect', `collectBiqReferenceRecordOps: op=copy ${sectionCode} ${sourceRef} -> ${newRecordRef}`);
         return;
       }
       if (kind === 'delete') {
@@ -6092,8 +6183,12 @@ function collectBiqReferenceRecordOps(tabs) {
           sectionCode,
           recordRef
         });
+        log.debug('BiqCollect', `collectBiqReferenceRecordOps: op=delete ${sectionCode} ref=${recordRef}`);
       }
     });
+  }
+  if (ops.length > 0) {
+    log.info('BiqCollect', `collectBiqReferenceRecordOps total: ${ops.length} record op(s)`);
   }
   return ops;
 }
@@ -6159,6 +6254,11 @@ function collectBiqStructureRecordOps(tabs) {
           newRecordRef,
           copyFromRef
         });
+        if (copyFromRef) {
+          log.debug('BiqCollect', `collectBiqStructureRecordOps: op=copy ${sectionCode} ${copyFromRef} -> ${newRecordRef}`);
+        } else {
+          log.debug('BiqCollect', `collectBiqStructureRecordOps: op=add ${sectionCode} newRef=${newRecordRef}`);
+        }
         return;
       }
       if (kind === 'copy') {
@@ -6171,6 +6271,7 @@ function collectBiqStructureRecordOps(tabs) {
           sourceRef,
           newRecordRef
         });
+        log.debug('BiqCollect', `collectBiqStructureRecordOps: op=copy ${sectionCode} ${sourceRef} -> ${newRecordRef}`);
         return;
       }
       if (kind === 'delete') {
@@ -6181,9 +6282,13 @@ function collectBiqStructureRecordOps(tabs) {
           sectionCode,
           recordRef
         });
+        log.debug('BiqCollect', `collectBiqStructureRecordOps: op=delete ${sectionCode} ref=${recordRef}`);
       }
     });
   });
+  if (ops.length > 0) {
+    log.info('BiqCollect', `collectBiqStructureRecordOps total: ${ops.length} record op(s)`);
+  }
   return ops;
 }
 
@@ -6195,6 +6300,7 @@ function collectBiqStructureEdits(tabs) {
     tab.sections.forEach((section) => {
       const sectionCode = String((section && section.code) || '').trim().toUpperCase();
       if (!sectionCode || !Array.isArray(section.records)) return;
+      const beforeCount = edits.length;
       section.records.forEach((record) => {
         const recordIndex = Number(record && record.index);
         const isNew = !!(record && record.newRecordRef);
@@ -6217,8 +6323,19 @@ function collectBiqStructureEdits(tabs) {
           });
         });
       });
+      const sectionEdits = edits.length - beforeCount;
+      if (sectionEdits > 0) {
+        log.debug('BiqCollect', `collectBiqStructureEdits: ${sectionCode} — ${sectionEdits} field edit(s)`);
+      }
     });
   });
+  if (edits.length > 0) {
+    log.info('BiqCollect', `collectBiqStructureEdits total: ${edits.length} field edit(s) across structure tabs`);
+    edits.forEach((e) => {
+      const displayVal = String(e.value != null ? e.value : '').slice(0, 40);
+      log.debug('BiqCollect', `  set ${e.sectionCode}[${e.recordRef}].${e.fieldKey} = "${displayVal}"`);
+    });
+  }
   return edits;
 }
 
@@ -6265,8 +6382,12 @@ function collectBiqMapRecordOps(tabs) {
         sectionCode,
         recordRef
       });
+      log.debug('BiqCollect', `collectBiqMapRecordOps: op=delete ${sectionCode} ref=${recordRef}`);
     }
   });
+  if (ops.length > 0) {
+    log.info('BiqCollect', `collectBiqMapRecordOps total: ${ops.length} record op(s)`);
+  }
   return ops;
 }
 
@@ -6321,6 +6442,9 @@ function collectBiqMapEdits(tabs) {
       });
     });
   });
+  if (edits.length > 0) {
+    log.info('BiqCollect', `collectBiqMapEdits total: ${edits.length} map field edit(s)`);
+  }
   return edits;
 }
 
@@ -6731,26 +6855,39 @@ function validateUnitAnimationReferenceChanges({
   const entries = ((((tabs || {}).units || {}).entries) || []);
   if (!Array.isArray(entries)) return null;
   const imported = importedKeys instanceof Set ? importedKeys : new Set();
+  let checkedCount = 0;
   for (const entry of entries) {
     // Skip entries being imported — art copy pipeline handles these
     if (entry && imported.has(String(entry.civilopediaKey || ''))) continue;
     const animationName = String(entry && entry.animationName || '').trim();
     if (!animationName) continue;
     if (!isSafeUnitAnimationFolderName(animationName)) {
-      return `Unsafe unit animation folder name: ${animationName}. Use a plain folder name (no slashes, '..', or reserved characters).`;
+      const msg = `Unsafe unit animation folder name: ${animationName}. Use a plain folder name (no slashes, '..', or reserved characters).`;
+      log.warn('BiqValidate', `validateUnitAnimationReferenceChanges: ${msg}`);
+      return msg;
     }
     const changedAnimationName = normalizeRelativePath(animationName || '') !== normalizeRelativePath((entry && entry.originalAnimationName) || '');
     const enforceSafety = !!(entry && entry.unitAnimationEdited);
     if (!changedAnimationName && !enforceSafety) continue;
     if (entry && entry.unitIniEditor) continue;
+    checkedCount++;
     const localScenarioIni = scenarioContentRoot
       ? path.join(scenarioContentRoot, 'Art', 'Units', animationName, `${animationName}.ini`)
       : '';
-    if (localScenarioIni && fs.existsSync(localScenarioIni)) continue;
+    if (localScenarioIni && fs.existsSync(localScenarioIni)) {
+      log.debug('BiqValidate', `validateUnitAnimationReferenceChanges: "${animationName}" resolved via local scenario INI`);
+      continue;
+    }
     const resolvedIni = resolveUnitIniPath(civ3Path, animationName, scenarioRoot, scenarioSearchPaths);
     if (!resolvedIni) {
-      return `Animation folder "${animationName}" is not resolvable. Choose an existing unit animation folder or edit unit INI actions before saving.`;
+      const msg = `Animation folder "${animationName}" is not resolvable. Choose an existing unit animation folder or edit unit INI actions before saving.`;
+      log.warn('BiqValidate', `validateUnitAnimationReferenceChanges: FAILED — ${msg}`);
+      return msg;
     }
+    log.debug('BiqValidate', `validateUnitAnimationReferenceChanges: "${animationName}" resolved OK`);
+  }
+  if (checkedCount > 0) {
+    log.debug('BiqValidate', `validateUnitAnimationReferenceChanges: ${checkedCount} animation reference(s) validated OK`);
   }
   return null;
 }
@@ -6873,18 +7010,36 @@ function applyBiqReferenceEdits({ biqPath, edits, civ3Path, outputPath }) {
   if (!biqPath || !Array.isArray(edits) || edits.length === 0) {
     return { ok: true, applied: 0, skipped: 0, warning: '', outputPath: '' };
   }
+  log.info('BiqSave', `applyBiqReferenceEdits: ${edits.length} total edit(s) to ${log.rel(biqPath)}`);
+  const opCounts = edits.reduce((acc, e) => {
+    const op = String(e && e.op || 'set').toLowerCase();
+    acc[op] = (acc[op] || 0) + 1;
+    return acc;
+  }, {});
+  log.debug('BiqSave', `  edit breakdown: ${Object.entries(opCounts).map(([k, v]) => `${k}=${v}`).join(' ')}`);
+
   const inflated = inflateBiqIfNeeded(biqPath, civ3Path);
   if (!inflated.ok) {
+    log.error('BiqSave', `applyBiqReferenceEdits: inflate failed — ${inflated.error || 'unknown'}`);
     return { ok: false, error: inflated.error || 'Failed to read BIQ before applying edits.' };
   }
+  log.debug('BiqSave', `  inflated BIQ: ${inflated.buffer ? inflated.buffer.length : 0} bytes`);
+
   const finalOutputPath = String(outputPath || biqPath).trim() || biqPath;
   try {
     const jsResult = jsApplyBiqEdits({ buffer: inflated.buffer, edits });
     if (!jsResult.ok) {
+      log.error('BiqSave', `applyBiqReferenceEdits: jsApplyBiqEdits failed — ${jsResult.error || 'unknown'}`);
       return { ok: false, error: jsResult.error || 'BIQ edit failed' };
     }
+    log.info('BiqSave', `applyBiqReferenceEdits: bridge complete — applied=${jsResult.applied} skipped=${jsResult.skipped}${jsResult.warning ? ' warnings: ' + jsResult.warning : ''}`);
+    if (jsResult.skipped > 0) {
+      log.warn('BiqSave', `applyBiqReferenceEdits: ${jsResult.skipped} edit(s) were skipped — check warnings above`);
+    }
+
     fs.mkdirSync(path.dirname(finalOutputPath), { recursive: true });
     fs.writeFileSync(finalOutputPath, jsResult.buffer);
+    log.debug('BiqSave', `applyBiqReferenceEdits: staged output written to ${log.rel(finalOutputPath)} (${jsResult.buffer ? jsResult.buffer.length : 0} bytes)`);
     return {
       ok: true,
       applied: jsResult.applied,
@@ -6893,6 +7048,7 @@ function applyBiqReferenceEdits({ biqPath, edits, civ3Path, outputPath }) {
       outputPath: finalOutputPath
     };
   } catch (err) {
+    log.error('BiqSave', `applyBiqReferenceEdits: exception — ${err.message}`);
     return { ok: false, error: `BIQ edit failed: ${err.message}` };
   }
 }

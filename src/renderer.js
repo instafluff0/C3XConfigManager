@@ -1,3 +1,25 @@
+// ---------------------------------------------------------------------------
+// Renderer-process debug logging
+// Privacy: paths are sanitized relative to the Civ3 root before logging so
+// user account names are not captured. Open DevTools (View > Toggle Dev Tools)
+// to view these logs when troubleshooting.
+// ---------------------------------------------------------------------------
+function _dbgRelPath(p) {
+  const raw = String(p || '');
+  if (!raw) return '(none)';
+  const root = String(state && state.settings && state.settings.civ3Path || '');
+  if (root && raw.replace(/\\/g, '/').toLowerCase().startsWith(root.replace(/\\/g, '/').toLowerCase() + '/')) {
+    return raw.slice(root.length).replace(/^[/\\]/, '') || '.';
+  }
+  // Fallback: just the last path component to avoid leaking user directories.
+  return raw.replace(/\\/g, '/').split('/').pop() || raw;
+}
+function _dbgStamp() { return new Date().toISOString().slice(0, 23).replace('T', ' '); }
+function _dbgLog(level, cat, msg) { console.log(`[C3X][${_dbgStamp()}][${level}][${cat}] ${msg}`); }
+function _dbgWarn(cat, msg)  { console.warn(`[C3X][${_dbgStamp()}][WRN][${cat}] ${msg}`); }
+function _dbgError(cat, msg) { console.error(`[C3X][${_dbgStamp()}][ERR][${cat}] ${msg}`); }
+// ---------------------------------------------------------------------------
+
 const state = {
   settings: null,
   bundle: null,
@@ -307,6 +329,9 @@ const el = {
   debugLog: document.getElementById('debug-log'),
   copyDebugLog: document.getElementById('copy-debug-log'),
   clearDebugLog: document.getElementById('clear-debug-log'),
+  aboutBtn: document.getElementById('about-btn'),
+  aboutModalOverlay: document.getElementById('about-modal-overlay'),
+  aboutClose: document.getElementById('about-close'),
   filesReadToggle: document.getElementById('files-read-toggle'),
   filesReadModalOverlay: document.getElementById('files-read-modal-overlay'),
   filesReadModalBody: document.getElementById('files-read-modal-body'),
@@ -15694,6 +15719,7 @@ function syncLeadRecordCountToTarget(targetCountRaw) {
       });
       leadSection.records.push(newRecord);
       ops.push({ op: 'add', sectionCode: 'LEAD', newRecordRef: newRef });
+      _dbgLog('INF', 'BiqCRUD', `LEAD add: newRef=${newRef} (syncLeadCount target=${targetCount})`);
     }
     return true;
   }
@@ -15711,6 +15737,7 @@ function syncLeadRecordCountToTarget(targetCountRaw) {
     });
     if (!hadCreate) {
       ensureBiqStructureRecordOps(playersTab).push({ op: 'delete', sectionCode: 'LEAD', recordRef: target });
+      _dbgLog('INF', 'BiqCRUD', `LEAD delete: ref=${target} (syncLeadCount target=${targetCount})`);
     }
   }
   return true;
@@ -16148,8 +16175,10 @@ function renameReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw, { allowExist
     const hasDelete = ops.some((op) => String(op && op.op || '').toLowerCase() === 'delete' && String(op && op.recordRef || '').toUpperCase() === oldKey);
     if (!hasDelete) {
       ops.push({ op: 'delete', recordRef: oldKey });
+      _dbgLog('INF', 'BiqCRUD', `reference delete (for rename): tabKey=${tabKey} ref=${oldKey}`);
     }
     ops.push({ op: 'rename', recordRef: oldKey, newRecordRef: nextKey });
+    _dbgLog('INF', 'BiqCRUD', `reference rename: tabKey=${tabKey} ${oldKey} -> ${nextKey}`);
   }
   const set = state.dirtyReferenceKeysByTab && state.dirtyReferenceKeysByTab[tabKey];
   if (set && set.has(oldKey)) {
@@ -16257,7 +16286,24 @@ function getTargetReferenceEntries(tabKey) {
 }
 
 function getTargetReferenceIndexByKey(tabKey) {
-  const entries = getTargetReferenceEntries(tabKey);
+  const bundle = state.bundle || {};
+  const tab = bundle.tabs && bundle.tabs[tabKey];
+  let entries = tab && Array.isArray(tab.entries) ? tab.entries : null;
+  if (!entries) {
+    const rulesTab = bundle.tabs && bundle.tabs.rules;
+    const sections = rulesTab && Array.isArray(rulesTab.sections) ? rulesTab.sections : [];
+    const sectionCode = ({
+      eras: 'ERAS',
+      difficulties: 'DIFF',
+      espionage: 'ESPN',
+      workerActions: 'TFRM',
+      terrainPedia: 'TERR'
+    })[String(tabKey || '')];
+    const section = sectionCode
+      ? sections.find((item) => String(item && item.code || '').trim().toUpperCase() === sectionCode)
+      : null;
+    entries = section && Array.isArray(section.records) ? section.records : [];
+  }
   const out = new Map();
   entries.forEach((entry, fallbackIdx) => {
     const key = String(entry && (entry.civilopediaKey || entry.civilopediaEntry) || '').trim().toUpperCase();
@@ -16270,7 +16316,24 @@ function getTargetReferenceIndexByKey(tabKey) {
 }
 
 function getTargetReferenceIndexByName(tabKey) {
-  const entries = getTargetReferenceEntries(tabKey);
+  const bundle = state.bundle || {};
+  const tab = bundle.tabs && bundle.tabs[tabKey];
+  let entries = tab && Array.isArray(tab.entries) ? tab.entries : null;
+  if (!entries) {
+    const rulesTab = bundle.tabs && bundle.tabs.rules;
+    const sections = rulesTab && Array.isArray(rulesTab.sections) ? rulesTab.sections : [];
+    const sectionCode = ({
+      eras: 'ERAS',
+      difficulties: 'DIFF',
+      espionage: 'ESPN',
+      workerActions: 'TFRM',
+      terrainPedia: 'TERR'
+    })[String(tabKey || '')];
+    const section = sectionCode
+      ? sections.find((item) => String(item && item.code || '').trim().toUpperCase() === sectionCode)
+      : null;
+    entries = section && Array.isArray(section.records) ? section.records : [];
+  }
   const out = new Map();
   const dupes = new Set();
   entries.forEach((entry, fallbackIdx) => {
@@ -16357,9 +16420,53 @@ function normalizeImportedScalarReferenceField(entry, {
       .map((item) => [Number(item.index), item.civilopediaKey])
       .filter(([index, key]) => Number.isFinite(index) && index >= 0 && key)
   );
+  const sourceIndexToName = new Map(
+    getImportReferenceIndexMap(entry && entry._importReferenceIndexMaps, sourceTabKey)
+      .map((item) => [Number(item.index), item.name])
+      .filter(([index, name]) => Number.isFinite(index) && index >= 0 && name)
+  );
   const targetIndexByKey = getTargetReferenceIndexByKey(targetTabKey);
+  const targetIndexByName = (() => {
+    const bundle = state.bundle || {};
+    const tab = bundle.tabs && bundle.tabs[targetTabKey];
+    let entries = tab && Array.isArray(tab.entries) ? tab.entries : null;
+    if (!entries) {
+      const rulesTab = bundle.tabs && bundle.tabs.rules;
+      const sections = rulesTab && Array.isArray(rulesTab.sections) ? rulesTab.sections : [];
+      const sectionCode = ({
+        eras: 'ERAS',
+        difficulties: 'DIFF',
+        espionage: 'ESPN',
+        workerActions: 'TFRM',
+        terrainPedia: 'TERR'
+      })[String(targetTabKey || '')];
+      const section = sectionCode
+        ? sections.find((item) => String(item && item.code || '').trim().toUpperCase() === sectionCode)
+        : null;
+      entries = section && Array.isArray(section.records) ? section.records : [];
+    }
+    const out = new Map();
+    const dupes = new Set();
+    entries.forEach((targetEntry, fallbackIdx) => {
+      const name = String(targetEntry && (targetEntry.name || targetEntry.eraName || targetEntry.description) || '').trim();
+      const rawIndex = targetEntry && (targetEntry.biqIndex != null ? targetEntry.biqIndex : targetEntry.index);
+      const index = Number.isFinite(rawIndex) ? Number(rawIndex) : fallbackIdx;
+      if (!name || !Number.isFinite(index) || index < 0) return;
+      if (dupes.has(name)) return;
+      if (out.has(name)) { out.delete(name); dupes.add(name); return; }
+      out.set(name, index);
+    });
+    return out;
+  })();
   const sourceKey = sourceIndexToKey.get(sourceIndex);
-  const targetIndex = sourceKey ? targetIndexByKey.get(sourceKey) : NaN;
+  let targetIndex = sourceKey ? targetIndexByKey.get(sourceKey) : NaN;
+  if (!(Number.isFinite(targetIndex) && targetIndex >= 0) && sourceTabKey === 'eras' && targetTabKey === 'eras') {
+    targetIndex = sourceIndex;
+  }
+  if (!(Number.isFinite(targetIndex) && targetIndex >= 0)) {
+    const sourceName = sourceIndexToName.get(sourceIndex);
+    targetIndex = sourceName ? targetIndexByName.get(sourceName) : NaN;
+  }
   field.value = Number.isFinite(targetIndex) && targetIndex >= 0 ? String(targetIndex) : 'None';
 }
 
@@ -17154,6 +17261,7 @@ function renderReferenceTab(tab, tabKey) {
         op: 'add',
         newRecordRef: key
       });
+      _dbgLog('INF', 'BiqCRUD', `reference add: tabKey=${tabKey} newRef=${key}`);
       rememberUndoSnapshot();
       tab.entries.unshift(newEntry);
       state.referenceSelection[tabKey] = 0;
@@ -17179,6 +17287,7 @@ function renderReferenceTab(tab, tabKey) {
         sourceRef: String(selectedEntry.civilopediaKey || '').toUpperCase(),
         newRecordRef: key
       });
+      _dbgLog('INF', 'BiqCRUD', `reference copy: tabKey=${tabKey} source=${String(selectedEntry.civilopediaKey || '').toUpperCase()} -> newRef=${key}`);
       rememberUndoSnapshot();
       tab.entries.unshift(newEntry);
       state.referenceSelection[tabKey] = 0;
@@ -17273,6 +17382,7 @@ function renderReferenceTab(tab, tabKey) {
           sourceRef: String(result.importedEntry.civilopediaKey || '').toUpperCase(),
           importArtFrom: result.importFilePath
         });
+        _dbgLog('INF', 'BiqCRUD', `reference import: tabKey=${tabKey} source=${String(result.importedEntry.civilopediaKey || '').toUpperCase()} -> newRef=${key} importArtFrom=${_dbgRelPath(result.importFilePath)}`);
         appendDebugLog('reference-import:op-added', {
           tabKey,
           targetKey: key,
@@ -17361,6 +17471,9 @@ function renderReferenceTab(tab, tabKey) {
       });
       if (!hadCreateOp) {
         ensureReferenceRecordOps(tab).push({ op: 'delete', recordRef: targetKey });
+        _dbgLog('INF', 'BiqCRUD', `reference delete: tabKey=${tabKey} ref=${targetKey}`);
+      } else {
+        _dbgLog('INF', 'BiqCRUD', `reference delete (was new, reverted create op): tabKey=${tabKey} ref=${targetKey}`);
       }
       state.referenceSelection[tabKey] = 0;
       setDirty(true);
@@ -18679,6 +18792,7 @@ function renderBiqTab(tab) {
       if (selected.code === 'LEAD') selected.records.push(newRecord);
       else selected.records.unshift(newRecord);
       ops.push({ op: 'add', sectionCode: selected.code, newRecordRef: newRef });
+      _dbgLog('INF', 'BiqCRUD', `structure add: section=${selected.code} newRef=${newRef}`);
       state.biqRecordSelection[selected.id] = selected.code === 'LEAD'
         ? Math.max(0, selected.records.length - 1)
         : 0;
@@ -18706,6 +18820,7 @@ function renderBiqTab(tab) {
       rememberUndoSnapshot();
       selected.records.unshift(newRecord);
       ops.push({ op: 'copy', sectionCode: selected.code, sourceRef, newRecordRef: newRef });
+      _dbgLog('INF', 'BiqCRUD', `structure copy: section=${selected.code} source=${sourceRef} -> newRef=${newRef}`);
       state.biqRecordSelection[selected.id] = Math.max(0, Math.min(
         Number(state.biqRecordSelection[selected.id] || 0),
         Math.max(0, selected.records.length - 1)
@@ -18751,6 +18866,7 @@ function renderBiqTab(tab) {
         rememberUndoSnapshot();
         selected.records.unshift(newRecord);
         ops.push({ op: 'add', sectionCode: selected.code, newRecordRef: newRef });
+        _dbgLog('INF', 'BiqCRUD', `structure import: section=${selected.code} newRef=${newRef} from=${_dbgRelPath(importPath)}`);
         state.biqRecordSelection[selected.id] = 0;
         setDirty(true);
         setStatus(`Imported ${selected.code} record from scenario.`);
@@ -18789,6 +18905,9 @@ function renderBiqTab(tab) {
       });
       if (!hadCreate) {
         ensureBiqStructureRecordOps(tab).push({ op: 'delete', sectionCode: selected.code, recordRef: target });
+        _dbgLog('INF', 'BiqCRUD', `structure delete: section=${selected.code} ref=${target}`);
+      } else {
+        _dbgLog('INF', 'BiqCRUD', `structure delete (was new, reverted create op): section=${selected.code} ref=${target}`);
       }
       state.biqRecordSelection[selected.id] = 0;
       setDirty(true);
@@ -22526,6 +22645,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
   const pushStructureAddOp = (sectionCode, newRecordRef) => {
     const ops = ensureBiqStructureRecordOps(tab);
     ops.push({ op: 'add', sectionCode, newRecordRef });
+    _dbgLog('INF', 'BiqCRUD', `structure add (map): section=${sectionCode} newRef=${newRecordRef}`);
   };
   const pushStructureDeleteOp = (sectionCode, recordRef) => {
     const section = String(sectionCode || '').trim().toUpperCase();
@@ -22540,6 +22660,7 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
     });
     if (addIdx >= 0) {
       ops.splice(addIdx, 1);
+      _dbgLog('INF', 'BiqCRUD', `structure delete (map, reverted create op): section=${section} ref=${ref}`);
       return;
     }
     const alreadyQueued = ops.some((op) => {
@@ -22547,7 +22668,10 @@ function renderBiqMapSection(tab, tileSection, options = {}) {
       if (String(op && op.sectionCode || '').trim().toUpperCase() !== section) return false;
       return String(op && op.recordRef || '').trim().toUpperCase() === ref;
     });
-    if (!alreadyQueued) ops.push({ op: 'delete', sectionCode: section, recordRef: ref });
+    if (!alreadyQueued) {
+      ops.push({ op: 'delete', sectionCode: section, recordRef: ref });
+      _dbgLog('INF', 'BiqCRUD', `structure delete (map): section=${section} ref=${ref}`);
+    }
   };
   const removeCityByIndex = (cityIndex) => {
     const idx = Number(cityIndex);
@@ -27026,8 +27150,15 @@ async function loadBundleAndRender(options = {}) {
   await window.c3xManager.setSettings(state.settings);
   setLoadingUi(true, options.loadingText || 'Loading configs...');
 
+  const _loadMode = state.settings && state.settings.mode;
+  _dbgLog('INF', 'loadBundle', `mode=${_loadMode}, c3x=${_dbgRelPath(state.settings && state.settings.c3xPath)}`);
+  if (_loadMode === 'scenario') {
+    _dbgLog('INF', 'loadBundle', `scenario=${_dbgRelPath(state.settings && state.settings.scenarioPath)}`);
+  }
+
   try {
     if (!state.settings.c3xPath) {
+      _dbgWarn('loadBundle', 'Aborted — c3xPath not set');
       clearBundleView();
       setStatus('Set C3X Folder first.', true);
       updateModeState();
@@ -27035,6 +27166,7 @@ async function loadBundleAndRender(options = {}) {
     }
 
     if (state.settings.mode === 'scenario' && !state.settings.scenarioPath) {
+      _dbgWarn('loadBundle', 'Aborted — scenarioPath not set in scenario mode');
       clearBundleView();
       setStatus('Select a scenario .biq in Scenario mode.', true);
       updateModeState();
@@ -27042,6 +27174,7 @@ async function loadBundleAndRender(options = {}) {
     }
 
     if (state.settings.mode === 'scenario' && !isBiqPath(state.settings.scenarioPath)) {
+      _dbgWarn('loadBundle', `Aborted — scenarioPath is not a .biq file: ${_dbgRelPath(state.settings.scenarioPath)}`);
       clearBundleView();
       setStatus('Scenario mode requires selecting a .biq file.', true);
       updateModeState();
@@ -27063,6 +27196,11 @@ async function loadBundleAndRender(options = {}) {
       scenarioPath: state.settings.scenarioPath,
       scenarioSearchFolderOverride
     });
+    const _bundleTabKeys = bundle && bundle.tabs ? Object.keys(bundle.tabs) : [];
+    _dbgLog('INF', 'loadBundle', `Response received — tabs=[${_bundleTabKeys.join(', ')}], readFiles=${bundle && Array.isArray(bundle.readFiles) ? bundle.readFiles.length : 0}`);
+    if (bundle && bundle.biq && bundle.biq.error) {
+      _dbgWarn('loadBundle', `BIQ error: ${bundle.biq.error}`);
+    }
     const cleanSnapshotForLoadedBundle = snapshotEditableTabsFromBundle(bundle);
     if (bundle && bundle.tabs && bundle.tabs.districts && bundle.tabs.districts.model && Array.isArray(bundle.tabs.districts.model.sections)) {
       applySpecialDistrictDefaultsToSections(bundle.tabs.districts.model.sections);
@@ -27169,7 +27307,10 @@ async function loadBundleAndRender(options = {}) {
     void refreshFilesReadAccess();
     setReferenceNotice('Configs loaded.');
     setStatus('Configs loaded. Changes to mode or paths reload automatically.');
+    _dbgLog('INF', 'loadBundle', 'Render complete.');
   } catch (err) {
+    _dbgError('loadBundle', `Failed: ${err && err.message}`);
+    if (err && err.stack) _dbgError('loadBundle', err.stack);
     clearBundleView();
     state.trackDirty = true;
     updateModeState();
@@ -27649,14 +27790,17 @@ function closeSaveProgressModal() {
 
 async function saveCurrentBundle() {
   if (state.isSaving) {
+    _dbgWarn('saveBundle', 'Save already in progress — skipped');
     return false;
   }
   if (!state.bundle) {
+    _dbgWarn('saveBundle', 'No bundle loaded — cannot save');
     setStatus('Load configs before saving.', true);
     return false;
   }
   const validationError = getSectionValidationError();
   if (validationError) {
+    _dbgWarn('saveBundle', `Validation blocked save: ${validationError}`);
     setStatus(`Save blocked: ${validationError}`, true);
     refreshDirtyUi();
     return false;
@@ -27669,6 +27813,7 @@ async function saveCurrentBundle() {
 
   const tabsToSave = getTabsForSavePayload();
   const dirtyTabs = Object.keys((state.bundle && state.bundle.tabs) || {}).filter((key) => getTabDirtyCount(key) > 0);
+  _dbgLog('INF', 'saveBundle', `Saving — mode=${state.settings && state.settings.mode}, dirtyTabs=[${dirtyTabs.join(', ')}]`);
   const scenarioSearchFolderChanged = didScenarioSearchFolderChangeInTabs(tabsToSave);
   const shouldReloadForAutoScenarioSearchFolder = state.settings.mode === 'scenario'
     && Array.isArray(state.bundle && state.bundle.scenarioSearchPaths)
@@ -27689,6 +27834,17 @@ async function saveCurrentBundle() {
 
   try {
     const res = await window.c3xManager.saveBundle(payload);
+    if (res && res.ok) {
+      const _writtenPaths = Array.isArray(res.writeResults)
+        ? res.writeResults.filter((r) => r.status === 'saved').map((r) => _dbgRelPath(r.path))
+        : [];
+      _dbgLog('INF', 'saveBundle', `OK — wrote ${_writtenPaths.length} file(s): [${_writtenPaths.join(', ')}]`);
+    } else {
+      _dbgError('saveBundle', `Failed: ${res && res.error}`);
+      if (res && res.rollback) {
+        _dbgWarn('saveBundle', `Rollback: attempted=${res.rollback.attempted}, failed=${res.rollback.failed}`);
+      }
+    }
     const outcome = buildSaveOutcome(preparedItems, res);
     setSaveDetailState({
       items: outcome.items,
@@ -27708,7 +27864,7 @@ async function saveCurrentBundle() {
       return false;
     }
 
-    const paths = res.saveReport.map((r) => r.path).join(' | ');
+    const paths = res.saveReport.map((r) => _dbgRelPath(r.path)).join(' | ');
     const biqReport = res.saveReport.find((r) => r.kind === 'biq');
     const referenceSelectionKeys = {};
     if (state.bundle && state.bundle.tabs) {
@@ -27740,6 +27896,8 @@ async function saveCurrentBundle() {
     }
     return true;
   } catch (err) {
+    _dbgError('saveBundle', `Threw: ${err && err.message}`);
+    if (err && err.stack) _dbgError('saveBundle', err.stack);
     const outcome = buildSaveOutcome(preparedItems, { ok: false, error: err.message }, err.message);
     setSaveDetailState({
       items: outcome.items,
@@ -28104,6 +28262,11 @@ async function shouldAutoLoad() {
 
 async function init() {
   state.settings = await window.c3xManager.getSettings();
+  _dbgLog('INF', 'init', `Settings loaded: mode=${state.settings && state.settings.mode}, version=${state.settings && state.settings.c3xVersion}, perf=${state.settings && state.settings.performanceMode}`);
+  _dbgLog('INF', 'init', `c3xPath=${_dbgRelPath(state.settings && state.settings.c3xPath)}`);
+  if (state.settings && state.settings.mode === 'scenario') {
+    _dbgLog('INF', 'init', `scenarioPath=${_dbgRelPath(state.settings && state.settings.scenarioPath)}`);
+  }
   if (!state.settings.performanceMode) {
     state.settings.performanceMode = DEFAULT_PERFORMANCE_MODE;
   }
@@ -28263,6 +28426,26 @@ async function init() {
   if (el.clearDebugLog) {
     el.clearDebugLog.addEventListener('click', () => {
       el.debugLog.textContent = '';
+    });
+  }
+  if (el.aboutBtn) {
+    el.aboutBtn.addEventListener('click', () => {
+      el.aboutModalOverlay.classList.remove('hidden');
+      el.aboutModalOverlay.setAttribute('aria-hidden', 'false');
+    });
+  }
+  if (el.aboutClose) {
+    el.aboutClose.addEventListener('click', () => {
+      el.aboutModalOverlay.classList.add('hidden');
+      el.aboutModalOverlay.setAttribute('aria-hidden', 'true');
+    });
+  }
+  if (el.aboutModalOverlay) {
+    el.aboutModalOverlay.addEventListener('click', (e) => {
+      if (e.target === el.aboutModalOverlay) {
+        el.aboutModalOverlay.classList.add('hidden');
+        el.aboutModalOverlay.setAttribute('aria-hidden', 'true');
+      }
     });
   }
   if (el.filesReadToggle) {

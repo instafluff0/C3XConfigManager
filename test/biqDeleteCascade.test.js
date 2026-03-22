@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { normalizeDeletedReferenceSections } = require('../src/biq/biqSections');
+const { normalizeRaceDependentSections, normalizeDeletedReferenceSections } = require('../src/biq/biqSections');
 
 function section(code, records) {
   return { code, records };
@@ -11,6 +11,8 @@ function section(code, records) {
 
 function runCascade({ sections, edits, originalRefsBySection }) {
   const parsed = { sections: sections.map((entry) => ({ ...entry, records: (entry.records || []).map((record) => ({ ...record })) })) };
+  const raceResult = normalizeRaceDependentSections(parsed, edits, (originalRefsBySection && originalRefsBySection.RACE) || []);
+  assert.equal(raceResult.ok, true, String(raceResult.error || 'race cascade failed'));
   const result = normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection);
   assert.equal(result.ok, true, String(result.error || 'cascade failed'));
   return parsed;
@@ -148,7 +150,9 @@ test('delete cascade remaps supported government references and shrinks relation
     originalRefsBySection: { GOVT: ['GOVT_0', 'GOVT_1', 'GOVT_2'] }
   });
 
-  assert.deepEqual(parsed.sections.find((s) => s.code === 'RACE').records[0], { favoriteGovernment: -1, shunnedGovernment: 1 });
+  const race0 = parsed.sections.find((s) => s.code === 'RACE').records[0];
+  assert.equal(race0.favoriteGovernment, -1);
+  assert.equal(race0.shunnedGovernment, 1);
   assert.equal(parsed.sections.find((s) => s.code === 'BLDG').records[0].reqGovernment, 1);
   assert.equal(parsed.sections.find((s) => s.code === 'LEAD').records[0].government, 1);
   const govt0 = parsed.sections.find((s) => s.code === 'GOVT').records[0];

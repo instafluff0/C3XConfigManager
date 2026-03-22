@@ -7,6 +7,8 @@ const crypto = require('node:crypto');
 
 const { loadBundle, saveBundle } = require('../src/configCore');
 const mapCore = require('../src/mapEditorCore');
+const { parseAllSections } = require('../src/biq/biqSections');
+const { decompress } = require('../src/biq/decompress');
 
 function mkTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'c3x-biq-test-'));
@@ -40,6 +42,22 @@ function findSampleMapBiqPath() {
     path.join(civ3Root, 'Conquests', 'Scenarios', '9 MP WWII in the Pacific.biq')
   ].filter((p) => p && fs.existsSync(p));
   return candidates[0] || '';
+}
+
+function getStablePlayableCivsFixturePath() {
+  return path.resolve(__dirname, 'fixtures', 'biq_playable_civs_fixture.biq');
+}
+
+function getStableMapUnitsFixturePath() {
+  return path.resolve(__dirname, 'fixtures', 'biq_map_units_fixture.biq');
+}
+
+function getStableLeadNoMapFixturePath() {
+  return path.resolve(__dirname, 'fixtures', 'biq_lead_nomap_fixture.biq');
+}
+
+function getStableFixtureCiv3Root() {
+  return path.resolve(__dirname, '..', '..');
 }
 
 function resolveCiv3RootFromBiq(biqPath) {
@@ -116,6 +134,16 @@ function parseDisplayedReferenceIndex(value, fallback = -1) {
   return mapCore.parseIntLoose(text, fallback);
 }
 
+function decodeSigned32BitmaskIndices(value) {
+  const parsed = mapCore.parseIntLoose(value, 0);
+  const mask = Number.isFinite(parsed) ? (parsed >>> 0) : 0;
+  const out = [];
+  for (let bit = 0; bit < 32; bit += 1) {
+    if (((mask >>> bit) & 1) === 1) out.push(bit);
+  }
+  return out;
+}
+
 function getSection(tab, code) {
   const sections = tab && Array.isArray(tab.sections) ? tab.sections : [];
   return sections.find((section) => String(section && section.code || '').toUpperCase() === String(code || '').toUpperCase()) || null;
@@ -186,11 +214,33 @@ function getScenarioSettingsRecord(bundle) {
   return section && Array.isArray(section.records) ? section.records[0] : null;
 }
 
+function parseDisplayIndex(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/\((-?\d+)\)\s*$/) || text.match(/^-?\d+/);
+  return match ? Number.parseInt(match[1] || match[0], 10) : NaN;
+}
+
+function parseRawBiqFromDisk(biqPath) {
+  let buf = fs.readFileSync(biqPath);
+  const inflated = decompress(buf);
+  if (inflated && inflated.ok && Buffer.isBuffer(inflated.data)) {
+    buf = inflated.data;
+  }
+  const parsed = parseAllSections(buf);
+  assert.equal(parsed && parsed.ok, true, 'expected raw BIQ parse to succeed');
+  return parsed;
+}
+
+function getRawParsedSectionFromDisk(biqPath, code) {
+  const parsed = parseRawBiqFromDisk(biqPath);
+  return ((parsed && parsed.sections) || []).find((section) => String(section && section.code || '').toUpperCase() === String(code || '').toUpperCase()) || null;
+}
+
 test('BIQ round-trip persists tech tree coordinate edits on scenario copy', (t) => {
   const sampleBiq = findSampleBiqPath();
   if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
 
-  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
   const c3x = path.join(tmp, 'c3x');
   fs.mkdirSync(c3x, { recursive: true });
@@ -240,7 +290,7 @@ test('BIQ round-trip persists Scenario Search Folder edits from UI payload', (t)
   const sampleBiq = findSampleBiqPath();
   if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
 
-  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
   const c3x = path.join(tmp, 'c3x');
   fs.mkdirSync(c3x, { recursive: true });
@@ -323,10 +373,10 @@ test('scenario save auto-creates a sibling search folder for BIQs under shared S
 });
 
 test('BIQ round-trip persists deterministic playable civilization list rewrites', (t) => {
-  const sampleBiq = findSampleBiqPath();
-  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  if (!fs.existsSync(sampleBiq)) t.skip('Stable playable civ fixture BIQ is missing.');
 
-  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
   const c3x = path.join(tmp, 'c3x');
   fs.mkdirSync(c3x, { recursive: true });
@@ -349,7 +399,7 @@ test('BIQ round-trip persists deterministic playable civilization list rewrites'
 
   const originalPlayable = fields
     .filter((field) => /^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()))
-    .map((field) => Number.parseInt(String(field.value || ''), 10))
+    .map((field) => parseDisplayIndex(field.value))
     .filter((value) => Number.isFinite(value) && value >= 0)
     .sort((a, b) => a - b);
   if (originalPlayable.length < 2) {
@@ -390,17 +440,17 @@ test('BIQ round-trip persists deterministic playable civilization list rewrites'
 
   const rePlayable = (Array.isArray(reGameRecord.fields) ? reGameRecord.fields : [])
     .filter((field) => /^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()))
-    .map((field) => Number.parseInt(String(field.value || ''), 10))
+    .map((field) => parseDisplayIndex(field.value))
     .filter((value) => Number.isFinite(value) && value >= 0)
     .sort((a, b) => a - b);
   assert.deepEqual(rePlayable, replacement);
 });
 
 test('BIQ round-trip persists array-backed projected and synthetic BIQ fields', (t) => {
-  const sampleBiq = findSampleBiqPath();
-  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  if (!fs.existsSync(sampleBiq)) t.skip('Stable playable civ fixture BIQ is missing.');
 
-  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
   const c3x = path.join(tmp, 'c3x');
   fs.mkdirSync(c3x, { recursive: true });
@@ -453,7 +503,7 @@ test('BIQ round-trip persists array-backed projected and synthetic BIQ fields', 
   assert.ok(countField, 'expected GAME playable civ count field');
   const originalPlayable = gameFields
     .filter((field) => /^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()))
-    .map((field) => Number.parseInt(String(field.value || ''), 10))
+    .map((field) => parseDisplayIndex(field.value))
     .filter((value) => Number.isFinite(value) && value >= 0);
   if (originalPlayable.length < 2) {
     t.skip('Sample BIQ does not have enough playable civilizations.');
@@ -549,7 +599,7 @@ test('BIQ round-trip persists array-backed projected and synthetic BIQ fields', 
   assert.ok(reGameRecord, 'expected reloaded GAME record');
   const rePlayable = (Array.isArray(reGameRecord.fields) ? reGameRecord.fields : [])
     .filter((field) => /^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()))
-    .map((field) => Number.parseInt(String(field.value || ''), 10))
+    .map((field) => parseDisplayIndex(field.value))
     .filter((value) => Number.isFinite(value) && value >= 0)
     .sort((a, b) => a - b);
   assert.deepEqual(rePlayable, playableReplacement);
@@ -810,7 +860,9 @@ test('BIQ delete cascade reindexes supported technology references end-to-end', 
     c3xPath: c3x,
     civ3Path: civ3Root,
     scenarioPath: scenarioBiq,
-    tabs: afterAdd.tabs
+    tabs: {
+      technologies: afterAdd.tabs.technologies
+    }
   });
   assert.equal(setSave.ok, true, String(setSave.error || 'save setup refs failed'));
 
@@ -1165,11 +1217,384 @@ test('BIQ delete cascade reindexes supported unit references end-to-end', (t) =>
   assert.equal(parseDisplayedReferenceIndex(findField(reUnitHost, 'enslaveresultsin').value, -1), reloadedShiftUnitIndex, 'higher enslave-result unit should decrement');
 });
 
-test('BIQ save blocks deleting a unit when the scenario already has map data', (t) => {
-  const sampleBiq = findSampleMapBiqPath();
-  if (!sampleBiq) t.skip('No sample map BIQ available. Set C3X_TEST_MAP_BIQ to run map BIQ integration tests.');
+test('BIQ CRUD sequence keeps civilization-linked unit and GAME references consistent end-to-end', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
 
   const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const before = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const civEntries = (before.tabs.civilizations && before.tabs.civilizations.entries) || [];
+  if (civEntries.length < 4) {
+    t.skip('Sample BIQ does not expose enough civilizations for CRUD sequencing.');
+    return;
+  }
+  const deleteSeedRefs = civEntries
+    .filter((entry) => String(entry && entry.civilopediaKey || '').trim())
+    .slice(-2)
+    .map((entry) => String(entry.civilopediaKey || '').trim().toUpperCase());
+  if (deleteSeedRefs.length < 2) {
+    t.skip('Sample BIQ did not expose enough deletable civilization refs.');
+    return;
+  }
+
+  const freeSlotsSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      civilizations: {
+        recordOps: deleteSeedRefs.map((recordRef) => ({ op: 'delete', recordRef }))
+      }
+    }
+  });
+  assert.equal(freeSlotsSave.ok, true, String(freeSlotsSave.error || 'failed to free civ slots'));
+
+  const addDeleteRef = 'RACE_C3X_SEQ_A';
+  const addShiftRef = 'RACE_C3X_SEQ_B';
+  const addSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      civilizations: {
+        recordOps: [
+          { op: 'add', newRecordRef: addDeleteRef },
+          { op: 'add', newRecordRef: addShiftRef }
+        ]
+      }
+    }
+  });
+  assert.equal(addSave.ok, true, String(addSave.error || 'failed to add test civilizations'));
+
+  const afterAdd = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const deleteCivIndex = getBiqSectionRecordIndex(afterAdd, 'RACE', addDeleteRef);
+  const shiftCivIndex = getBiqSectionRecordIndex(afterAdd, 'RACE', addShiftRef);
+  assert.ok(deleteCivIndex >= 0, 'expected delete-target civilization with BIQ index');
+  assert.ok(shiftCivIndex >= 0, 'expected shift-target civilization with BIQ index');
+
+  const unitHost = ((afterAdd.tabs.units && afterAdd.tabs.units.entries) || []).find((entry) =>
+    entry
+      && findField(entry, 'availableto')
+      && String(entry.civilopediaKey || '').toUpperCase() !== addDeleteRef
+      && String(entry.civilopediaKey || '').toUpperCase() !== addShiftRef
+  );
+  if (!unitHost) {
+    t.skip('Sample BIQ did not expose a unit with an editable Available To field.');
+    return;
+  }
+  findField(unitHost, 'availableto').value = String((1 << 0) | (1 << deleteCivIndex) | (1 << shiftCivIndex));
+
+  const gameRecord = getScenarioSettingsRecord(afterAdd);
+  if (!gameRecord) {
+    t.skip('Sample BIQ has no GAME record.');
+    return;
+  }
+  const gameFields = Array.isArray(gameRecord.fields) ? gameRecord.fields : [];
+  const countField = getRecordField(gameRecord, 'numberofplayablecivs') || getRecordField(gameRecord, 'number_of_playable_civs');
+  assert.ok(countField, 'expected GAME playable civ count field');
+  const preservedGameFields = gameFields.filter((field) => !/^playable_civ(?:_\d+)?$/.test(String(field && (field.baseKey || field.key) || '').toLowerCase()));
+  const playableIds = [deleteCivIndex, shiftCivIndex];
+  const insertAt = Math.max(0, preservedGameFields.indexOf(countField) + 1);
+  const rewrittenPlayable = playableIds.map((id, idx) => ({
+    key: `playable_civ_${idx}`,
+    baseKey: `playable_civ_${idx}`,
+    label: 'Playable Civilization',
+    value: String(id),
+    originalValue: '',
+    editable: true
+  }));
+  preservedGameFields.splice(insertAt, 0, ...rewrittenPlayable);
+  gameRecord.fields = preservedGameFields;
+  countField.value = String(playableIds.length);
+
+  const setSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: afterAdd.tabs
+  });
+  assert.equal(setSave.ok, true, String(setSave.error || 'failed to save civ-linked setup'));
+
+  const afterSet = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const afterSetUnitHost = getEntryByCivKey(afterSet.tabs.units.entries, unitHost.civilopediaKey);
+  assert.ok(afterSetUnitHost, 'expected unit host after setup save');
+  assert.deepEqual(
+    decodeSigned32BitmaskIndices(findField(afterSetUnitHost, 'availableto').value),
+    [0, deleteCivIndex, shiftCivIndex],
+    'unit Available To setup should persist before delete'
+  );
+  const afterSetParsedGame = getRawParsedSectionFromDisk(scenarioBiq, 'GAME');
+  const afterSetPlayable = (afterSetParsedGame && Array.isArray(afterSetParsedGame.records) && afterSetParsedGame.records[0] && Array.isArray(afterSetParsedGame.records[0].playableCivIds))
+    ? afterSetParsedGame.records[0].playableCivIds.slice()
+    : [];
+  assert.deepEqual(afterSetPlayable, [deleteCivIndex, shiftCivIndex], 'GAME playable civ setup should persist before delete');
+
+  const deleteSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      civilizations: {
+        recordOps: [{ op: 'delete', recordRef: addDeleteRef }]
+      }
+    }
+  });
+  assert.equal(deleteSave.ok, true, String(deleteSave.error || 'delete cascade save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  assert.equal(biqSectionHasCivilopediaKey(reloaded, 'RACE', addDeleteRef), false, 'expected deleted civilization to be gone');
+  const reloadedShiftCivIndex = getBiqSectionRecordIndex(reloaded, 'RACE', addShiftRef);
+  assert.ok(reloadedShiftCivIndex >= 0, 'expected surviving civilization after delete');
+
+  const reUnitHost = getEntryByCivKey(reloaded.tabs.units.entries, unitHost.civilopediaKey);
+  assert.ok(reUnitHost, 'expected reloaded unit host');
+  assert.deepEqual(
+    decodeSigned32BitmaskIndices(findField(reUnitHost, 'availableto').value),
+    [0, reloadedShiftCivIndex],
+    'unit Available To mask should drop deleted civ and shift surviving civ'
+  );
+
+  const reParsedGame = getRawParsedSectionFromDisk(scenarioBiq, 'GAME');
+  const rePlayable = (reParsedGame && Array.isArray(reParsedGame.records) && reParsedGame.records[0] && Array.isArray(reParsedGame.records[0].playableCivIds))
+    ? reParsedGame.records[0].playableCivIds.slice()
+    : [];
+  assert.deepEqual(rePlayable, [reloadedShiftCivIndex], 'GAME playable civ list should drop deleted civ and shift surviving civ');
+
+});
+
+test('BIQ CRUD sequence keeps LEAD civilization references consistent end-to-end', (t) => {
+  const sampleBiq = getStableLeadNoMapFixturePath();
+  if (!fs.existsSync(sampleBiq)) t.skip('Stable LEAD no-map fixture BIQ is missing.');
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const before = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const leadSectionBefore = getSection(before.tabs.players, 'LEAD');
+  const leadRecordBefore = leadSectionBefore && Array.isArray(leadSectionBefore.records) ? leadSectionBefore.records[0] : null;
+  const leadCivFieldBefore = getRecordField(leadRecordBefore, 'civ');
+  if (!(leadRecordBefore && leadCivFieldBefore)) {
+    t.skip('Sample BIQ has no editable LEAD civ reference.');
+    return;
+  }
+
+  const civEntries = (before.tabs.civilizations && before.tabs.civilizations.entries) || [];
+  if (civEntries.length < 4) {
+    t.skip('Sample BIQ does not expose enough civilizations for CRUD sequencing.');
+    return;
+  }
+  const deleteSeedRefs = civEntries
+    .filter((entry) => String(entry && entry.civilopediaKey || '').trim())
+    .slice(-2)
+    .map((entry) => String(entry.civilopediaKey || '').trim().toUpperCase());
+  if (deleteSeedRefs.length < 2) {
+    t.skip('Sample BIQ did not expose enough deletable civilization refs.');
+    return;
+  }
+
+  const freeSlotsSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      civilizations: {
+        recordOps: deleteSeedRefs.map((recordRef) => ({ op: 'delete', recordRef }))
+      }
+    }
+  });
+  assert.equal(freeSlotsSave.ok, true, String(freeSlotsSave.error || 'failed to free civ slots'));
+
+  const addDeleteRef = 'RACE_C3X_LEAD_A';
+  const addShiftRef = 'RACE_C3X_LEAD_B';
+  const addSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      civilizations: {
+        recordOps: [
+          { op: 'add', newRecordRef: addDeleteRef },
+          { op: 'add', newRecordRef: addShiftRef }
+        ]
+      }
+    }
+  });
+  assert.equal(addSave.ok, true, String(addSave.error || 'failed to add test civilizations'));
+
+  const afterAdd = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const shiftCivIndex = getBiqSectionRecordIndex(afterAdd, 'RACE', addShiftRef);
+  assert.ok(shiftCivIndex >= 0, 'expected shift-target civilization with BIQ index');
+
+  const leadSection = getSection(afterAdd.tabs.players, 'LEAD');
+  const leadRecord = leadSection && Array.isArray(leadSection.records) ? leadSection.records[0] : null;
+  const leadCivField = getRecordField(leadRecord, 'civ');
+  assert.ok(leadCivField, 'expected editable LEAD civ field');
+  leadCivField.value = String(shiftCivIndex);
+
+  const setSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: afterAdd.tabs
+  });
+  assert.equal(setSave.ok, true, String(setSave.error || 'failed to save LEAD setup'));
+
+  const afterSetParsedLead = getRawParsedSectionFromDisk(scenarioBiq, 'LEAD');
+  const afterSetLeadRecord = afterSetParsedLead && Array.isArray(afterSetParsedLead.records) ? afterSetParsedLead.records[0] : null;
+  assert.ok(afterSetLeadRecord, 'expected LEAD record after setup save');
+  assert.equal(Number(afterSetLeadRecord.civ), shiftCivIndex, 'LEAD civ setup should persist before delete');
+
+  const deleteSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      civilizations: {
+        recordOps: [{ op: 'delete', recordRef: addDeleteRef }]
+      }
+    }
+  });
+  assert.equal(deleteSave.ok, true, String(deleteSave.error || 'delete cascade save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedShiftCivIndex = getBiqSectionRecordIndex(reloaded, 'RACE', addShiftRef);
+  assert.ok(reloadedShiftCivIndex >= 0, 'expected surviving civilization after delete');
+  const reParsedLead = getRawParsedSectionFromDisk(scenarioBiq, 'LEAD');
+  const reLeadRecord = reParsedLead && Array.isArray(reParsedLead.records) ? reParsedLead.records[0] : null;
+  assert.ok(reLeadRecord, 'expected reloaded LEAD record');
+  assert.equal(Number(reLeadRecord.civ), reloadedShiftCivIndex, 'LEAD civ reference should shift with surviving civ');
+});
+
+test('BIQ round-trip reindexes unit Available To after deleting a newly added civ', (t) => {
+  const sampleBiq = findSampleBiqPath();
+  if (!sampleBiq) t.skip('No sample BIQ available. Set C3X_TEST_BIQ to run BIQ integration tests.');
+
+  const civ3Root = resolveCiv3RootFromBiq(sampleBiq);
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'scenario-copy.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const before = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const deleteSeedRefs = ((before.tabs.civilizations && before.tabs.civilizations.entries) || [])
+    .filter((entry) => String(entry && entry.civilopediaKey || '').trim())
+    .slice(-2)
+    .map((entry) => String(entry && entry.civilopediaKey || '').trim().toUpperCase());
+  if (deleteSeedRefs.length < 2) {
+    t.skip('Sample BIQ did not expose enough deletable civs.');
+    return;
+  }
+
+  const freeSlotsSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      civilizations: {
+        recordOps: deleteSeedRefs.map((recordRef) => ({ op: 'delete', recordRef }))
+      }
+    }
+  });
+  assert.equal(freeSlotsSave.ok, true, String(freeSlotsSave.error || 'failed to free civ slots'));
+
+  const deleteRef = 'RACE_C3X_AVAIL_A';
+  const shiftRef = 'RACE_C3X_AVAIL_B';
+  const addSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      civilizations: {
+        recordOps: [
+          { op: 'add', newRecordRef: deleteRef },
+          { op: 'add', newRecordRef: shiftRef }
+        ]
+      }
+    }
+  });
+  assert.equal(addSave.ok, true, String(addSave.error || 'failed to add civs'));
+
+  const afterAdd = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const deleteCivIndex = getBiqSectionRecordIndex(afterAdd, 'RACE', deleteRef);
+  const shiftCivIndex = getBiqSectionRecordIndex(afterAdd, 'RACE', shiftRef);
+  assert.ok(deleteCivIndex >= 0 && shiftCivIndex >= 0, 'expected added civ indices');
+
+  const unitHost = ((afterAdd.tabs.units && afterAdd.tabs.units.entries) || []).find((entry) => entry && findField(entry, 'availableto'));
+  if (!unitHost) {
+    t.skip('Sample BIQ did not expose a unit with Available To.');
+    return;
+  }
+  findField(unitHost, 'availableto').value = String((1 << 0) | (1 << deleteCivIndex) | (1 << shiftCivIndex));
+  const setSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      units: { entries: [unitHost] }
+    }
+  });
+  assert.equal(setSave.ok, true, String(setSave.error || 'failed to save unit availability setup'));
+
+  const deleteSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: {
+      civilizations: {
+        recordOps: [{ op: 'delete', recordRef: deleteRef }]
+      }
+    }
+  });
+  assert.equal(deleteSave.ok, true, String(deleteSave.error || 'failed to delete added civ'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedShiftIndex = getBiqSectionRecordIndex(reloaded, 'RACE', shiftRef);
+  assert.ok(reloadedShiftIndex >= 0, 'expected surviving added civ');
+  const reloadedUnit = getEntryByCivKey(reloaded.tabs.units.entries, unitHost.civilopediaKey);
+  assert.ok(reloadedUnit, 'expected reloaded unit');
+  assert.deepEqual(
+    decodeSigned32BitmaskIndices(findField(reloadedUnit, 'availableto').value),
+    [0, reloadedShiftIndex]
+  );
+});
+
+test('BIQ save blocks deleting a unit when the scenario already has map data', (t) => {
+  const sampleBiq = getStableMapUnitsFixturePath();
+  if (!fs.existsSync(sampleBiq)) t.skip('Stable map-unit fixture BIQ is missing.');
+
+  const civ3Root = getStableFixtureCiv3Root();
   const tmp = mkTmpDir();
   const c3x = path.join(tmp, 'c3x');
   fs.mkdirSync(c3x, { recursive: true });

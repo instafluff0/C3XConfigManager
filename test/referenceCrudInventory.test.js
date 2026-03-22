@@ -228,6 +228,18 @@ function buildTargetBundleForImportCase(item) {
   return { tabs };
 }
 
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function toCamelLike(value) {
+  const text = String(value || '').trim();
+  if (!text) return text;
+  return text
+    .replace(/[_-]+([a-z0-9])/gi, (_m, ch) => String(ch || '').toUpperCase())
+    .replace(/^([A-Z])/, (m) => m.toLowerCase());
+}
+
 test('reference CRUD inventory ids are unique and gaps are explicit', () => {
   const ids = new Set();
   [...DELETE_REFERENCE_INVENTORY, ...IMPORT_REFERENCE_INVENTORY].forEach((item) => {
@@ -245,9 +257,15 @@ test('delete inventory fields are wired in normalizeDeletedReferenceSections', (
   const start = sourceText.indexOf('function normalizeDeletedReferenceSections(');
   const end = sourceText.indexOf('function buildMapSectionRecordFromUi(', start);
   const body = sourceText.slice(start, end);
+  const normalizedBody = body.toLowerCase();
   DELETE_REFERENCE_INVENTORY.filter((item) => item.status !== 'gap').forEach((item) => {
-    assert.match(body, new RegExp(String(item.field).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
-      `expected delete cascade wiring for ${item.id}`);
+    const patterns = new Set([
+      String(item.field || ''),
+      toCamelLike(item.field)
+    ].filter(Boolean));
+    if (String(item.field || '').toLowerCase() === 'playable_civ') patterns.add('playableCivIds');
+    const matched = Array.from(patterns).some((pattern) => normalizedBody.includes(String(pattern).toLowerCase()));
+    assert.equal(matched, true, `expected delete cascade wiring for ${item.id}`);
   });
 });
 

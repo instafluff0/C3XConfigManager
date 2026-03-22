@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const log = require('./log');
 
 const CHUNK_FRAME = 0xF1FA;
 const CHUNK_COLOR_256 = 4;
@@ -35,10 +36,11 @@ function fileExists(p) {
 }
 
 function decodePcx(filePathOrBuffer, options = {}) {
+  const srcLabel = Buffer.isBuffer(filePathOrBuffer) ? '<buffer>' : log.rel(filePathOrBuffer);
   const b = Buffer.isBuffer(filePathOrBuffer) ? filePathOrBuffer : fs.readFileSync(filePathOrBuffer);
-  if (b.length < 128) throw new Error('PCX too small');
-  if (b[0] !== 10) throw new Error('Not a PCX file');
-  if (b[2] !== 1) throw new Error('Unsupported PCX encoding');
+  if (b.length < 128) { log.warn('decodePcx', `${srcLabel}: too small (${b.length} bytes)`); throw new Error('PCX too small'); }
+  if (b[0] !== 10) { log.warn('decodePcx', `${srcLabel}: bad magic byte 0x${b[0].toString(16)} (expected 0x0A)`); throw new Error('Not a PCX file'); }
+  if (b[2] !== 1) { log.warn('decodePcx', `${srcLabel}: unsupported encoding byte ${b[2]} (expected 1 for RLE)`); throw new Error('Unsupported PCX encoding'); }
 
   const bitsPerPixel = b[3];
   const xMin = u16(b, 4);
@@ -51,10 +53,12 @@ function decodePcx(filePathOrBuffer, options = {}) {
   const bytesPerLine = u16(b, 66);
 
   if (!(bitsPerPixel === 8 && planes === 1)) {
+    log.warn('decodePcx', `${srcLabel}: unsupported format — bitsPerPixel=${bitsPerPixel}, planes=${planes} (expected 8-bit, 1-plane)`);
     throw new Error('Only 8-bit 1-plane PCX supported');
   }
 
   if (b.length < 769 || b[b.length - 769] !== 12) {
+    log.warn('decodePcx', `${srcLabel}: missing 256-color palette marker (file length=${b.length})`);
     throw new Error('Missing PCX 256-color palette');
   }
   const palette = b.slice(b.length - 768);
@@ -249,7 +253,7 @@ function decodeDeltaFlc(payload, frame, w, h) {
 
 function decodeFlcFrames(filePath, maxFrames = null, options = {}) {
   const b = fs.readFileSync(filePath);
-  if (b.length < 128) throw new Error('FLC too small');
+  if (b.length < 128) { log.warn('decodeFlc', `${log.rel(filePath)}: too small (${b.length} bytes)`); throw new Error('FLC too small'); }
 
   const magic = u16(b, 4);
   const w = u16(b, 8);
@@ -607,7 +611,10 @@ function normalizeScenarioRoots(scenarioPath, scenarioPaths) {
 }
 
 function resolveConquestsAssetPath(civ3Path, rawAssetPath, scenarioPath, scenarioPaths, civilopediaKey = '') {
-  if (!civ3Path || (!rawAssetPath && !civilopediaKey)) return null;
+  if (!civ3Path || (!rawAssetPath && !civilopediaKey)) {
+    log.debug('resolveAsset', `Skipped — civ3Path=${!!civ3Path}, rawAssetPath=${!!rawAssetPath}, key=${civilopediaKey || '(none)'}`);
+    return null;
+  }
   const civ3Root = resolveCiv3Root(civ3Path);
   const conquestsRoot = resolveConquestsRoot(civ3Path);
   const ptwRoot = resolvePtwRoot(civ3Path);
@@ -655,7 +662,10 @@ function resolveConquestsAssetPath(civ3Path, rawAssetPath, scenarioPath, scenari
     roots.forEach((root) => directCandidates.push(path.join(root, rel)));
   });
   const directHit = directCandidates.find((p) => fileExists(p));
-  if (directHit) return directHit;
+  if (directHit) {
+    log.debug('resolveAsset', `Found: ${log.rel(directHit)} (key=${civilopediaKey || rawAssetPath || '?'})`);
+    return directHit;
+  }
 
   // Some official civ art lives in sibling scenario folders rather than the
   // base Conquests directory. Try one level down before giving up.
@@ -676,6 +686,7 @@ function resolveConquestsAssetPath(civ3Path, rawAssetPath, scenarioPath, scenari
     // Best effort only.
   }
 
+  log.debug('resolveAsset', `NOT FOUND: key=${civilopediaKey || rawAssetPath || '?'} — checked ${directCandidates.length} path(s) + conquests subfolders`);
   return null;
 }
 
@@ -714,7 +725,10 @@ function readAnimNameFromPedia(civ3Path, scenarioPath, scenarioPaths, animKey) {
 }
 
 function resolveUnitIniPath(civ3Path, animationName, scenarioPath, scenarioPaths) {
-  if (!civ3Path || !animationName) return null;
+  if (!civ3Path || !animationName) {
+    log.debug('resolveUnitIni', `Skipped — civ3Path=${!!civ3Path}, animationName="${animationName || ''}"`);
+    return null;
+  }
   const civ3Root = resolveCiv3Root(civ3Path);
   const conquestsRoot = resolveConquestsRoot(civ3Path);
   const ptwRoot = resolvePtwRoot(civ3Path);
@@ -728,12 +742,17 @@ function resolveUnitIniPath(civ3Path, animationName, scenarioPath, scenarioPaths
     path.join(civ3Root, 'Art', 'Units', unitName, `${unitName}.ini`)
   );
   const existing = candidates.filter((p) => fileExists(p));
-  if (existing.length === 0) return null;
+  if (existing.length === 0) {
+    log.debug('resolveUnitIni', `NOT FOUND: "${animationName}" — checked ${candidates.length} candidate(s)`);
+    return null;
+  }
   const withResolvableFlc = existing.find((iniPath) => {
     const flcPath = parseIniForFlc(iniPath);
     return !!flcPath && fileExists(flcPath);
   });
-  return withResolvableFlc || existing[0];
+  const chosen = withResolvableFlc || existing[0];
+  log.debug('resolveUnitIni', `Resolved "${animationName}" -> ${log.rel(chosen)}${withResolvableFlc ? '' : ' (no FLC found, using first match)'}`);
+  return chosen;
 }
 
 function resolvePcxPath(c3xPath, fileName) {
@@ -810,13 +829,19 @@ function getPreview(request) {
 
   if (kind === 'district' || kind === 'wonder' || kind === 'naturalWonder') {
     const pcx = resolvePcxPath(c3xPath, request.fileName);
-    if (!pcx) return { ok: false, error: 'PCX not found' };
+    if (!pcx) {
+      log.warn('getPreview', `${kind}: PCX not found — fileName="${request.fileName}", c3x=${log.rel(c3xPath)}`);
+      return { ok: false, error: 'PCX not found' };
+    }
     return { ok: true, ...decodeByPath(pcx, request.crop) };
   }
 
   if (kind === 'districtButtonSheet') {
     const pcxPath = path.join(String(c3xPath || ''), 'Art', 'Districts', 'WorkerDistrictButtonsNorm.pcx');
-    if (!fileExists(pcxPath)) return { ok: false, error: 'Button sheet not found' };
+    if (!fileExists(pcxPath)) {
+      log.warn('getPreview', `districtButtonSheet: not found at ${log.rel(pcxPath)}`);
+      return { ok: false, error: 'Button sheet not found' };
+    }
     return { ok: true, ...decodeByPath(pcxPath, request.crop) };
   }
 
@@ -826,29 +851,44 @@ function getPreview(request) {
       ? iniRel
       : path.join(c3xPath, 'Art', 'Animations', iniRel);
     const flc = parseIniForFlc(iniAbs);
-    if (!flc || !fileExists(flc)) return { ok: false, error: 'FLC from INI not found' };
+    if (!flc || !fileExists(flc)) {
+      log.warn('getPreview', `animationIni: FLC not found for INI ${log.rel(iniAbs)}`);
+      return { ok: false, error: 'FLC from INI not found' };
+    }
     return { ok: true, ...decodeByPath(flc) };
   }
 
   if (kind === 'naturalWonderAnimationSpec') {
     const iniRel = parseNaturalWonderAnimationIniPath(request.animationSpec);
-    if (!iniRel) return { ok: false, error: 'No ini: in animation spec' };
+    if (!iniRel) {
+      log.warn('getPreview', `naturalWonderAnimationSpec: no ini: found in spec "${request.animationSpec}"`);
+      return { ok: false, error: 'No ini: in animation spec' };
+    }
     const rel = iniRel.replace(/\\/g, path.sep).replace(/\//g, path.sep);
     const iniAbs = path.isAbsolute(rel) ? rel : path.join(c3xPath, 'Art', 'Animations', rel);
     const flc = parseIniForFlc(iniAbs);
-    if (!flc || !fileExists(flc)) return { ok: false, error: 'FLC from animation spec not found' };
+    if (!flc || !fileExists(flc)) {
+      log.warn('getPreview', `naturalWonderAnimationSpec: FLC not found for INI ${log.rel(iniAbs)}`);
+      return { ok: false, error: 'FLC from animation spec not found' };
+    }
     return { ok: true, ...decodeByPath(flc) };
   }
 
   if (kind === 'civilopediaIcon') {
     const iconPath = resolveConquestsAssetPath(civ3Path, request.assetPath, scenarioPath, scenarioPaths, request.civilopediaKey);
-    if (!iconPath) return { ok: false, error: 'Civilopedia icon not found' };
+    if (!iconPath) {
+      log.warn('getPreview', `civilopediaIcon: not found — key="${request.civilopediaKey}", assetPath="${request.assetPath}"`);
+      return { ok: false, error: 'Civilopedia icon not found' };
+    }
     return { ok: true, ...decodeByPath(iconPath, null, request.options || {}) };
   }
 
   if (kind === 'pcxPalette') {
     const iconPath = resolveConquestsAssetPath(civ3Path, request.assetPath, scenarioPath, scenarioPaths, request.civilopediaKey);
-    if (!iconPath) return { ok: false, error: 'PCX not found' };
+    if (!iconPath) {
+      log.warn('getPreview', `pcxPalette: PCX not found — key="${request.civilopediaKey}", assetPath="${request.assetPath}"`);
+      return { ok: false, error: 'PCX not found' };
+    }
     const b = fs.readFileSync(iconPath);
     if (b.length < 769 || b[b.length - 769] !== 12) return { ok: false, error: 'Missing PCX palette' };
     const palette = b.slice(b.length - 768);
@@ -857,9 +897,15 @@ function getPreview(request) {
 
   if (kind === 'unitAnimation') {
     const unitIni = resolveUnitIniPath(civ3Path, request.animationName, scenarioPath, scenarioPaths);
-    if (!unitIni) return { ok: false, error: 'Unit INI not found for animation name' };
+    if (!unitIni) {
+      log.warn('getPreview', `unitAnimation: INI not found for animationName="${request.animationName}"`);
+      return { ok: false, error: 'Unit INI not found for animation name' };
+    }
     const flc = parseIniForFlc(unitIni);
-    if (!flc || !fileExists(flc)) return { ok: false, error: 'No FLC found in unit INI' };
+    if (!flc || !fileExists(flc)) {
+      log.warn('getPreview', `unitAnimation: no FLC found in INI ${log.rel(unitIni)}`);
+      return { ok: false, error: 'No FLC found in unit INI' };
+    }
     return { ok: true, ...decodeByPath(flc) };
   }
 
@@ -870,16 +916,26 @@ function getPreview(request) {
     const upperName = prtoName.toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '');
     const animKey = `ANIMNAME_PRTO_${upperName}`;
     const animationName = readAnimNameFromPedia(civ3Path, scenarioPath, scenarioPaths, animKey);
-    if (!animationName) return { ok: false, error: `${animKey} not found in PediaIcons` };
+    if (!animationName) {
+      log.warn('getPreview', `unitFlcFirstFrame: ${animKey} not found in PediaIcons`);
+      return { ok: false, error: `${animKey} not found in PediaIcons` };
+    }
     const unitIni = resolveUnitIniPath(civ3Path, animationName, scenarioPath, scenarioPaths);
-    if (!unitIni) return { ok: false, error: `Unit INI not found for "${animationName}"` };
+    if (!unitIni) {
+      log.warn('getPreview', `unitFlcFirstFrame: INI not found for "${animationName}"`);
+      return { ok: false, error: `Unit INI not found for "${animationName}"` };
+    }
     const manifest = parseUnitAnimationIni(unitIni);
     if (!manifest || !Array.isArray(manifest.actions) || manifest.actions.length === 0) {
+      log.warn('getPreview', `unitFlcFirstFrame: no actions in unit INI ${log.rel(unitIni)}`);
       return { ok: false, error: 'No actions in unit INI' };
     }
     const action = manifest.actions.find((a) => a.key === 'DEFAULT' && a.exists)
       || manifest.actions.find((a) => a.exists);
-    if (!action || !fileExists(action.flcPath)) return { ok: false, error: 'No valid FLC for DEFAULT action' };
+    if (!action || !fileExists(action.flcPath)) {
+      log.warn('getPreview', `unitFlcFirstFrame: no valid FLC for DEFAULT action in "${animationName}"`);
+      return { ok: false, error: 'No valid FLC for DEFAULT action' };
+    }
     // SE-facing: direction index 2, firstFrame = anim_length * 2.
     const decoded = decodeFlcFrames(action.flcPath, 1, { civ3UnitPalette: true, returnIndexed: true, directionIndex: 2 });
     const frameBase64 = decoded.framesBase64 && decoded.framesBase64[0];
@@ -926,14 +982,19 @@ function getPreview(request) {
 
   if (kind === 'unitAnimationAction') {
     const unitIni = resolveUnitIniPath(civ3Path, request.animationName, scenarioPath, scenarioPaths);
-    if (!unitIni) return { ok: false, error: 'Unit INI not found for animation name' };
+    if (!unitIni) {
+      log.warn('getPreview', `unitAnimationAction: INI not found for animationName="${request.animationName}"`);
+      return { ok: false, error: 'Unit INI not found for animation name' };
+    }
     const manifest = parseUnitAnimationIni(unitIni);
     if (!manifest || !Array.isArray(manifest.actions) || manifest.actions.length === 0) {
+      log.warn('getPreview', `unitAnimationAction: no FLC entries in INI ${log.rel(unitIni)}`);
       return { ok: false, error: 'No FLC entries found in unit INI' };
     }
     const reqKey = String(request.actionKey || '').trim().toUpperCase();
     const selected = manifest.actions.find((a) => a.key === reqKey) || manifest.actions.find((a) => a.key === manifest.defaultActionKey) || manifest.actions[0];
     if (!selected || !selected.exists || !fileExists(selected.flcPath)) {
+      log.warn('getPreview', `unitAnimationAction: FLC not found for action "${selected ? selected.key : reqKey || '(none)'}" in "${request.animationName}"`);
       return { ok: false, error: `FLC not found for action ${selected ? selected.key : reqKey || '(none)'}` };
     }
     return {
@@ -948,16 +1009,23 @@ function getPreview(request) {
     const iniPath = String(request.unitIniPath || '').trim();
     const flcRaw = String(request.flcPath || '').trim();
     const flcValue = stripInlineIniComment(flcRaw).replace(/^["']|["']$/g, '').trim();
-    if (!iniPath || !flcValue) return { ok: false, error: 'Missing unitIniPath or flcPath' };
+    if (!iniPath || !flcValue) {
+      log.warn('getPreview', `unitAnimationPath: missing iniPath or flcPath`);
+      return { ok: false, error: 'Missing unitIniPath or flcPath' };
+    }
     const normalizedFlc = flcValue.replace(/\\/g, path.sep).replace(/\//g, path.sep);
     const isAbs = path.isAbsolute(normalizedFlc) || path.win32.isAbsolute(flcValue);
     const flcPath = isAbs
       ? normalizedFlc
       : path.normalize(path.join(path.dirname(iniPath), normalizedFlc));
-    if (!fileExists(flcPath)) return { ok: false, error: 'FLC not found for requested path' };
+    if (!fileExists(flcPath)) {
+      log.warn('getPreview', `unitAnimationPath: FLC not found: ${log.rel(flcPath)} (ini=${log.rel(iniPath)})`);
+      return { ok: false, error: 'FLC not found for requested path' };
+    }
     return { ok: true, ...decodeByPath(flcPath, null, { civ3UnitPalette: true, maxFrames: 1000 }) };
   }
 
+  log.warn('getPreview', `Unknown preview kind: "${kind}"`);
   return { ok: false, error: 'Unknown preview kind' };
 }
 

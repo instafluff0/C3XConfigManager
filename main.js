@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { loadBundle, saveBundle, previewSavePlan, previewFileDiff, createScenario } = require('./src/configCore');
 const { getPreview } = require('./src/artPreview');
+const log = require('./src/log');
 
 const APP_SETTINGS_FILE = 'settings.json';
 const APP_NAME = 'Civ 3 C3X Modern Configuration Manager';
@@ -281,6 +282,7 @@ function buildAppMenu() {
 
 app.whenReady().then(() => {
   applyAppIdentity();
+  log.info('App', `C3X Config Manager v${app.getVersion()} starting on ${process.platform} (perf=${startupPerformanceMode})`);
   if (process.platform === 'darwin' && fs.existsSync(DEV_APP_ICON_PATH)) {
     app.dock.setIcon(nativeImage.createFromPath(DEV_APP_ICON_PATH));
   }
@@ -319,7 +321,19 @@ ipcMain.handle('manager:get-settings', async () => {
   inferred.performanceMode = normalizePerformanceMode(inferred.performanceMode);
   currentPerformanceMode = inferred.performanceMode;
   buildAppMenu();
+
+  // Update log root so subsequent rel() calls use the right base
+  log.setCiv3Root(inferred.civ3Path || '');
+  const c3xValid = looksLikeC3xFolder(inferred.c3xPath);
+  const civ3Valid = !!inferred.civ3Path && dirExists(inferred.civ3Path);
+  log.info('settings', `mode=${inferred.mode}, version=${inferred.c3xVersion}, perf=${inferred.performanceMode}`);
+  log.info('settings', `c3xPath=${log.rel(inferred.c3xPath)} [${c3xValid ? 'OK' : 'NOT FOUND'}]`);
+  log.info('settings', `civ3Path=${log.rel(inferred.civ3Path)} [${civ3Valid ? 'OK' : 'NOT FOUND'}]`);
+  if (inferred.mode === 'scenario') {
+    log.info('settings', `scenarioPath=${log.rel(inferred.scenarioPath)}`);
+  }
   if (JSON.stringify(merged) !== JSON.stringify(inferred)) {
+    log.info('settings', 'Paths inferred from install location and persisted.');
     writeJson(getSettingsPath(), inferred);
   }
   return inferred;
@@ -330,8 +344,15 @@ ipcMain.handle('manager:set-settings', async (_event, settings) => {
     ...(settings || {}),
     performanceMode: normalizePerformanceMode(settings && settings.performanceMode)
   };
+  log.setCiv3Root(normalized.civ3Path || '');
+  log.info('settings', `Saving: mode=${normalized.mode}, version=${normalized.c3xVersion}, perf=${normalized.performanceMode}`);
+  log.info('settings', `c3xPath=${log.rel(normalized.c3xPath)}, civ3Path=${log.rel(normalized.civ3Path)}`);
+  if (normalized.mode === 'scenario') {
+    log.info('settings', `scenarioPath=${log.rel(normalized.scenarioPath)}`);
+  }
   writeJson(getSettingsPath(), normalized);
   if (currentPerformanceMode !== normalized.performanceMode) {
+    log.info('settings', `Performance mode changed: ${currentPerformanceMode} -> ${normalized.performanceMode}`);
     currentPerformanceMode = normalized.performanceMode;
     buildAppMenu();
   }
@@ -369,11 +390,19 @@ ipcMain.handle('manager:open-file-path', async (_event, filePath) => {
   const target = String(filePath || '').trim();
   if (!target) return { ok: false, error: 'No file path provided.' };
   try {
-    if (!fs.existsSync(target)) return { ok: false, error: 'File does not exist.' };
+    if (!fs.existsSync(target)) {
+      log.warn('openFilePath', `Not found: ${log.rel(target)}`);
+      return { ok: false, error: 'File does not exist.' };
+    }
     const openErr = await shell.openPath(target);
-    if (openErr) return { ok: false, error: openErr };
+    if (openErr) {
+      log.warn('openFilePath', `Shell error for ${log.rel(target)}: ${openErr}`);
+      return { ok: false, error: openErr };
+    }
+    log.info('openFilePath', `Opened: ${log.rel(target)}`);
     return { ok: true };
   } catch (err) {
+    log.error('openFilePath', `${log.rel(target)}: ${err && err.message}`);
     return { ok: false, error: err && err.message ? err.message : 'Could not open file.' };
   }
 });
@@ -437,14 +466,24 @@ ipcMain.handle('manager:get-path-access', async (_event, paths) => {
 
 ipcMain.handle('manager:list-scenarios', async (_event, civ3Path) => {
   try {
-    return listKnownScenarios(civ3Path);
-  } catch (_err) {
+    const scenarios = listKnownScenarios(civ3Path);
+    log.info('listScenarios', `Found ${scenarios.length} scenario(s) under ${log.rel(civ3Path)}`);
+    return scenarios;
+  } catch (err) {
+    log.error('listScenarios', `Failed: ${err.message}`);
     return [];
   }
 });
 
 ipcMain.handle('manager:create-scenario', async (_event, payload) => {
-  return createScenario(payload || {});
+  log.info('createScenario', `template=${payload && payload.template}, name="${payload && payload.scenarioName}"`);
+  const result = createScenario(payload || {});
+  if (result && result.ok) {
+    log.info('createScenario', `Created: ${log.rel(result.path)}`);
+  } else {
+    log.warn('createScenario', `Failed: ${result && result.error}`);
+  }
+  return result;
 });
 
 ipcMain.handle('manager:relaunch', async () => {
@@ -454,15 +493,50 @@ ipcMain.handle('manager:relaunch', async () => {
 });
 
 ipcMain.handle('manager:load-bundle', async (_event, payload) => {
-  return loadBundle(payload || {});
+  const mode = (payload && payload.mode) || 'global';
+  log.setCiv3Root(payload && payload.civ3Path || '');
+  log.info('loadBundle', `mode=${mode}, c3x=${log.rel(payload && payload.c3xPath)}, civ3=${log.rel(payload && payload.civ3Path)}`);
+  if (mode === 'scenario') {
+    log.info('loadBundle', `scenario=${log.rel(payload && payload.scenarioPath)}`);
+  }
+  try {
+    const bundle = loadBundle(payload || {});
+    const tabKeys = bundle && bundle.tabs ? Object.keys(bundle.tabs) : [];
+    log.info('loadBundle', `OK — tabs=[${tabKeys.join(', ')}], readFiles=${bundle && Array.isArray(bundle.readFiles) ? bundle.readFiles.length : 0}`);
+    return bundle;
+  } catch (err) {
+    log.error('loadBundle', `Threw: ${err.message}`);
+    throw err;
+  }
 });
 
 ipcMain.handle('manager:save-bundle', async (_event, payload) => {
-  return saveBundle(payload || {});
+  const mode = (payload && payload.mode) || 'global';
+  log.setCiv3Root(payload && payload.civ3Path || '');
+  const dirtyTabs = Array.isArray(payload && payload.dirtyTabs) ? payload.dirtyTabs : [];
+  log.info('saveBundle', `mode=${mode}, dirtyTabs=[${dirtyTabs.join(', ')}]`);
+  const result = saveBundle(payload || {});
+  if (result && result.ok) {
+    const written = Array.isArray(result.writeResults) ? result.writeResults : [];
+    const savedPaths = written.filter((r) => r.status === 'saved').map((r) => log.rel(r.path));
+    log.info('saveBundle', `OK — wrote ${savedPaths.length} file(s): [${savedPaths.join(', ')}]`);
+  } else {
+    log.error('saveBundle', `Failed: ${result && result.error}`);
+    if (result && result.rollback) {
+      log.warn('saveBundle', `Rollback: attempted=${result.rollback.attempted}, failed=${result.rollback.failed}`);
+    }
+  }
+  return result;
 });
 
 ipcMain.handle('manager:preview-save-plan', async (_event, payload) => {
-  return previewSavePlan(payload || {});
+  const result = previewSavePlan(payload || {});
+  if (result && result.ok && Array.isArray(result.writes)) {
+    log.debug('previewSavePlan', `${result.writes.length} pending write(s): [${result.writes.map((w) => log.rel(w.path)).join(', ')}]`);
+  } else if (result && !result.ok) {
+    log.warn('previewSavePlan', `Failed: ${result.error}`);
+  }
+  return result;
 });
 
 ipcMain.handle('manager:preview-file-diff', async (_event, payload) => {
@@ -470,9 +544,15 @@ ipcMain.handle('manager:preview-file-diff', async (_event, payload) => {
 });
 
 ipcMain.handle('manager:get-preview', async (_event, payload) => {
+  const kind = payload && payload.kind;
   try {
-    return getPreview(payload || {});
+    const result = getPreview(payload || {});
+    if (!result || !result.ok) {
+      log.warn('getPreview', `kind=${kind} — not found: ${result && result.error}`);
+    }
+    return result;
   } catch (err) {
+    log.error('getPreview', `kind=${kind} threw: ${err.message}`);
     return { ok: false, error: err.message };
   }
 });

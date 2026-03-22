@@ -21,9 +21,15 @@
       "src/**/*",
       "package.json"
     ],
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
     "win": {
-      "target": "portable",
+      "target": "nsis",
       "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "artifactName": "${productName} Setup ${version}.${ext}",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Civ 3 C3X Modern Configuration Manager"
     },
     "mac": {
       "target": "dmg",

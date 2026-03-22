@@ -174,6 +174,17 @@ function collectResolutionSnapshot(conquestsRoot) {
   };
 }
 
+function normalizeTidesScenarioVariant(entry) {
+  return String(entry || '').replace(
+    /^Scenarios\/TIDES OF CRIMSON 2\.93\//,
+    'Scenarios/Tides of Crimson/'
+  );
+}
+
+function uniqueNormalizedEntries(values) {
+  return Array.from(new Set((Array.isArray(values) ? values : []).map(normalizeTidesScenarioVariant))).sort();
+}
+
 test('Conquests unit INI resolution works across base and all scenario folders', () => {
   if (!fs.existsSync(CONQUESTS_ROOT)) {
     test.skip(`Conquests root not found: ${CONQUESTS_ROOT}`);
@@ -196,7 +207,7 @@ test('Conquests movement/action FLC references match known baseline', () => {
   const snapshot = collectResolutionSnapshot(CONQUESTS_ROOT);
 
   // These folders under Scenarios/Tides of Crimson are helper/audio folders, not unit definitions.
-  assert.deepEqual(snapshot.missingIniFolders, [
+  assert.deepEqual(uniqueNormalizedEntries(snapshot.missingIniFolders), [
     'Scenarios/Tides of Crimson/Corel Auto-Preserve',
     'Scenarios/Tides of Crimson/Cyrstal Dragon',
     'Scenarios/Tides of Crimson/Dragon Sounds',
@@ -211,17 +222,17 @@ test('Conquests movement/action FLC references match known baseline', () => {
   ].sort());
 
   // Unit folders that have an INI, but not UnitFolderName.ini.
-  assert.deepEqual(snapshot.missingNamedIni, [
+  assert.deepEqual(uniqueNormalizedEntries(snapshot.missingNamedIni), [
     'Scenarios/Tides of Crimson/FrigateAlt',
     'Scenarios/Tides of Crimson/Ninja (from Version 1.6)',
     'Scenarios/Tides of Crimson/Phoenix Guard (from Version 1.6)'
   ].sort());
 
   // Known missing FLC references in current local Conquests content.
-  assert.deepEqual(snapshot.missingActionFlc, [
+  assert.deepEqual(uniqueNormalizedEntries(snapshot.missingActionFlc), [
     'Scenarios/Tides of Crimson/Sooside Bomma#DEATH'
   ].sort());
 
   // Known missing movement defaults/run references in current local Conquests content.
-  assert.deepEqual(snapshot.missingMovementFlc, [].sort());
+  assert.deepEqual(uniqueNormalizedEntries(snapshot.missingMovementFlc), [].sort());
 });

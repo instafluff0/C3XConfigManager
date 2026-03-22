@@ -4,6 +4,7 @@
 // Supports Conquests (BICX, majorVersion=12) as primary target.
 
 const { BiqReader, BiqWriter } = require('./biqBuffer');
+const log = require('../log');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -3122,11 +3123,24 @@ function normalizeRaceDependentSections(parsed, edits, originalRaceRefs) {
   if (!raceCrudTouched) return { ok: true };
 
   const oldRaceCount = Array.isArray(originalRaceRefs) ? originalRaceRefs.length : 0;
-  const oldToNewRaceIndex = new Map();
-  (Array.isArray(originalRaceRefs) ? originalRaceRefs : []).forEach((ref, oldIndex) => {
-    const newIndex = finalRaceRefs.indexOf(ref);
-    if (newIndex >= 0) oldToNewRaceIndex.set(oldIndex, newIndex);
-  });
+  const raceDeleteIndices = (Array.isArray(edits) ? edits : [])
+    .filter((edit) => {
+      const code = String(edit && edit.sectionCode || '').trim().toUpperCase();
+      const op = String(edit && edit.op || '').trim().toLowerCase();
+      return code === 'RACE' && op === 'delete';
+    })
+    .map((edit) => (Array.isArray(originalRaceRefs) ? originalRaceRefs : []).indexOf(String(edit && edit.recordRef || '').trim().toUpperCase()))
+    .filter((index) => Number.isFinite(index) && index >= 0)
+    .sort((a, b) => a - b);
+  const deletedRaceIndexSet = new Set(raceDeleteIndices);
+  const countDeletedBefore = (index) => {
+    let count = 0;
+    for (const deletedIndex of raceDeleteIndices) {
+      if (deletedIndex >= index) break;
+      count += 1;
+    }
+    return count;
+  };
 
   const hasExplicitPlayableGameEdits = (Array.isArray(edits) ? edits : []).some((edit) => {
     if (String(edit && edit.sectionCode || '').trim().toUpperCase() !== 'GAME') return false;
@@ -3144,8 +3158,8 @@ function normalizeRaceDependentSections(parsed, edits, originalRaceRefs) {
     const parsedValue = Number.parseInt(String(value), 10);
     if (!Number.isFinite(parsedValue) || parsedValue < 0) return null;
     if (parsedValue < oldRaceCount) {
-      const mapped = oldToNewRaceIndex.get(parsedValue);
-      return Number.isFinite(mapped) ? mapped : null;
+      if (deletedRaceIndexSet.has(parsedValue)) return null;
+      return parsedValue - countDeletedBefore(parsedValue);
     }
     if (parsedValue < finalRaceCount) return parsedValue;
     return null;
@@ -3192,6 +3206,7 @@ function normalizeRaceDependentSections(parsed, edits, originalRaceRefs) {
     leadSection._modified = true;
   }
 
+  parsed._raceDependentSectionsNormalized = true;
   return { ok: true };
 }
 
@@ -3322,6 +3337,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const govtRemap = remaps.get('GOVT');
   const prtoRemap = remaps.get('PRTO');
   const raceRemap = remaps.get('RACE');
+  const raceDependentSectionsAlreadyNormalized = parsed && parsed._raceDependentSectionsNormalized === true;
   const erasRemap = remaps.get('ERAS');
   const diffRemap = remaps.get('DIFF');
   const espnRemap = remaps.get('ESPN');
@@ -3419,6 +3435,19 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
     if (techRemap || goodRemap || govtRemap || bldgRemap || prtoRemap) markModified(bldgSection);
   }
 
+  const gameSection = getSectionByCode(parsed, 'GAME');
+  if (gameSection && Array.isArray(gameSection.records) && raceRemap && !raceDependentSectionsAlreadyNormalized) {
+    gameSection.records.forEach((rec) => {
+      const currentIds = Array.isArray(rec.playableCivIds) ? rec.playableCivIds : [];
+      rec.playableCivIds = remapDeletedSectionListRemovingDeleted(currentIds, raceRemap);
+      rec.numPlayableCivs = rec.playableCivIds.length;
+      const currentAlliances = Array.isArray(rec.civPartOfWhichAlliance) ? rec.civPartOfWhichAlliance : [];
+      rec.civPartOfWhichAlliance = ensureArraySize(currentAlliances, rec.playableCivIds.length, 4)
+        .slice(0, rec.playableCivIds.length);
+    });
+    markModified(gameSection);
+  }
+
   const prtoSection = getSectionByCode(parsed, 'PRTO');
   if (prtoSection && Array.isArray(prtoSection.records)) {
     prtoSection.records.forEach((rec) => {
@@ -3473,25 +3502,6 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
     if (goodRemap || tfrmRemap || terrRemap) markModified(terrSection);
   }
 
-  const gameSection = getSectionByCode(parsed, 'GAME');
-  if (gameSection && Array.isArray(gameSection.records) && raceRemap) {
-    gameSection.records.forEach((rec) => {
-      const oldPlayable = Array.isArray(rec.playableCivIds) ? rec.playableCivIds : [];
-      const oldAlliances = Array.isArray(rec.civPartOfWhichAlliance) ? rec.civPartOfWhichAlliance : [];
-      const nextPlayable = [];
-      const nextAlliances = [];
-      oldPlayable.forEach((civId, index) => {
-        const nextCivId = remapDeletedSectionIndex(civId, raceRemap, null);
-        if (!Number.isFinite(nextCivId) || nextCivId < 0) return;
-        nextPlayable.push(nextCivId);
-        nextAlliances.push(oldAlliances[index] != null ? oldAlliances[index] : 4);
-      });
-      rec.playableCivIds = nextPlayable;
-      rec.civPartOfWhichAlliance = nextAlliances;
-    });
-    markModified(gameSection);
-  }
-
   const tfrmSection = getSectionByCode(parsed, 'TFRM');
   if (tfrmSection && Array.isArray(tfrmSection.records)) {
     tfrmSection.records.forEach((rec) => {
@@ -3524,8 +3534,8 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
   const leadSection = getSectionByCode(parsed, 'LEAD');
   if (leadSection && Array.isArray(leadSection.records)) {
     leadSection.records.forEach((rec) => {
+      if (raceRemap && !raceDependentSectionsAlreadyNormalized) rec.civ = remapDeletedSectionIndex(rec.civ, raceRemap, -1);
       if (techRemap) rec.techIndices = remapDeletedSectionList(Array.isArray(rec.techIndices) ? rec.techIndices : [], techRemap, -1).filter((value) => Number.isFinite(value) && value >= 0);
-      if (raceRemap) rec.civ = remapDeletedSectionIndex(rec.civ, raceRemap, -1);
       if (govtRemap) rec.government = remapDeletedSectionIndex(rec.government, govtRemap, -1);
       if (diffRemap) rec.difficulty = remapDeletedSectionIndex(rec.difficulty, diffRemap, -1);
       if (erasRemap) rec.initialEra = remapDeletedSectionIndex(rec.initialEra, erasRemap, -1);
@@ -3540,7 +3550,7 @@ function normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection)
       }
       if (techRemap) rec.numStartTechs = Array.isArray(rec.techIndices) ? rec.techIndices.length : 0;
     });
-    if (techRemap || raceRemap || govtRemap || diffRemap || erasRemap || prtoRemap) markModified(leadSection);
+    if ((raceRemap && !raceDependentSectionsAlreadyNormalized) || techRemap || govtRemap || diffRemap || erasRemap || prtoRemap) markModified(leadSection);
   }
 
   return { ok: true };
@@ -3732,8 +3742,13 @@ function applyEdits(buf, edits) {
     return { ok: true, buffer: buf, applied: 0, skipped: 0, warning: '' };
   }
 
+  log.debug('BiqApplyEdits', `applyEdits: ${edits.length} edit(s) — buf size ${buf ? buf.length : 0}`);
+
   const parsed = parseAllSections(buf);
-  if (!parsed.ok) return { ok: false, error: parsed.error || 'Failed to parse BIQ' };
+  if (!parsed.ok) {
+    log.error('BiqApplyEdits', `parseAllSections failed: ${parsed.error || 'unknown'}`);
+    return { ok: false, error: parsed.error || 'Failed to parse BIQ' };
+  }
 
   const { io } = parsed;
   const originalRefsBySection = {};
@@ -3756,12 +3771,15 @@ function applyEdits(buf, edits) {
   for (const edit of edits) {
     const op = String(edit.op || 'set').toLowerCase();
     if (op === 'removemap') {
+      log.debug('BiqApplyEdits', 'op=removemap: removing all map sections');
       removeMapSectionsFromParsed(parsed);
       sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
       applied++;
       continue;
     }
     if (op === 'setmap') {
+      const mapSecCodes = Array.isArray(edit.sections) ? edit.sections.map((s) => s && s.code).filter(Boolean).join(',') : '(none)';
+      log.debug('BiqApplyEdits', `op=setmap: replacing map sections [${mapSecCodes}]`);
       setMapSectionsOnParsed(parsed, edit.sections);
       sectionByCode = new Map(parsed.sections.map((s) => [s.code, s]));
       applied++;
@@ -3774,15 +3792,30 @@ function applyEdits(buf, edits) {
       const newRef = String(edit.newRecordRef || '').trim().toUpperCase();
       const sourceRef = String(edit.sourceRef || edit.copyFromRef || '').trim().toUpperCase();
       const externalRecord = edit && typeof edit.externalRecord === 'object' ? edit.externalRecord : null;
-      if (!newRef) { skipped++; warnings.push(`${op}: missing newRecordRef for ${code}`); continue; }
-      if (!section) { skipped++; warnings.push(`${op}: section ${code} not found`); continue; }
+      if (!newRef) {
+        skipped++;
+        warnings.push(`${op}: missing newRecordRef for ${code}`);
+        log.warn('BiqApplyEdits', `op=${op} SKIPPED: missing newRecordRef in section ${code}`);
+        continue;
+      }
+      if (!section) {
+        skipped++;
+        warnings.push(`${op}: section ${code} not found`);
+        log.warn('BiqApplyEdits', `op=${op} SKIPPED: section ${code} not found`);
+        continue;
+      }
 
       // Check for duplicate
       const existing = section.records.find((r) =>
         String(r.civilopediaEntry || '').trim().toUpperCase() === newRef ||
         String(r.newRecordRef || '').trim().toUpperCase() === newRef
       );
-      if (existing) { skipped++; warnings.push(`${op}: record ${newRef} already exists in ${code}`); continue; }
+      if (existing) {
+        skipped++;
+        warnings.push(`${op}: record ${newRef} already exists in ${code}`);
+        log.warn('BiqApplyEdits', `op=${op} SKIPPED: record ${newRef} already exists in ${code}`);
+        continue;
+      }
 
       let newRec;
       if (op === 'copy' && sourceRef) {
@@ -3791,15 +3824,19 @@ function applyEdits(buf, edits) {
           newRec = copyRecord(src);
           newRec.civilopediaEntry = newRef;
           if (newRec._rawRecord) delete newRec._rawRecord; // force re-serialize
+          log.debug('BiqApplyEdits', `op=copy ${code}: ${sourceRef} -> ${newRef} (from local BIQ)`);
         } else if (externalRecord) {
           newRec = copyRecord(externalRecord);
           newRec.civilopediaEntry = newRef;
           if (newRec._rawRecord) delete newRec._rawRecord; // force re-serialize
+          log.debug('BiqApplyEdits', `op=copy ${code}: external record -> ${newRef}`);
         } else {
           warnings.push(`copy: source ${sourceRef} not found in ${code}, creating blank`);
+          log.warn('BiqApplyEdits', `op=copy ${code}: source ${sourceRef} not found, creating blank record ${newRef}`);
           newRec = createDefaultRecord(code, newRef, io);
         }
       } else {
+        log.debug('BiqApplyEdits', `op=add ${code}: creating new record ${newRef}`);
         newRec = createDefaultRecord(code, newRef, io);
       }
       newRec.index = section.records.length;
@@ -3821,7 +3858,13 @@ function applyEdits(buf, edits) {
         }
         return false;
       });
-      if (idx < 0) { skipped++; warnings.push(`delete: ${ref} not found in ${code}`); continue; }
+      if (idx < 0) {
+        skipped++;
+        warnings.push(`delete: ${ref} not found in ${code}`);
+        log.warn('BiqApplyEdits', `op=delete SKIPPED: ${ref} not found in ${code}`);
+        continue;
+      }
+      log.debug('BiqApplyEdits', `op=delete ${code}: removed record ${ref} (was at index ${idx})`);
       section.records.splice(idx, 1);
       // Re-number indices
       section.records.forEach((r, i) => { r.index = i; });
@@ -3833,7 +3876,12 @@ function applyEdits(buf, edits) {
     // SET
     if (!section) { skipped++; continue; }
     const rec = findRecordByRef(section.records, edit.recordRef);
-    if (!rec) { skipped++; warnings.push(`set: record ${edit.recordRef} not found in ${code}`); continue; }
+    if (!rec) {
+      skipped++;
+      warnings.push(`set: record ${edit.recordRef} not found in ${code}`);
+      log.warn('BiqApplyEdits', `op=set SKIPPED: record ${edit.recordRef} not found in ${code}`);
+      continue;
+    }
 
     const fieldKey = String(edit.fieldKey || '').trim();
     // Decode value
@@ -3846,21 +3894,29 @@ function applyEdits(buf, edits) {
     if (ok) {
       section._modified = true;
       applied++;
+      const displayVal = value.length > 40 ? value.slice(0, 40) + '…' : value;
+      log.debug('BiqApplyEdits', `op=set ${code}[${edit.recordRef}].${fieldKey} = "${displayVal}"`);
     } else {
       skipped++;
+      log.warn('BiqApplyEdits', `op=set SKIPPED: ${code}[${edit.recordRef}].${fieldKey} — applySetToRecord returned false`);
     }
   }
 
+  log.debug('BiqApplyEdits', `loop complete: applied=${applied} skipped=${skipped}`);
+
   const normalizeRaceResult = normalizeRaceDependentSections(parsed, edits, originalRaceRefs);
   if (!normalizeRaceResult.ok) {
+    log.error('BiqApplyEdits', `normalizeRaceDependentSections failed: ${normalizeRaceResult.error || 'unknown'}`);
     return { ok: false, error: normalizeRaceResult.error || 'Failed to normalize civilization-dependent BIQ data.' };
   }
   const normalizeDeleteResult = normalizeDeletedReferenceSections(parsed, edits, originalRefsBySection);
   if (!normalizeDeleteResult.ok) {
+    log.error('BiqApplyEdits', `normalizeDeletedReferenceSections failed: ${normalizeDeleteResult.error || 'unknown'}`);
     return { ok: false, error: normalizeDeleteResult.error || 'Failed to normalize deleted BIQ references.' };
   }
 
   const newBuf = buildBiqBuffer(parsed);
+  log.debug('BiqApplyEdits', `buildBiqBuffer complete: output size ${newBuf ? newBuf.length : 0} — applied=${applied} skipped=${skipped}${warnings.length > 0 ? ' warnings=' + warnings.length : ''}`);
   return {
     ok: true,
     buffer: newBuf,
@@ -3908,5 +3964,6 @@ module.exports = {
   TILE_FIELDS,
   TILE_FIELD_MAP,
   getTileRecordLength,
+  normalizeRaceDependentSections,
   normalizeDeletedReferenceSections,
 };
