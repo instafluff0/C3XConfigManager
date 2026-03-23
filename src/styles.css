@@ -770,6 +770,14 @@ button:disabled {
   margin-bottom: 0;
 }
 
+.about-modal a {
+  text-decoration: none;
+}
+
+.about-modal a:hover {
+  text-decoration: underline;
+}
+
 .scenario-search-folder-modal {
   width: min(520px, 100%);
   gap: 14px;
@@ -5497,12 +5505,14 @@ details > summary:focus-visible {
 .app-credit a {
   color: #355fba;
   font-weight: 700;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 1px;
+  text-decoration: none;
 }
 
 .app-credit a:hover {
   color: #244a9b;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 1px;
 }
 
 .structured-list {

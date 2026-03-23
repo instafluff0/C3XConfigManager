@@ -1867,11 +1867,17 @@ function deriveScenarioPathContext({
     ? searchRoots
     : dedupePathList([biqRoot, ...localSearchRoots]);
   const contentWriteRoot = pickPreferredScenarioContentRoot(contentRootCandidates);
+  // The directory the scenario files would be written to, even if it doesn't exist yet.
+  // Used during load to keep targetPath non-null for new scenario files so the Files Modal
+  // can show a pending-write entry and "View Changes" before the first save.
+  const expectedContentWriteRoot = contentWriteRoot
+    || (biqInSharedScenarios ? path.join(biqRoot, getScenarioStemFromPath(scenarioPath)) : biqRoot);
   return {
     biqRoot,
     searchRoots,
     writableRoots,
     contentWriteRoot,
+    expectedContentWriteRoot,
     autoCreatedSearchRoot,
     autoCreatedSearchValue
   };
@@ -4029,8 +4035,8 @@ function parseSectionedConfig(text, marker) {
     const match = rawLine.match(/^\s*([^=]+?)\s*=\s*(.*?)\s*$/);
     if (match) {
       const parsedValue = String(match[2] == null ? '' : match[2]).trim();
-      // Only unquote simple single tokens; keep quoted lists intact.
-      const shouldUnquoteWholeValue = /^"[\s\S]*"$/.test(parsedValue) && !/",\s*"/.test(parsedValue);
+      // Only unquote simple single tokens (no inner quotes); keep quoted lists intact.
+      const shouldUnquoteWholeValue = /^"[^"]*"$/.test(parsedValue);
       const normalizedValue = shouldUnquoteWholeValue ? parsedValue.slice(1, -1) : parsedValue;
       current.fields.push({ key: match[1].trim(), value: normalizedValue });
     }
@@ -4260,12 +4266,19 @@ function loadBundle(payload) {
         biqRoot: resolveScenarioDir(scenarioPath),
         searchRoots: [],
         writableRoots: [],
-        contentWriteRoot: resolveScenarioDir(scenarioPath)
+        contentWriteRoot: resolveScenarioDir(scenarioPath),
+        expectedContentWriteRoot: resolveScenarioDir(scenarioPath)
       };
     const scenarioDir = scenarioContext.biqRoot;
     const scenarioSearchPaths = scenarioContext.searchRoots;
 
-    const filePaths = resolvePaths({ c3xPath, scenarioPath: mode === 'scenario' ? scenarioContext.contentWriteRoot : scenarioContext.biqRoot, mode });
+    // Use expectedContentWriteRoot (falls back to a computed path when contentWriteRoot is
+    // empty) so that targetPath is always set for new scenario files whose directory doesn't
+    // exist yet. This lets the Files Modal show a pending-write entry and "View Changes".
+    const scenarioPathForFilePaths = mode === 'scenario'
+      ? (scenarioContext.expectedContentWriteRoot || scenarioContext.contentWriteRoot || scenarioContext.biqRoot)
+      : scenarioContext.biqRoot;
+    const filePaths = resolvePaths({ c3xPath, scenarioPath: scenarioPathForFilePaths, mode });
     const bundle = {
       mode,
       c3xPath,

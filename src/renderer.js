@@ -8229,7 +8229,7 @@ function filterDistrictSectionsForScenarioFallback(bundle) {
   const districtTab = b.tabs.districts;
   const sourceDetails = districtTab.sourceDetails || {};
   const effectiveSource = String(districtTab.effectiveSource || '').toLowerCase();
-  if (effectiveSource !== 'default' || sourceDetails.hasScenario) return;
+  if ((effectiveSource !== 'default' && effectiveSource !== 'user') || sourceDetails.hasScenario) return;
   const sections = districtTab.model && Array.isArray(districtTab.model.sections)
     ? districtTab.model.sections
     : [];
@@ -8253,7 +8253,6 @@ function filterDistrictSectionsForScenarioFallback(bundle) {
     working = next;
   }
 
-  if (working.length === sections.length) return;
   districtTab.model.sections = working;
   districtTab.filteredFromDefault = {
     applied: true,
@@ -27291,7 +27290,12 @@ async function loadBundleAndRender(options = {}) {
     }
     const cleanSnapshotForLoadedBundle = snapshotEditableTabsFromBundle(bundle);
     if (bundle && bundle.tabs && bundle.tabs.districts && bundle.tabs.districts.model && Array.isArray(bundle.tabs.districts.model.sections)) {
-      applySpecialDistrictDefaultsToSections(bundle.tabs.districts.model.sections);
+      // Only inject special defaults when loading from the default file.
+      // If a user* or scenario* file is present it is authoritative (file-level replacement);
+      // missing specials must not be re-added on every load.
+      if (String(bundle.tabs.districts.effectiveSource || '').toLowerCase() === 'default') {
+        applySpecialDistrictDefaultsToSections(bundle.tabs.districts.model.sections);
+      }
     }
     if (bundle && state.settings.mode === 'scenario') {
       filterDistrictSectionsForScenarioFallback(bundle);
@@ -28056,7 +28060,9 @@ async function performSeedScenarioTab(tabKey) {
     if (freshBundle && freshBundle.tabs && freshBundle.tabs[tabKey]) {
       const freshTab = freshBundle.tabs[tabKey];
       if (tabKey === 'districts' && freshTab.model && Array.isArray(freshTab.model.sections)) {
-        applySpecialDistrictDefaultsToSections(freshTab.model.sections);
+        if (String(freshTab.effectiveSource || '').toLowerCase() === 'default') {
+          applySpecialDistrictDefaultsToSections(freshTab.model.sections);
+        }
       }
       state.bundle.tabs[tabKey] = freshTab;
       if (state.settings.mode === 'scenario') {
