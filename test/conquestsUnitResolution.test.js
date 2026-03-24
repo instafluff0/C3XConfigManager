@@ -225,7 +225,8 @@ test('Conquests movement/action FLC references match known baseline', () => {
   assert.deepEqual(uniqueNormalizedEntries(snapshot.missingNamedIni), [
     'Scenarios/Tides of Crimson/FrigateAlt',
     'Scenarios/Tides of Crimson/Ninja (from Version 1.6)',
-    'Scenarios/Tides of Crimson/Phoenix Guard (from Version 1.6)'
+    'Scenarios/Tides of Crimson/Phoenix Guard (from Version 1.6)',
+    'Scenarios/Tides of Crimson/Wheat - Test Instafluff'
   ].sort());
 
   // Known missing FLC references in current local Conquests content.

@@ -1068,7 +1068,7 @@ function findSpecialDistrictDefaultByName(name) {
   return SPECIAL_DISTRICT_DEFAULTS.find((entry) => String(entry && entry.name || '').trim().toLowerCase() === target) || null;
 }
 
-function applySpecialDistrictDefaultsToSections(sections) {
+function applySpecialDistrictDefaultsToSections(sections, { createIfMissing = true } = {}) {
   if (!Array.isArray(sections)) return;
   const findSectionByName = (needle) => sections.find((section) => {
     const sectionName = String(getFieldValue(section, 'name') || '').trim().toLowerCase();
@@ -1079,6 +1079,7 @@ function applySpecialDistrictDefaultsToSections(sections) {
     if (!needle) return;
     let section = findSectionByName(needle);
     if (!section) {
+      if (!createIfMissing) return;
       section = { marker: '#District', fields: [], comments: [] };
       sections.push(section);
     }
@@ -27366,6 +27367,8 @@ async function loadBundleAndRender(options = {}) {
       // missing specials must not be re-added on every load.
       if (String(bundle.tabs.districts.effectiveSource || '').toLowerCase() === 'default') {
         applySpecialDistrictDefaultsToSections(bundle.tabs.districts.model.sections);
+      } else {
+        applySpecialDistrictDefaultsToSections(bundle.tabs.districts.model.sections, { createIfMissing: false });
       }
     }
     if (bundle && state.settings.mode === 'scenario') {
@@ -28134,6 +28137,8 @@ async function performSeedScenarioTab(tabKey) {
       if (tabKey === 'districts' && freshTab.model && Array.isArray(freshTab.model.sections)) {
         if (String(freshTab.effectiveSource || '').toLowerCase() === 'default') {
           applySpecialDistrictDefaultsToSections(freshTab.model.sections);
+        } else {
+          applySpecialDistrictDefaultsToSections(freshTab.model.sections, { createIfMissing: false });
         }
       }
       state.bundle.tabs[tabKey] = freshTab;

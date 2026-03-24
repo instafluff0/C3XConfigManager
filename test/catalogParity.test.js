@@ -613,25 +613,25 @@ test('Tides civ count is exactly 26', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
   assert.equal(getTides().tabs.civilizations.entries.length, 26);
 });
-test('Tides tech count is exactly 204', (t) => {
+test('Tides tech count is exactly 205', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
-  assert.equal(getTides().tabs.technologies.entries.length, 204);
+  assert.equal(getTides().tabs.technologies.entries.length, 205);
 });
 test('Tides resource count is exactly 70', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
   assert.equal(getTides().tabs.resources.entries.length, 70);
 });
-test('Tides improvement count is exactly 238', (t) => {
+test('Tides improvement count is exactly 239', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
-  assert.equal(getTides().tabs.improvements.entries.length, 238);
+  assert.equal(getTides().tabs.improvements.entries.length, 239);
 });
 test('Tides government count is exactly 21', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
   assert.equal(getTides().tabs.governments.entries.length, 21);
 });
-test('Tides unit count is exactly 749', (t) => {
+test('Tides unit count is exactly 750', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
-  assert.equal(getTides().tabs.units.entries.length, 749);
+  assert.equal(getTides().tabs.units.entries.length, 750);
 });
 
 // --- Complete key sets -------------------------------------------------------

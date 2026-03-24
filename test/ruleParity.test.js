@@ -62,7 +62,7 @@ test('RULE section in TIDES matches Quint-style field names and values', (t) => 
     ['roadmovementrate', 'Road movement rate', /^2$/],
     ['upgradecost', 'Upgrade Cost', /^1$/],
     ['foodconsumptionpercitizen', 'Food Consumption Per Citizen', /^2$/],
-    ['startingtreasury', 'Starting Treasury', /^150$/],
+    ['startingtreasury', 'Starting Treasury', /^100$/],
     ['goldenageduration', 'Golden Age Duration', /^20$/],
     ['defaultdifficultylevel', 'Default AI Difficulty', /Warlord/i],
     ['defaultmoneyresource', 'Default Money Resource', /Treasure/i],

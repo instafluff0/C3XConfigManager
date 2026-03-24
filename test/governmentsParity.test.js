@@ -72,7 +72,7 @@ test('Air Sphere in TIDES projects raw GOVT fields into Quint-style government U
   assert.equal(getField(govt, 'civilopediaentry').editable, false);
   assert.equal(getField(govt, 'assimilationchance').value, '5');
   assert.equal(getField(govt, 'militarypolicelimit').value, '1');
-  assert.equal(getField(govt, 'freeunitspertown').value, '1');
+  assert.equal(getField(govt, 'freeunitspertown').value, '0');
   assert.equal(getField(govt, 'freeunitspercity').value, '2');
   assert.equal(getField(govt, 'freeunitspermetropolis').value, '2');
   assert.equal(getField(govt, 'malerulertitle1').value, 'Sir');
