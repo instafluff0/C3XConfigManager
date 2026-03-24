@@ -59,6 +59,7 @@ const state = {
   referenceSelection: {},
   referenceFilter: {},
   referenceImprovementKind: {},
+  referenceUnitSort: {},
   sectionFilter: {},
   biqRecordFilter: {},
   referenceSearchCaret: {},
@@ -3440,6 +3441,7 @@ function captureViewSnapshot() {
     referenceSelection: cloneStateMap(state.referenceSelection),
     referenceFilter: cloneStateMap(state.referenceFilter),
     referenceImprovementKind: cloneStateMap(state.referenceImprovementKind),
+    referenceUnitSort: cloneStateMap(state.referenceUnitSort),
     biqSectionSelectionByTab: cloneStateMap(state.biqSectionSelectionByTab),
     biqRecordSelection: cloneStateMap(state.biqRecordSelection),
     techTreeEraSelectionByTab: cloneStateMap(state.techTreeEraSelectionByTab),
@@ -3511,6 +3513,7 @@ function applyViewSnapshot(snapshot) {
   state.referenceSelection = cloneStateMap(snapshot.referenceSelection);
   state.referenceFilter = cloneStateMap(snapshot.referenceFilter);
   state.referenceImprovementKind = cloneStateMap(snapshot.referenceImprovementKind);
+  state.referenceUnitSort = cloneStateMap(snapshot.referenceUnitSort);
   state.biqSectionSelectionByTab = cloneStateMap(snapshot.biqSectionSelectionByTab);
   state.biqRecordSelection = cloneStateMap(snapshot.biqRecordSelection);
   state.techTreeEraSelectionByTab = cloneStateMap(snapshot.techTreeEraSelectionByTab);
@@ -6294,7 +6297,7 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
       const cleaned = name.trim().replace(/^\"|\"$/g, '');
       tasks.push({
         title: `img_paths[${idx}] - ${cleaned}`,
-        request: { kind: 'district', c3xPath: state.settings.c3xPath, fileName: cleaned }
+        request: { kind: 'district', c3xPath: state.settings.c3xPath, fileName: cleaned, scenarioPath: state.settings.scenarioPath, scenarioPaths: getScenarioPreviewPaths() }
       });
     });
   } else if (tabKey === 'wonders') {
@@ -6309,7 +6312,9 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
         kind: 'wonder',
         c3xPath: state.settings.c3xPath,
         fileName,
-        crop: { row, col, w: crop.w, h: crop.h }
+        crop: { row, col, w: crop.w, h: crop.h },
+        scenarioPath: state.settings.scenarioPath,
+        scenarioPaths: getScenarioPreviewPaths()
       }
     });
     const cr = parseConfigInteger(getFieldValue(section, 'img_construct_row'), 0);
@@ -6321,7 +6326,9 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
         kind: 'wonder',
         c3xPath: state.settings.c3xPath,
         fileName,
-        crop: { row: cr, col: cc, w: crop.w, h: crop.h }
+        crop: { row: cr, col: cc, w: crop.w, h: crop.h },
+        scenarioPath: state.settings.scenarioPath,
+        scenarioPaths: getScenarioPreviewPaths()
       }
     });
     const hasAltEnabled = parseConfigBool(getFieldValue(section, 'enable_img_alt_dir'));
@@ -6339,7 +6346,9 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
           kind: 'wonder',
           c3xPath: state.settings.c3xPath,
           fileName,
-          crop: { row: altCr, col: altCc, w: crop.w, h: crop.h }
+          crop: { row: altCr, col: altCc, w: crop.w, h: crop.h },
+          scenarioPath: state.settings.scenarioPath,
+          scenarioPaths: getScenarioPreviewPaths()
         }
       });
       const altRow = parseConfigInteger(getFieldValue(section, 'img_alt_dir_row'), 0);
@@ -6351,7 +6360,9 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
           kind: 'wonder',
           c3xPath: state.settings.c3xPath,
           fileName,
-          crop: { row: altRow, col: altCol, w: crop.w, h: crop.h }
+          crop: { row: altRow, col: altCol, w: crop.w, h: crop.h },
+          scenarioPath: state.settings.scenarioPath,
+          scenarioPaths: getScenarioPreviewPaths()
         }
       });
     }
@@ -6366,7 +6377,9 @@ async function loadPreviewsForSection(tabKey, section, previewWrap) {
         kind: 'naturalWonder',
         c3xPath: state.settings.c3xPath,
         fileName,
-        crop: { row, col, w: crop.w, h: crop.h }
+        crop: { row, col, w: crop.w, h: crop.h },
+        scenarioPath: state.settings.scenarioPath,
+        scenarioPaths: getScenarioPreviewPaths()
       }
     });
     const firstAnimationSpec = getFieldValuesRaw(section, 'animation').find((spec) => getNaturalWonderAnimationIniPath(spec));
@@ -17336,6 +17349,23 @@ function renderReferenceTab(tab, tabKey) {
     kindFilter.value = state.referenceImprovementKind[tabKey] || 'all';
     controlsRight.appendChild(kindFilter);
   }
+  let unitSortSelect = null;
+  if (tabKey === 'units') {
+    unitSortSelect = document.createElement('select');
+    const unitSortOptions = [
+      { value: 'ingame', label: 'In-game order' },
+      { value: 'az', label: 'A → Z' },
+      { value: 'za', label: 'Z → A' }
+    ];
+    unitSortOptions.forEach((opt) => {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      unitSortSelect.appendChild(o);
+    });
+    unitSortSelect.value = state.referenceUnitSort[tabKey] || 'ingame';
+    controlsRight.appendChild(unitSortSelect);
+  }
   if (tabKey === 'technologies') {
     techTreeBtn = document.createElement('button');
     techTreeBtn.type = 'button';
@@ -17635,6 +17665,21 @@ function renderReferenceTab(tab, tabKey) {
       return true;
     });
 
+  if (tabKey === 'units') {
+    const unitSort = state.referenceUnitSort[tabKey] || 'ingame';
+    if (unitSort === 'ingame') {
+      filteredEntries.sort((a, b) => {
+        const ai = a.entry.biqIndex != null ? a.entry.biqIndex : Infinity;
+        const bi = b.entry.biqIndex != null ? b.entry.biqIndex : Infinity;
+        return ai - bi;
+      });
+    } else if (unitSort === 'az') {
+      filteredEntries.sort((a, b) => String(a.entry.name || '').localeCompare(String(b.entry.name || '')));
+    } else if (unitSort === 'za') {
+      filteredEntries.sort((a, b) => String(b.entry.name || '').localeCompare(String(a.entry.name || '')));
+    }
+  }
+
   const currentBaseIndex = state.referenceSelection[tabKey] || 0;
   const filterText = String(state.referenceFilter[tabKey] || '').trim();
   const hasFilterText = !!filterText;
@@ -17819,11 +17864,18 @@ function renderReferenceTab(tab, tabKey) {
       renderActiveTab({ preserveTabScroll: true });
     });
   }
+  if (unitSortSelect) {
+    unitSortSelect.addEventListener('change', () => {
+      state.referenceUnitSort[tabKey] = unitSortSelect.value;
+      state.referenceListScrollTop[tabKey] = 0;
+      renderActiveTab({ preserveTabScroll: true });
+    });
+  }
 
   if (filteredEntries.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'section-card';
-    const hasFilter = !!String(state.referenceFilter[tabKey] || '').trim() || (tabKey === 'improvements' && (state.referenceImprovementKind[tabKey] || 'all') !== 'all');
+    const hasFilter = !!String(state.referenceFilter[tabKey] || '').trim() || (tabKey === 'improvements' && (state.referenceImprovementKind[tabKey] || 'all') !== 'all') || (tabKey === 'units' && (state.referenceUnitSort[tabKey] || 'ingame') !== 'ingame');
     empty.innerHTML = hasFilter
       ? '<p class="hint">No entries match the current filters.</p>'
       : '<p class="hint">No entries found. Verify your Civilization 3 path and reload.</p>';
@@ -25000,7 +25052,9 @@ function makeDistrictImagePathPreview(pathValue) {
   window.c3xManager.getPreview({
     kind: 'district',
     c3xPath: state.settings && state.settings.c3xPath,
-    fileName: cleanedPath
+    fileName: cleanedPath,
+    scenarioPath: state.settings && state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths()
   }).then((res) => {
     if (!res || !res.ok || !holder.isConnected) return;
     drawPreviewFrameToCanvas(res, canvas);
@@ -25189,6 +25243,7 @@ async function fetchDistrictRepresentativePreview(section) {
   const autoKey = JSON.stringify({
     kind: 'district-representative-auto',
     c3xPath: state.settings.c3xPath,
+    scenarioPath: state.settings.scenarioPath,
     fileName: spec.fileName,
     w: spec.cellW,
     h: spec.cellH,
@@ -25210,7 +25265,9 @@ async function fetchDistrictRepresentativePreview(section) {
     const full = await window.c3xManager.getPreview({
       kind: 'district',
       c3xPath: state.settings.c3xPath,
-      fileName: spec.fileName
+      fileName: spec.fileName,
+      scenarioPath: state.settings.scenarioPath,
+      scenarioPaths: getScenarioPreviewPaths()
     });
     if (!full || !full.ok) return null;
     fullPreview = full;
@@ -25233,7 +25290,9 @@ async function fetchDistrictRepresentativePreview(section) {
     kind: 'district',
     c3xPath: state.settings.c3xPath,
     fileName: spec.fileName,
-    crop: { row, col, w: spec.cellW, h: spec.cellH }
+    crop: { row, col, w: spec.cellW, h: spec.cellH },
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths()
   });
   if (!cropped || !cropped.ok) return null;
   setPreviewCache(autoKey, cropped);
@@ -25275,7 +25334,9 @@ async function fetchDistrictCellPreview(section, { cultureIndex = 0, eraIndex = 
     kind: 'district',
     c3xPath: state.settings.c3xPath,
     fileName,
-    crop: { row: eraIndex, col: buildingCol, w: cellW, h: cellH }
+    crop: { row: eraIndex, col: buildingCol, w: cellW, h: cellH },
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths()
   });
   if (!result || !result.ok) return null;
   setPreviewCache(cropKey, result);
@@ -25315,6 +25376,7 @@ function loadWonderCompletedThumbnail(section, holder, canvasSize = 35) {
   const cacheKey = JSON.stringify({
     kind: 'wonder-list-thumb',
     c3xPath: state.settings.c3xPath,
+    scenarioPath: state.settings.scenarioPath,
     fileName,
     row,
     col,
@@ -25333,7 +25395,9 @@ function loadWonderCompletedThumbnail(section, holder, canvasSize = 35) {
     kind: 'wonder',
     c3xPath: state.settings.c3xPath,
     fileName,
-    crop: { row, col, w: crop.w, h: crop.h }
+    crop: { row, col, w: crop.w, h: crop.h },
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths()
   }).then((res) => {
     if (!res || !res.ok) return;
     setPreviewCache(cacheKey, res);
@@ -25358,6 +25422,7 @@ function loadNaturalWonderThumbnail(section, holder, canvasSize = 35) {
   const cacheKey = JSON.stringify({
     kind: 'natural-wonder-list-thumb',
     c3xPath: state.settings.c3xPath,
+    scenarioPath: state.settings.scenarioPath,
     fileName,
     row,
     col,
@@ -25376,7 +25441,9 @@ function loadNaturalWonderThumbnail(section, holder, canvasSize = 35) {
     kind: 'naturalWonder',
     c3xPath: state.settings.c3xPath,
     fileName,
-    crop: { row, col, w: crop.w, h: crop.h }
+    crop: { row, col, w: crop.w, h: crop.h },
+    scenarioPath: state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths()
   }).then((res) => {
     if (!res || !res.ok) return;
     setPreviewCache(cacheKey, res);
@@ -25517,7 +25584,9 @@ function renderDistrictRepresentativePreviewCard(section, previewWrap, titleForF
           const full = await window.c3xManager.getPreview({
             kind: 'district',
             c3xPath: state.settings.c3xPath,
-            fileName: spec.fileName
+            fileName: spec.fileName,
+            scenarioPath: state.settings.scenarioPath,
+            scenarioPaths: getScenarioPreviewPaths()
           });
           if (!full || !full.ok) return;
           fullPreview = full;
@@ -25643,7 +25712,9 @@ function buildNaturalWonderChipButton(name, selected, onToggle) {
     kind: 'naturalWonder',
     c3xPath: state.settings && state.settings.c3xPath,
     fileName,
-    crop: { row, col, w: 128, h: 88 }
+    crop: { row, col, w: 128, h: 88 },
+    scenarioPath: state.settings && state.settings.scenarioPath,
+    scenarioPaths: getScenarioPreviewPaths()
   }).then((res) => {
     if (!res || !res.ok || !thumb.isConnected) return;
     const canvas = document.createElement('canvas');
@@ -27321,6 +27392,7 @@ async function loadBundleAndRender(options = {}) {
       state.referenceSelection = cloneStateMap(persistedView.referenceSelection);
       state.referenceFilter = cloneStateMap(persistedView.referenceFilter);
       state.referenceImprovementKind = cloneStateMap(persistedView.referenceImprovementKind);
+      state.referenceUnitSort = cloneStateMap(persistedView.referenceUnitSort);
       state.biqSectionSelectionByTab = cloneStateMap(persistedView.biqSectionSelectionByTab);
       state.biqRecordSelection = cloneStateMap(persistedView.biqRecordSelection);
       state.techTreeEraSelectionByTab = cloneStateMap(persistedView.techTreeEraSelectionByTab);

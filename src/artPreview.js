@@ -755,17 +755,25 @@ function resolveUnitIniPath(civ3Path, animationName, scenarioPath, scenarioPaths
   return chosen;
 }
 
-function resolvePcxPath(c3xPath, fileName) {
+function resolvePcxPath(c3xPath, fileName, scenarioRoots) {
   if (!c3xPath || !fileName) return null;
   const direct = path.isAbsolute(fileName) ? fileName : null;
-  const candidates = [
-    direct,
+  const candidates = [direct];
+  (Array.isArray(scenarioRoots) ? scenarioRoots : []).forEach((root) => {
+    candidates.push(
+      path.join(root, 'Art', 'Districts', 'Summer', '1200', fileName),
+      path.join(root, 'Art', 'Districts', '1200', fileName),
+      path.join(root, 'Art', 'Summer', '1200', fileName),
+      path.join(root, 'Art', '1200', fileName)
+    );
+  });
+  candidates.push(
     path.join(c3xPath, 'Art', 'Districts', 'Summer', '1200', fileName),
     path.join(c3xPath, 'Art', 'Districts', '1200', fileName),
     path.join(c3xPath, 'Art', 'DayNight', 'Summer', '1200', fileName),
     path.join(c3xPath, 'Art', 'Terrain', fileName)
-  ].filter(Boolean);
-  return candidates.find((p) => fileExists(p)) || null;
+  );
+  return candidates.filter(Boolean).find((p) => fileExists(p)) || null;
 }
 
 function decodeByPath(filePath, crop, options = {}) {
@@ -828,7 +836,8 @@ function getPreview(request) {
   const { c3xPath, civ3Path, scenarioPath, scenarioPaths, kind } = request;
 
   if (kind === 'district' || kind === 'wonder' || kind === 'naturalWonder') {
-    const pcx = resolvePcxPath(c3xPath, request.fileName);
+    const scenarioRoots = normalizeScenarioRoots(scenarioPath, scenarioPaths);
+    const pcx = resolvePcxPath(c3xPath, request.fileName, scenarioRoots);
     if (!pcx) {
       log.warn('getPreview', `${kind}: PCX not found — fileName="${request.fileName}", c3x=${log.rel(c3xPath)}`);
       return { ok: false, error: 'PCX not found' };
