@@ -102,14 +102,12 @@ const BIQ_SECTION_DEFS = [
   { code: 'LEAD', title: 'Players', mode: 'len', optional: true }
 ];
 const MAX_BIQ_RECORDS_PER_SECTION = 400;
-const MAX_BIQ_BRIDGE_RECORDS_PER_SECTION = 600;
 let activeReadCollector = null;
 
 function getBiqBridgeRecordLimit(sectionCode) {
   const code = String(sectionCode || '').toUpperCase();
-  if (code === 'TILE') return Number.POSITIVE_INFINITY;
   if (code === 'CITY' || code === 'UNIT' || code === 'CLNY') return 8000;
-  return MAX_BIQ_BRIDGE_RECORDS_PER_SECTION;
+  return Number.POSITIVE_INFINITY;
 }
 
 function readUInt32LESafe(buf, offset) {
@@ -2950,6 +2948,29 @@ function isPrtoStrategyMapRecord(record) {
   const raw = getRecordFieldValue(record, 'PRTO', 'otherStrategy');
   const parsed = parseReferenceIdFromFieldValue(raw);
   return Number.isFinite(parsed) && parsed >= 0;
+}
+
+// Returns a Map<string(duplicateIdx), number(primaryIdx)> for every PRTO record
+// whose otherStrategy >= 0 (i.e. strategy-map duplicates Civ3 creates when a unit
+// has multiple AI strategies assigned).  The caller uses this to resolve stealth-
+// target indices that point at duplicates back to the primary unit's index.
+// Input: the sections array from a normalised bridge biqTab (bundle.biq.sections).
+function buildPrtoStrategyMapAliases(biqSections) {
+  const aliases = new Map();
+  if (!Array.isArray(biqSections)) return aliases;
+  const prtoSection = biqSections.find((s) => String(s && s.code || '').toUpperCase() === 'PRTO');
+  if (!prtoSection) return aliases;
+  const records = Array.isArray(prtoSection.records) ? prtoSection.records
+    : (Array.isArray(prtoSection.fullRecords) ? prtoSection.fullRecords : []);
+  records.forEach((record) => {
+    const idx = Number(record && record.index);
+    if (!Number.isFinite(idx)) return;
+    const raw = getRecordFieldValue(record, 'PRTO', 'otherStrategy');
+    const primaryIdx = parseReferenceIdFromFieldValue(raw);
+    if (!Number.isFinite(primaryIdx) || primaryIdx < 0) return;
+    aliases.set(String(idx), primaryIdx);
+  });
+  return aliases;
 }
 
 function buildSyntheticUnitReferenceEntry(record, biqSourcePath, mode) {
@@ -7099,5 +7120,6 @@ module.exports = {
   previewFileDiff,
   buildUnifiedDiffRows,
   buildSyntheticUnitReferenceEntry,
-  isPrtoStrategyMapRecord
+  isPrtoStrategyMapRecord,
+  buildPrtoStrategyMapAliases
 };

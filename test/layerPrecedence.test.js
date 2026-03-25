@@ -154,6 +154,31 @@ test('unit era variants are kept when BIQ includes base PRTO key', () => {
   assert.equal(era.animationName, 'Worker Modern Times');
 });
 
+test('units beyond BIQ record index 600 get animationName from PediaIcons and are not synthetic', () => {
+  const root = mkTmpDir();
+
+  writeTextLayer(root, 'Conquests', 'PediaIcons.txt', [
+    '#ANIMNAME_PRTO_HIGH_INDEX_UNIT',
+    'High Index Folder',
+    ''
+  ].join('\n'));
+
+  // Build a biqTab with 650 PRTO records; the high-index unit is at slot 649
+  const records = [];
+  for (let i = 0; i < 649; i++) {
+    records.push({ index: i, fields: [{ key: 'civilopediaentry', value: `PRTO_FILLER_${i}` }] });
+  }
+  records.push({ index: 649, fields: [{ key: 'civilopediaentry', value: 'PRTO_HIGH_INDEX_UNIT' }] });
+
+  const biqTab = { sections: [{ code: 'PRTO', records }] };
+
+  const tabs = buildReferenceTabs(root, { mode: 'global', biqTab });
+  const entry = getEntryByKey(tabs.units.entries, 'PRTO_HIGH_INDEX_UNIT');
+  assert.ok(entry, 'expected PRTO_HIGH_INDEX_UNIT entry for high-index BIQ record');
+  assert.equal(entry.animationName, 'High Index Folder');
+  assert.equal(entry.syntheticBiqOnly, undefined, 'should not be synthetic');
+});
+
 test('unit era variant animation falls back to base ANIMNAME when era block is missing', () => {
   const root = mkTmpDir();
 

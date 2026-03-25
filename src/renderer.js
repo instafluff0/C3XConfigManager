@@ -4796,7 +4796,8 @@ function makeNamedListTokenEditor(config) {
       btn.type = 'button';
       btn.className = 'segmented-multi-btn active';
       const text = document.createElement('span');
-      text.textContent = opt ? opt.label : value;
+      const aliasLabels = cfg.aliasLabels instanceof Map ? cfg.aliasLabels : null;
+      text.textContent = opt ? opt.label : (aliasLabels ? (aliasLabels.get(value) || value) : value);
       btn.appendChild(text);
       btn.title = 'Remove';
       btn.addEventListener('click', () => {
@@ -12551,8 +12552,7 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
         const labels = selected.map((idx) => civNameByIdx.get(idx) || `Civ ${idx}`).filter(Boolean);
         text.textContent = labels.length ? labels.join(', ') : '(none)';
       } else if (cfg.kind === 'stealthTargets') {
-        const unitOpts = makeIndexOptionsForTab('units');
-        const unitLabelByIdx = new Map(unitOpts.map((o) => [o.value, o.label]));
+        const unitLabelByIdx = makeUnitIndexToLabelMap();
         const labels = stealthState.values.map((v) => unitLabelByIdx.get(v) || v);
         text.textContent = labels.length ? labels.join(', ') : '(none)';
       } else if (cfg.kind === 'ignoreMovement') {
@@ -12616,6 +12616,7 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
       const editor = makeNamedListTokenEditor({
         options: makeIndexOptionsForTab('units'),
         values: stealthState.values,
+        aliasLabels: makeUnitIndexToLabelMap(),
         onValuesChange: (values) => {
           rememberUndoSnapshot();
           setUnitListFieldValues(entry, stealthState.key, values);
@@ -12674,6 +12675,38 @@ function makeIndexOptionsForTab(tabKey) {
     thumbPath: entry.thumbPath || '',
     entry
   }));
+}
+
+// Builds a Map<string(biqIndex), string(unitName)> for all unit entries, extended
+// with aliases that cover strategy-map duplicates.
+//
+// Background: Civ3 BIQ may store multiple PRTO records per unit — one primary
+// (otherStrategy=-1) and one or more strategy-map duplicates (otherStrategy=<primaryIdx>).
+// indexBiqRecordsByCivilopediaKey takes the *last* record for each key, so a unit
+// entry's biqIndex is typically the *last* (duplicate) record's index.  But stealth
+// targets in the BIQ are stored as the *primary* record's index.  Without aliases,
+// map.get(primaryIdx) would miss.
+//
+// Fix: for every duplicate record (otherStrategy >= 0), add primaryIdx → label to
+// the map using the label already stored under the duplicate's own index.
+function makeUnitIndexToLabelMap() {
+  const unitOpts = makeIndexOptionsForTab('units');
+  const map = new Map(unitOpts.map((o) => [o.value, o.label]));
+  const prtoSection = getBiqSectionByCode('PRTO');
+  const records = prtoSection && Array.isArray(prtoSection.records) ? prtoSection.records : [];
+  records.forEach((record) => {
+    const dupIdx = Number(record && record.index);
+    if (!Number.isFinite(dupIdx)) return;
+    const otherStratField = getFieldByBaseKey(record, 'otherStrategy');
+    const primaryIdx = Number.parseInt(String(otherStratField && otherStratField.value || ''), 10);
+    if (!Number.isFinite(primaryIdx) || primaryIdx < 0) return;
+    // dupIdx is the strategy-map duplicate; primaryIdx is the unit stored in targets.
+    // If primaryIdx is already in the map we have nothing to do.
+    if (map.has(String(primaryIdx))) return;
+    const dupLabel = map.get(String(dupIdx));
+    if (dupLabel) map.set(String(primaryIdx), dupLabel);
+  });
+  return map;
 }
 
 function getReferenceOptionsForField(tabKey, field) {

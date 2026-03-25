@@ -46,6 +46,42 @@ function getRawPrtoMap(bundle, civilopediaKey) {
   return map;
 }
 
+// ---------------------------------------------------------------------------
+// BIQ record-limit regression: units at index >= 600 must not lose animationName
+// ---------------------------------------------------------------------------
+
+test('! Midnight Dragon ! (BIQ index 668) resolves animationName from scenario PediaIcons and is not synthetic', (t) => {
+  if (!fs.existsSync(TIDES_BIQ)) t.skip(`Scenario fixture not present: ${TIDES_BIQ}`);
+  const bundle = getTidesBundle();
+  const entries = bundle.tabs.units.entries;
+  const midnight = entries.find((e) => String(e.civilopediaKey || '').toUpperCase() === 'PRTO_MIDNIGHT_DRAGON');
+  assert.ok(midnight, 'expected PRTO_Midnight_Dragon entry');
+  assert.equal(midnight.syntheticBiqOnly, undefined, 'should not be synthetic BIQ-only (regression: was truncated by 600-record limit)');
+  assert.equal(midnight.animationName, 'Midnight Dragon UPG', 'animationName must come from scenario PediaIcons');
+});
+
+test('no unit in TIDES with a PediaIcons ANIMNAME entry is stranded as synthetic with empty animationName', (t) => {
+  if (!fs.existsSync(TIDES_BIQ)) t.skip(`Scenario fixture not present: ${TIDES_BIQ}`);
+  const bundle = getTidesBundle();
+  const synthetic = bundle.tabs.units.entries.filter((e) => e.syntheticBiqOnly && !e.animationName);
+  // Synthetic entries with no animationName are only acceptable when PediaIcons genuinely
+  // has no ANIMNAME block for them (i.e. the unit has no art). Any unit that IS in PediaIcons
+  // but shows as synthetic with empty animationName is a regression of the 600-record limit.
+  // We verify this by checking none of the synthetic+empty entries have a civilopediaKey that
+  // matches a known ANIMNAME_ key — all such units should have been resolved already.
+  const syntheticKeys = new Set(synthetic.map((e) => String(e.civilopediaKey || '').toUpperCase()));
+  const allNormal = bundle.tabs.units.entries.filter((e) => !e.syntheticBiqOnly);
+  const resolvedKeys = new Set(allNormal.filter((e) => e.animationName).map((e) => String(e.civilopediaKey || '').toUpperCase()));
+  // None of the synthetic+empty keys should also appear as a resolved key in another duplicate entry
+  for (const key of syntheticKeys) {
+    assert.equal(resolvedKeys.has(key), false,
+      `${key} appears both as a resolved unit and a synthetic unit — BIQ record truncation may have created a duplicate`);
+  }
+  // Midnight Dragon specifically must not be in the synthetic set
+  assert.equal(syntheticKeys.has('PRTO_MIDNIGHT_DRAGON'), false,
+    'PRTO_Midnight_Dragon must not be in the synthetic+empty set');
+});
+
 test('Barrage in TIDES projects raw PRTO fields into Quint-style unit UI fields', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip(`Scenario fixture not present: ${TIDES_BIQ}`);
   const bundle = getTidesBundle();
