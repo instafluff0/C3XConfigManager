@@ -122,6 +122,7 @@ test('Barrage in TIDES projects raw PRTO fields into Quint-style unit UI fields'
   assert.equal(getField(barrage, 'iconindex').value, raw.get('iconindex')[0]);
   assert.equal(getField(barrage, 'bombardstrength').value, '25');
   assert.equal(getField(barrage, 'rateoffire').value, '4');
+  assert.equal(getField(barrage, 'hitpointbonus').value, raw.get('hitpointbonus')[0]);
   assert.equal(getField(barrage, 'operationalrange').value, '3');
   assert.equal(getField(barrage, 'shieldcost').value, '16');
   assert.equal(getField(barrage, 'useexactcost').value, raw.get('useexactcost')[0]);

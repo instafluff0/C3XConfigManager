@@ -35,7 +35,7 @@ const state = {
   suppressDirtyUntilInteraction: true,
   cleanSnapshot: '',
   cleanTabsCache: null,
-  undoSnapshot: null,
+  undoHistory: [],
   sectionListScrollTop: {
     districts: 0,
     wonders: 0,
@@ -112,6 +112,10 @@ const state = {
   dirtyReferenceKeysByTab: {},
   dirtySectionIndexesByTab: {},
   unsavedModal: {
+    open: false,
+    resolve: null
+  },
+  undoAllModal: {
     open: false,
     resolve: null
   },
@@ -325,7 +329,12 @@ const el = {
   backBtn: document.getElementById('back-btn'),
   forwardBtn: document.getElementById('forward-btn'),
   saveBtn: document.getElementById('save-btn'),
+  saveAsBtn: document.getElementById('save-as-btn'),
   undoBtn: document.getElementById('undo-btn'),
+  undoAllBtn: document.getElementById('undo-all-btn'),
+  undoAllModalOverlay: document.getElementById('undo-all-modal-overlay'),
+  undoAllModalCancel: document.getElementById('undo-all-modal-cancel'),
+  undoAllModalConfirm: document.getElementById('undo-all-modal-confirm'),
   dirtyIndicator: document.getElementById('dirty-indicator'),
   debugLog: document.getElementById('debug-log'),
   copyDebugLog: document.getElementById('copy-debug-log'),
@@ -1934,6 +1943,22 @@ function updateSaveButtonLabel() {
     : '<span class="btn-icon">💾</span>Save';
 }
 
+function updateSaveAsButtonState() {
+  if (!el.saveAsBtn) return;
+  const scenarioPath = String((state.settings && state.settings.scenarioPath) || '').trim();
+  const enabled = isScenarioMode() && !!scenarioPath && !state.isLoading && !state.isSaving;
+  el.saveAsBtn.disabled = !enabled;
+  if (!isScenarioMode()) {
+    el.saveAsBtn.title = 'Save As is available in Scenario mode.';
+    return;
+  }
+  if (!scenarioPath) {
+    el.saveAsBtn.title = 'Load a scenario .biq before using Save As.';
+    return;
+  }
+  el.saveAsBtn.title = '';
+}
+
 function closeFilesReadModal() {
   if (!el.filesReadModalOverlay) return;
   el.filesReadModalOverlay.classList.add('hidden');
@@ -1991,13 +2016,21 @@ function refreshDirtyUi() {
   state.sectionValidationError = getSectionValidationError();
   if (el.saveBtn) el.saveBtn.classList.toggle('dirty', state.isDirty);
   updateSaveButtonLabel();
+  updateSaveAsButtonState();
   if (el.saveBtn) {
     el.saveBtn.disabled = !state.isDirty || state.isLoading || state.isSaving || !!state.sectionValidationError;
     el.saveBtn.title = state.sectionValidationError || '';
   }
   if (el.dirtyIndicator) el.dirtyIndicator.classList.toggle('hidden', !state.isDirty);
   if (el.filesReadToggle) el.filesReadToggle.classList.toggle('dirty', state.isDirty);
-  if (el.undoBtn) el.undoBtn.disabled = !state.undoSnapshot || state.isLoading;
+  const hasUndoHistory = Array.isArray(state.undoHistory) && state.undoHistory.length > 0;
+  if (el.undoBtn) el.undoBtn.disabled = !hasUndoHistory || state.isLoading;
+  if (el.undoAllBtn) el.undoAllBtn.disabled = !state.isDirty || state.isLoading;
+}
+
+function getLatestUndoSnapshot() {
+  if (!Array.isArray(state.undoHistory) || state.undoHistory.length === 0) return null;
+  return state.undoHistory[state.undoHistory.length - 1];
 }
 
 function snapshotTabs() {
@@ -2016,8 +2049,9 @@ function snapshotEditableTabsFromBundle(bundle) {
 
 function rememberUndoSnapshot() {
   if (state.isRendering || !state.trackDirty || state.suppressDirtyUntilInteraction) return;
-  if (!state.undoSnapshot) {
-    state.undoSnapshot = snapshotTabs();
+  const snapshot = snapshotTabs();
+  if (snapshot !== getLatestUndoSnapshot()) {
+    state.undoHistory.push(snapshot);
     refreshDirtyUi();
   }
 }
@@ -2025,7 +2059,7 @@ function rememberUndoSnapshot() {
 function captureCleanSnapshot() {
   state.cleanSnapshot = snapshotTabs();
   state.cleanTabsCache = parseSnapshotTabs(state.cleanSnapshot);
-  state.undoSnapshot = null;
+  state.undoHistory = [];
   state.isDirty = false;
   clearDirtyTabCounts();
   refreshDirtyUi();
@@ -2064,7 +2098,7 @@ function setDirty(next) {
       state.isDirty = snapshotTabs() !== state.cleanSnapshot;
     }
     if (!state.isDirty) {
-      state.undoSnapshot = null;
+      state.undoHistory = [];
     }
   }
   refreshDirtyUi();
@@ -2435,7 +2469,7 @@ function applyDirtyBadgeToTabButton(button, key, tab) {
     if (warningCount > 0) {
       appendWarningCountBadge(
         button,
-        `Units has ${warningCount} icon index warning${warningCount === 1 ? '' : 's'} — icon may be missing at runtime`,
+        `Units has ${warningCount} icon warning${warningCount === 1 ? '' : 's'} — manual icon assignment may be required`,
         warningCount
       );
     }
@@ -2727,14 +2761,13 @@ function applyScenarioSearchFolderValueToBundle(bundle, value) {
 
 async function reloadScenarioFromEditedSearchFolder(value) {
   const normalized = normalizeScenarioSearchFolderFieldValue(value);
-  const preservedUndoSnapshot = state.undoSnapshot || state.cleanSnapshot || null;
   const preservedCleanSnapshot = state.cleanSnapshot || 'null';
   await loadBundleAndRender({
     loadingText: 'Reloading scenario from updated search folder...',
     scenarioSearchFolderOverride: normalized,
     preserveDirtyState: {
       cleanSnapshot: preservedCleanSnapshot,
-      undoSnapshot: preservedUndoSnapshot
+      undoHistory: Array.isArray(state.undoHistory) ? state.undoHistory.slice() : []
     }
   });
   if (state.bundle) {
@@ -2951,8 +2984,9 @@ function getDefaultScenarioParentDir() {
   return `${civ3Root.replace(/\/+$/, '')}/Conquests/Scenarios`;
 }
 
-function buildScenarioSourceSelect(selectEl) {
+function buildScenarioSourceSelect(selectEl, options = {}) {
   if (!selectEl) return;
+  const preferredSourcePath = String(options.preferredSourcePath || '').trim();
   selectEl.innerHTML = '';
   const placeholder = document.createElement('option');
   placeholder.value = '';
@@ -2978,6 +3012,16 @@ function buildScenarioSourceSelect(selectEl) {
   };
   addGroup('Conquests', 'Conquests Folder');
   addGroup('Scenarios', 'Scenarios Folder');
+  if (preferredSourcePath && !Array.from(selectEl.options).some((opt) => String(opt.value || '') === preferredSourcePath)) {
+    const preferred = document.createElement('option');
+    preferred.value = preferredSourcePath;
+    preferred.textContent = getPathTail(preferredSourcePath);
+    preferred.title = preferredSourcePath;
+    selectEl.insertBefore(preferred, manual);
+  }
+  if (preferredSourcePath) {
+    selectEl.value = preferredSourcePath;
+  }
 }
 
 async function promptCreateScenarioFromBaseAction() {
@@ -3061,14 +3105,20 @@ async function promptCreateScenarioFromBaseAction() {
   });
 }
 
-async function promptCopyScenarioAction() {
+async function promptCopyScenarioAction(options = {}) {
   if (!el.entityModalOverlay || !el.entityModalContent) return null;
-  if (el.entityModalTitle) el.entityModalTitle.textContent = 'Create Scenario: Copy Existing';
+  const dialogMode = String(options.mode || 'create').trim().toLowerCase() === 'save_as' ? 'save_as' : 'create';
+  const preferredSourcePath = String(options.preferredSourcePath || '').trim();
+  if (el.entityModalTitle) {
+    el.entityModalTitle.textContent = dialogMode === 'save_as' ? 'Save Scenario As' : 'Create Scenario: Copy Existing';
+  }
   if (el.entityModalBody) {
-    el.entityModalBody.textContent = 'Copy an existing scenario and localize its BIQ search folders for the new scenario.';
+    el.entityModalBody.textContent = dialogMode === 'save_as'
+      ? 'Copy the current scenario into a new scenario folder and localize its BIQ search folders for the new copy.'
+      : 'Copy an existing scenario and localize its BIQ search folders for the new scenario.';
   }
   if (el.entityModalConfirm) {
-    el.entityModalConfirm.textContent = 'Create Copy';
+    el.entityModalConfirm.textContent = dialogMode === 'save_as' ? 'Save As' : 'Create Copy';
     el.entityModalConfirm.disabled = false;
   }
   el.entityModalContent.innerHTML = '';
@@ -3085,7 +3135,7 @@ async function promptCopyScenarioAction() {
   sourceLabel.textContent = 'Source Scenario';
   const sourceSelect = document.createElement('select');
   sourceSelect.className = 'entity-import-scenario-pill';
-  buildScenarioSourceSelect(sourceSelect);
+  buildScenarioSourceSelect(sourceSelect, { preferredSourcePath });
   sourceField.appendChild(sourceLabel);
   sourceField.appendChild(sourceSelect);
   grid.appendChild(sourceField);
@@ -3117,7 +3167,7 @@ async function promptCopyScenarioAction() {
   el.entityModalOverlay.classList.remove('hidden');
   el.entityModalOverlay.setAttribute('aria-hidden', 'false');
 
-  let selectedSourcePath = '';
+  let selectedSourcePath = preferredSourcePath;
   let nameEdited = false;
   let searchFolderEdited = false;
   const syncDefaultNameFromSource = () => {
@@ -3170,6 +3220,9 @@ async function promptCopyScenarioAction() {
   searchFolderInput.addEventListener('input', () => {
     searchFolderEdited = String(searchFolderInput.value || '').trim().length > 0;
   });
+  if (selectedSourcePath) {
+    syncDefaultNameFromSource();
+  }
   window.setTimeout(() => sourceSelect.focus({ preventScroll: true }), 0);
 
   return new Promise((resolve) => {
@@ -3272,6 +3325,82 @@ async function runScenarioCreateFlow(kind = 'base') {
   }
 }
 
+async function saveCurrentScenarioAs() {
+  if (!isScenarioMode()) {
+    setStatus('Save As is only available in Scenario mode.', true);
+    return false;
+  }
+  if (!window.c3xManager || typeof window.c3xManager.createScenario !== 'function') {
+    setStatus('Scenario creation API is unavailable in this build.', true);
+    return false;
+  }
+  const currentScenarioPath = String((state.settings && state.settings.scenarioPath) || '').trim();
+  if (!currentScenarioPath) {
+    setStatus('Load a scenario .biq before using Save As.', true);
+    return false;
+  }
+  const allow = await confirmResolveUnsavedChanges('saving this scenario as a copy');
+  if (!allow) return false;
+  const details = await promptCopyScenarioAction({
+    mode: 'save_as',
+    preferredSourcePath: currentScenarioPath
+  });
+  if (!details) {
+    updateScenarioSelectValue();
+    return false;
+  }
+  if (!state.settings || !state.settings.civ3Path) {
+    setStatus('Set Civilization 3 folder before using Save As.', true);
+    return false;
+  }
+  if (!state.settings.c3xPath) {
+    setStatus('Set C3X folder before using Save As.', true);
+    return false;
+  }
+  const creationPayload = {
+    c3xPath: state.settings.c3xPath,
+    civ3Path: state.settings.civ3Path,
+    template: 'copy',
+    sourceScenarioPath: details.sourceScenarioPath || currentScenarioPath,
+    scenarioName: details.scenarioName,
+    scenarioSearchFolderName: details.scenarioSearchFolderName || ''
+  };
+  setLoadingUi(true, 'Saving scenario copy...');
+  try {
+    const created = await window.c3xManager.createScenario({
+      ...creationPayload,
+      dryRun: true
+    });
+    if (!created || !created.ok) {
+      setStatus((created && created.error) || 'Could not prepare Save As.', true);
+      updateScenarioSelectValue();
+      return false;
+    }
+    const committed = await window.c3xManager.createScenario(creationPayload);
+    if (!committed || !committed.ok) {
+      setStatus((committed && committed.error) || 'Could not save scenario copy.', true);
+      updateScenarioSelectValue();
+      return false;
+    }
+    setMode('scenario');
+    el.scenarioPath.value = String(committed.scenarioBiqPath || '');
+    syncSettingsFromInputs();
+    await refreshScenarioSelectOptions();
+    updateScenarioSelectValue();
+    updatePathsSummary();
+    updateModeState();
+    await window.c3xManager.setSettings(state.settings);
+    await loadBundleAndRender({
+      loadingText: 'Loading scenario copy...',
+      reuseLoadingUi: true
+    });
+    setStatus(`Saved scenario as "${committed.scenarioName}" and loaded it.`);
+    return true;
+  } finally {
+    if (state.isLoading) setLoadingUi(false);
+  }
+}
+
 function setPathsCollapsed(collapsed) {
   state.pathsCollapsed = !!collapsed;
   if (el.paths) el.paths.classList.toggle('collapsed', state.pathsCollapsed);
@@ -3363,7 +3492,7 @@ function clearBundleView() {
   state.baseFilter = '';
   state.cleanSnapshot = '';
   state.cleanTabsCache = null;
-  state.undoSnapshot = null;
+  state.undoHistory = [];
   state.isDirty = false;
   clearDirtyTabCounts();
   refreshDirtyUi();
@@ -3458,12 +3587,74 @@ function snapshotKey(snapshot) {
 }
 
 function updateNavButtons() {
+  const backDisabled = state.isLoading || state.navHistoryIndex <= 0;
+  const forwardDisabled = state.isLoading || state.navHistoryIndex < 0 || state.navHistoryIndex >= state.navHistory.length - 1;
   if (el.backBtn) {
-    el.backBtn.disabled = state.isLoading || state.navHistoryIndex <= 0;
+    el.backBtn.disabled = backDisabled;
   }
   if (el.forwardBtn) {
-    el.forwardBtn.disabled = state.isLoading || state.navHistoryIndex < 0 || state.navHistoryIndex >= state.navHistory.length - 1;
+    el.forwardBtn.disabled = forwardDisabled;
   }
+  document.querySelectorAll('[data-history-nav="back"]').forEach((button) => {
+    button.disabled = backDisabled;
+  });
+  document.querySelectorAll('[data-history-nav="forward"]').forEach((button) => {
+    button.disabled = forwardDisabled;
+  });
+  updateInlineHistoryNavVisibility();
+}
+
+function createInlineHistoryNav() {
+  const nav = document.createElement('div');
+  nav.className = 'inline-history-nav';
+  const backDisabled = state.isLoading || state.navHistoryIndex <= 0;
+  const forwardDisabled = state.isLoading || state.navHistoryIndex < 0 || state.navHistoryIndex >= state.navHistory.length - 1;
+  const suppressRowTooltip = (ev) => {
+    if (ev) ev.stopPropagation();
+    richTooltip.active = false;
+    hideRichTooltip();
+  };
+  nav.addEventListener('mouseenter', suppressRowTooltip);
+  nav.addEventListener('mousemove', suppressRowTooltip);
+
+  const backBtn = document.createElement('button');
+  backBtn.type = 'button';
+  backBtn.className = 'ghost nav-btn inline-nav-btn';
+  backBtn.dataset.historyNav = 'back';
+  backBtn.setAttribute('aria-label', 'Back');
+  backBtn.title = 'Back';
+  backBtn.textContent = '←';
+  backBtn.disabled = backDisabled;
+  backBtn.addEventListener('click', navigateBack);
+
+  const forwardBtn = document.createElement('button');
+  forwardBtn.type = 'button';
+  forwardBtn.className = 'ghost nav-btn inline-nav-btn';
+  forwardBtn.dataset.historyNav = 'forward';
+  forwardBtn.setAttribute('aria-label', 'Forward');
+  forwardBtn.title = 'Forward';
+  forwardBtn.textContent = '→';
+  forwardBtn.disabled = forwardDisabled;
+  forwardBtn.addEventListener('click', navigateForward);
+
+  nav.appendChild(backBtn);
+  nav.appendChild(forwardBtn);
+  return nav;
+}
+
+function updateInlineHistoryNavVisibility() {
+  document.querySelectorAll('.identity-key-row.has-inline-history-nav').forEach((row) => {
+    const nav = row.querySelector('.inline-history-nav');
+    const control = row.querySelector('.identity-key-control');
+    if (!nav || !control) return;
+    nav.classList.remove('inline-history-nav-hidden');
+    const singleRowHeight = Math.max(
+      row.querySelector('.identity-key-label')?.offsetHeight || 0,
+      control.offsetHeight || 0
+    );
+    const wrapped = row.scrollHeight > (singleRowHeight + 6);
+    nav.classList.toggle('inline-history-nav-hidden', wrapped);
+  });
 }
 
 function pushNavigationSnapshot(snapshot) {
@@ -6958,6 +7149,19 @@ function loadReferenceListThumbnail(tabKey, entry, holder) {
 
   if (!assetPath) {
     if (tabKey === 'units' && entry) {
+      if (hasPendingImportedUnitIconWarning(entry)) {
+        const btn = holder.closest('.entry-list-item');
+        if (btn && !btn.querySelector('.unit-icon-issue-badge')) {
+          btn.classList.add('entry-item-has-issue');
+          const badge = document.createElement('span');
+          badge.className = 'entry-issue-badge unit-icon-issue-badge';
+          badge.textContent = '⚠';
+          badge.title = 'Imported unit icon needs manual setup. Create/update Art/Units/units_32.pcx for this scenario, then choose the correct Icon Index.';
+          btn.appendChild(badge);
+        }
+        holder.innerHTML = '';
+        return;
+      }
       const previewDescriptor = getUnitIconPreviewDescriptor(entry);
       const iconIndex = Number(previewDescriptor && previewDescriptor.iconIndex);
       if (Number.isFinite(iconIndex) && iconIndex >= 0) {
@@ -7199,6 +7403,8 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
   let activePlayableSoundPath = '';
   let previewSoundAudio = null;
   let previewSoundUrl = '';
+  let previewSoundPlayToken = 0;
+  let activeSoundPreviewButton = null;
 
   const cloneTypeRows = (rows) => cloneUnitTypeRows(rows);
 
@@ -7260,7 +7466,7 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
   const refreshSoundToggle = () => {
     const on = !!ui.previewSoundOn;
     soundToggle.textContent = on ? '🔊' : '🔇';
-    soundToggle.title = on ? 'Preview sound on' : 'Preview sound off';
+    soundToggle.title = on ? 'Loop sound on' : 'Loop sound off';
     soundToggle.setAttribute('aria-label', soundToggle.title);
     soundToggle.classList.toggle('active', on);
   };
@@ -7273,22 +7479,87 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
     playPauseToggle.classList.toggle('active', paused);
   };
 
-  const playPreviewSound = () => {
-    if (!ui.previewSoundOn || !activePlayableSoundPath) return;
-    const url = toFileUrlFromPath(activePlayableSoundPath);
-    if (!url) return;
+  const setPreviewButtonPlayingState = (button, isPlaying) => {
+    if (!button) return;
+    button.classList.toggle('playing', !!isPlaying);
+    button.innerHTML = isPlaying
+      ? '<span class="btn-icon">▮▮</span>Playing'
+      : '<span class="btn-icon">▶</span>Preview';
+  };
+
+  const clearActiveSoundPreviewButton = () => {
+    if (!activeSoundPreviewButton) return;
+    setPreviewButtonPlayingState(activeSoundPreviewButton, false);
+    activeSoundPreviewButton = null;
+  };
+
+  const stopPreviewSound = (resetTime = false) => {
+    clearActiveSoundPreviewButton();
+    if (!previewSoundAudio) return;
     try {
+      previewSoundAudio.pause();
+      if (resetTime) previewSoundAudio.currentTime = 0;
+    } catch (_err) {}
+  };
+
+  const playResolvedSoundPath = async (playablePath, options = {}) => {
+    const statusLabel = String(options && options.statusLabel || 'sound preview');
+    const sourceButton = options && options.sourceButton ? options.sourceButton : null;
+    const normalizedPath = toSlashPath(playablePath).trim();
+    if (!normalizedPath) {
+      if (sourceButton) clearActiveSoundPreviewButton();
+      setStatus(`No playable file resolved for ${statusLabel}.`, true);
+      return false;
+    }
+    if (!window.c3xManager || typeof window.c3xManager.pathExists !== 'function' || !await window.c3xManager.pathExists(normalizedPath)) {
+      if (sourceButton) clearActiveSoundPreviewButton();
+      setStatus(`Sound file not found for ${statusLabel}.`, true);
+      return false;
+    }
+    const url = toFileUrlFromPath(normalizedPath);
+    if (!url) {
+      if (sourceButton) clearActiveSoundPreviewButton();
+      setStatus(`Unable to open ${statusLabel}.`, true);
+      return false;
+    }
+    const token = ++previewSoundPlayToken;
+    try {
+      stopPreviewSound(true);
+      if (sourceButton) {
+        activeSoundPreviewButton = sourceButton;
+        setPreviewButtonPlayingState(sourceButton, true);
+      }
       if (!previewSoundAudio || previewSoundUrl !== url) {
         previewSoundAudio = new Audio(url);
         previewSoundAudio.preload = 'auto';
         previewSoundUrl = url;
       }
+      previewSoundAudio.onended = () => {
+        clearActiveSoundPreviewButton();
+      };
+      previewSoundAudio.onpause = () => {
+        if (previewSoundAudio && previewSoundAudio.ended) return;
+        clearActiveSoundPreviewButton();
+      };
       previewSoundAudio.currentTime = 0;
       const promise = previewSoundAudio.play();
       if (promise && typeof promise.catch === 'function') {
-        promise.catch(() => {});
+        await promise.catch(() => {
+          throw new Error('Playback failed.');
+        });
       }
-    } catch (_err) {}
+      if (previewSoundPlayToken === token) setStatus(`Playing ${statusLabel}.`);
+      return true;
+    } catch (_err) {
+      clearActiveSoundPreviewButton();
+      setStatus(`Could not play ${statusLabel}.`, true);
+      return false;
+    }
+  };
+
+  const playPreviewSound = () => {
+    if (!ui.previewSoundOn || !activePlayableSoundPath) return;
+    void playResolvedSoundPath(activePlayableSoundPath, { statusLabel: `${activeAction || 'animation'} sound` });
   };
 
   const pickTypePath = async (row, isSound) => {
@@ -7346,6 +7617,22 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
       renderDirectionPad();
       renderPreview();
     }));
+  };
+
+  const playTypeSoundPreview = async (row, button) => {
+    const targetIniPath = String((model && model.iniPath) || getUnitIniTargetPath(entry.animationName) || '').trim();
+    const soundRel = String(row && row.soundPath || '').trim();
+    if (!soundRel) {
+      setStatus(`${row.key} has no sound configured.`, true);
+      return;
+    }
+    const resolvedPath = resolveUnitIniValuePath(targetIniPath, soundRel, getUnitIniTargetPath(entry.animationName));
+    const playablePath = await resolvePlayableUnitSoundPath(resolvedPath);
+    if (!playablePath) {
+      setStatus(`Could not resolve a playable sound for ${row.key}.`, true);
+      return;
+    }
+    await playResolvedSoundPath(playablePath, { statusLabel: `${row.key} sound`, sourceButton: button });
   };
 
   const loadActionPreview = async (actionKey) => {
@@ -7444,32 +7731,65 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
 
       const soundRow = document.createElement('div');
       soundRow.className = 'unit-type-path-row';
+      const soundGroup = document.createElement('div');
+      soundGroup.className = 'unit-type-control-group';
+      const soundLabel = document.createElement('span');
+      soundLabel.className = 'unit-type-control-label';
+      soundLabel.textContent = 'Sound';
+      soundGroup.appendChild(soundLabel);
       const soundChip = document.createElement('span');
       soundChip.className = 'key-display-chip unit-type-path-text';
       soundChip.textContent = row.soundPath || '(no sound)';
-      soundRow.appendChild(soundChip);
+      soundGroup.appendChild(soundChip);
+      const soundActions = document.createElement('div');
+      soundActions.className = 'unit-type-control-actions';
+      const soundPreview = document.createElement('button');
+      soundPreview.type = 'button';
+      soundPreview.className = 'ghost unit-ini-browse-btn';
+      soundPreview.innerHTML = '<span class="btn-icon">▶</span>Preview';
+      soundPreview.setAttribute('aria-label', 'Play this configured sound file. Does not modify files.');
+      attachRichTooltip(soundPreview, 'Action: Play this configured sound file\nEffect: Does not modify files');
+      soundPreview.disabled = !String(row.soundPath || '').trim();
+      soundPreview.addEventListener('click', () => { void playTypeSoundPreview(row, soundPreview); });
+      soundActions.appendChild(soundPreview);
       const soundBrowse = document.createElement('button');
       soundBrowse.type = 'button';
       soundBrowse.className = 'ghost unit-ini-browse-btn';
-      soundBrowse.innerHTML = '<span class="btn-icon">🔊</span>Sound';
+      soundBrowse.innerHTML = '<span class="btn-icon">🔊</span>Browse';
+      soundBrowse.setAttribute('aria-label', 'Choose the sound file referenced by this animation type.');
+      attachRichTooltip(soundBrowse, 'Action: Choose the sound file referenced by this animation type\nEffect: Updates only the INI reference, not files on disk');
       soundBrowse.disabled = !editable;
       soundBrowse.addEventListener('click', () => { void pickTypePath(row, true); });
-      soundRow.appendChild(soundBrowse);
+      soundActions.appendChild(soundBrowse);
+      soundGroup.appendChild(soundActions);
+      soundRow.appendChild(soundGroup);
       pathStack.appendChild(soundRow);
 
       const flcRow = document.createElement('div');
       flcRow.className = 'unit-type-path-row';
+      const flcGroup = document.createElement('div');
+      flcGroup.className = 'unit-type-control-group';
+      const flcLabel = document.createElement('span');
+      flcLabel.className = 'unit-type-control-label';
+      flcLabel.textContent = 'FLC';
+      flcGroup.appendChild(flcLabel);
       const flcChip = document.createElement('span');
       flcChip.className = 'key-display-chip unit-type-path-text';
       flcChip.textContent = row.relativePath || '(no FLC)';
-      flcRow.appendChild(flcChip);
+      flcGroup.appendChild(flcChip);
+      const flcActions = document.createElement('div');
+      flcActions.className = 'unit-type-control-actions';
       const flcBrowse = document.createElement('button');
       flcBrowse.type = 'button';
       flcBrowse.className = 'ghost unit-ini-browse-btn';
-      flcBrowse.innerHTML = '<span class="btn-icon">🎞</span>FLC';
+      flcBrowse.innerHTML = '<span class="btn-icon">🎞</span>Browse';
+      flcBrowse.setAttribute('aria-label', 'Choose the FLC file referenced by this animation type.');
+      attachRichTooltip(flcBrowse, 'Action: Choose the FLC file referenced by this animation type\nEffect: Updates only the INI reference, not files on disk');
       flcBrowse.disabled = !editable;
       flcBrowse.addEventListener('click', () => { void pickTypePath(row, false); });
-      flcRow.appendChild(flcBrowse);
+      flcActions.appendChild(flcBrowse);
+      flcGroup.appendChild(flcActions);
+      flcRow.appendChild(flcGroup);
       pathStack.appendChild(flcRow);
 
       entryRow.appendChild(pathStack);
@@ -7478,7 +7798,9 @@ function renderUnitAnimationPanel(tabKey, entry, host, editable) {
         const delBtn = document.createElement('button');
         delBtn.type = 'button';
         delBtn.className = 'ghost unit-ini-delete-btn';
-        delBtn.innerHTML = '<span class="btn-icon">🗑</span>Delete';
+        delBtn.innerHTML = '<span class="btn-icon">🗑</span>Remove Type';
+        delBtn.setAttribute('aria-label', 'Remove this animation type entry from the unit INI. Does not delete any files from disk.');
+        attachRichTooltip(delBtn, 'Action: Remove this animation type entry from the unit INI\nEffect: Does not delete any files from disk');
         delBtn.addEventListener('click', () => {
           withUndo(() => {
             activeModel.typeRows = activeModel.typeRows.filter((candidate) => candidate !== row);
@@ -8088,6 +8410,11 @@ function getPendingImportedUnitIconMeta(entry) {
     : null;
 }
 
+function hasPendingImportedUnitIconWarning(entry) {
+  const pending = getPendingImportedUnitIconMeta(entry);
+  return !!(pending && pending.requiresManualAssignment);
+}
+
 function getUnitIconValidationIndex(entry) {
   const pending = getPendingImportedUnitIconMeta(entry);
   if (pending && Number.isFinite(Number(pending.plannedIndex))) {
@@ -8099,13 +8426,7 @@ function getUnitIconValidationIndex(entry) {
 
 function getUnitIconPreviewDescriptor(entry) {
   const pending = getPendingImportedUnitIconMeta(entry);
-  if (pending && pending.requiresAtlasSplice && Number.isFinite(Number(pending.sourceIconIndex)) && pending.sourceScenarioPath) {
-    return {
-      iconIndex: Number(pending.sourceIconIndex),
-      scenarioPath: String(pending.sourceScenarioPath || ''),
-      scenarioPaths: Array.isArray(pending.sourceScenarioPaths) ? pending.sourceScenarioPaths : []
-    };
-  }
+  if (pending && pending.requiresManualAssignment) return null;
   return {
     iconIndex: getUnitIconValidationIndex(entry),
     scenarioPath: String(state.settings && state.settings.scenarioPath || ''),
@@ -8115,41 +8436,27 @@ function getUnitIconPreviewDescriptor(entry) {
 
 function refreshPendingImportedUnitIconAssignments(tab) {
   const unitsTab = tab || (state.bundle && state.bundle.tabs && state.bundle.tabs.units);
-  if (!unitsTab || !Array.isArray(unitsTab.entries) || !units32AtlasMetricsCache) return;
-  const { cols, rows } = units32AtlasMetricsCache;
-  let maxUsedIndex = -1;
-  unitsTab.entries.forEach((entry) => {
-    const pending = getPendingImportedUnitIconMeta(entry);
-    const idx = pending && Number.isFinite(Number(pending.plannedIndex))
-      ? Number(pending.plannedIndex)
-      : parseIntLoose(getBiqFieldByBaseKey(entry, 'iconindex')?.value, NaN);
-    if (!Number.isFinite(idx) || idx < 0) return;
-    if (Math.floor(idx / cols) < rows && idx > maxUsedIndex) maxUsedIndex = idx;
-  });
-  let nextIconIdx = maxUsedIndex + 1;
+  if (!unitsTab || !Array.isArray(unitsTab.entries)) return;
   unitsTab.entries.forEach((entry) => {
     const pending = getPendingImportedUnitIconMeta(entry);
     if (!pending) return;
     const iconField = getBiqFieldByBaseKey(entry, 'iconindex');
-    const sourceIconIndex = Number(pending.sourceIconIndex);
-    if (!iconField || !Number.isFinite(sourceIconIndex) || sourceIconIndex < 0) return;
-    if (Math.floor(sourceIconIndex / cols) < rows) {
-      pending.requiresAtlasSplice = false;
-      pending.plannedIndex = sourceIconIndex;
-    } else {
-      pending.requiresAtlasSplice = true;
-      pending.plannedIndex = nextIconIdx;
-      nextIconIdx += 1;
-    }
+    if (!iconField) return;
+    pending.requiresManualAssignment = true;
+    pending.plannedIndex = 0;
     iconField.value = String(pending.plannedIndex);
   });
 }
 
 function collectUnitIconIssueKeys(tab) {
-  if (!units32AtlasMetricsCache || units32AtlasMetricsCacheKey !== getUnits32TargetAtlasCacheKey()) return new Set();
   const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
   const out = new Set();
   entries.forEach((entry) => {
+    if (hasPendingImportedUnitIconWarning(entry)) {
+      out.add(String(entry && entry.civilopediaKey || ''));
+      return;
+    }
+    if (!units32AtlasMetricsCache || units32AtlasMetricsCacheKey !== getUnits32TargetAtlasCacheKey()) return;
     const idx = getUnitIconValidationIndex(entry);
     if (!Number.isFinite(idx) || idx < 0) return;
     const row = Math.floor(idx / units32AtlasMetricsCache.cols);
@@ -13336,6 +13643,11 @@ function createUnitIconIndexPicker(currentValue, onSelect, entry = null) {
 
   const syncPreview = async () => {
     const previewDescriptor = getUnitIconPreviewDescriptor(entry);
+    if (!previewDescriptor) {
+      previewHost.innerHTML = '';
+      previewHost.textContent = '#';
+      return;
+    }
     const previewIndex = Number(previewDescriptor && previewDescriptor.iconIndex);
     const preview = await getUnits32AtlasPreview({
       scenarioPath: previewDescriptor && previewDescriptor.scenarioPath,
@@ -13802,7 +14114,7 @@ function createTechTreePanel({
     techTreeModal.title.textContent = `Tech Tree - ${node.entry.name}`;
   };
   const refreshUndoButton = () => {
-    if (undoBtn) undoBtn.disabled = !state.undoSnapshot;
+    if (undoBtn) undoBtn.disabled = !getLatestUndoSnapshot();
   };
   const reopenForCurrentSelection = () => {
     const currentTab = state.bundle && state.bundle.tabs && state.bundle.tabs[tabKey];
@@ -13823,7 +14135,7 @@ function createTechTreePanel({
     });
   };
   undoBtn.addEventListener('click', () => {
-    if (!state.undoSnapshot) return;
+    if (!getLatestUndoSnapshot()) return;
     undoOneStep();
     refreshUndoButton();
     reopenForCurrentSelection();
@@ -17533,17 +17845,13 @@ function renderReferenceTab(tab, tabKey) {
             sourceIconValue: String(sourceIconField && sourceIconField.value || ''),
             sourceIconIndex
           });
-          if (Number.isFinite(sourceIconIndex) && sourceIconIndex >= 0) {
-            newEntry._pendingImportedUnitIcon = {
-              sourceScenarioPath: result.importFilePath,
-              sourceScenarioPaths: Array.isArray(result.importedEntry && result.importedEntry._importScenarioPaths)
-                ? [...result.importedEntry._importScenarioPaths]
-                : [],
-              sourceIconIndex,
-              plannedIndex: sourceIconIndex,
-              requiresAtlasSplice: false
-            };
-          }
+          const newIconField = getBiqFieldByBaseKey(newEntry, 'iconindex');
+          if (newIconField) newIconField.value = '0';
+          newEntry._pendingImportedUnitIcon = {
+            sourceIconIndex: Number.isFinite(sourceIconIndex) && sourceIconIndex >= 0 ? sourceIconIndex : null,
+            plannedIndex: 0,
+            requiresManualAssignment: true
+          };
         }
         if (tabKey === 'civilizations' && Array.isArray(result.importDiplomacySlots) && Array.isArray(tab.diplomacySlots)) {
           const textIndexField = getBiqFieldByBaseKey(newEntry, 'diplomacytextindex');
@@ -17789,18 +18097,22 @@ function renderReferenceTab(tab, tabKey) {
     if (isReferenceEntryDirty(tabKey, entry)) {
       appendDirtyBadge(itemBtn, `${entry.name || entry.civilopediaKey} has unsaved edits`);
     }
-    if (tabKey === 'units' && units32AtlasMetricsCache && units32AtlasMetricsCacheKey === getUnits32TargetAtlasCacheKey()) {
+    if (tabKey === 'units') {
       const iconIdx = getUnitIconValidationIndex(entry);
-      if (Number.isFinite(iconIdx) && iconIdx >= 0) {
-        const row = Math.floor(iconIdx / units32AtlasMetricsCache.cols);
-        if (row >= units32AtlasMetricsCache.rows) {
-          itemBtn.classList.add('entry-item-has-issue');
-          const badge = document.createElement('span');
-          badge.className = 'entry-issue-badge unit-icon-issue-badge';
-          badge.textContent = '⚠';
-          badge.title = 'Icon index is out of range for the available units_32.pcx — this unit\'s icon will be missing at runtime.';
-          itemBtn.appendChild(badge);
-        }
+      const hasRuntimeRangeIssue = units32AtlasMetricsCache
+        && units32AtlasMetricsCacheKey === getUnits32TargetAtlasCacheKey()
+        && Number.isFinite(iconIdx)
+        && iconIdx >= 0
+        && Math.floor(iconIdx / units32AtlasMetricsCache.cols) >= units32AtlasMetricsCache.rows;
+      if (hasPendingImportedUnitIconWarning(entry) || hasRuntimeRangeIssue) {
+        itemBtn.classList.add('entry-item-has-issue');
+        const badge = document.createElement('span');
+        badge.className = 'entry-issue-badge unit-icon-issue-badge';
+        badge.textContent = '⚠';
+        badge.title = hasPendingImportedUnitIconWarning(entry)
+          ? 'Imported unit icon needs manual setup. Create/update Art/Units/units_32.pcx for this scenario, then choose the correct Icon Index.'
+          : 'Icon index is out of range for the available units_32.pcx — this unit\'s icon will be missing at runtime.';
+        itemBtn.appendChild(badge);
       }
     }
     if (thumb) {
@@ -17986,7 +18298,7 @@ function renderReferenceTab(tab, tabKey) {
     const showInlineReadonlyKey = REFERENCE_TOP_NAME_EDIT_TABS.has(tabKey);
     if (showInlineReadonlyKey) {
       const nameRow = document.createElement('div');
-      nameRow.className = 'identity-key-row';
+      nameRow.className = 'identity-key-row has-inline-history-nav';
       const nameLabel = document.createElement('label');
       nameLabel.className = 'field-meta identity-key-label';
       nameLabel.textContent = 'Name';
@@ -18053,6 +18365,7 @@ function renderReferenceTab(tab, tabKey) {
         inlineKeyChip = inlineKey;
         nameControl.appendChild(inlineKey);
       }
+      nameControl.appendChild(createInlineHistoryNav());
       nameRow.appendChild(nameLabel);
       nameRow.appendChild(nameControl);
       attachRichTooltip(nameRow, formatSourceInfo(entry.sourceMeta && entry.sourceMeta.biq, 'BIQ'));
@@ -18376,14 +18689,20 @@ function renderReferenceTab(tab, tabKey) {
               controlWrap.appendChild(picker);
               const iconWarnEl = document.createElement('div');
               iconWarnEl.className = 'unit-icon-field-warning hidden';
-              iconWarnEl.textContent = '⚠ Icon index is out of range for the available units_32.pcx — this unit\'s icon will be missing at runtime. Copy units_32.pcx from the source scenario into this scenario\'s Art/Units/ folder.';
               controlWrap.appendChild(iconWarnEl);
               ensureCurrentUnits32AtlasMetrics().then((metrics) => {
-                if (!metrics || !iconWarnEl.isConnected) return;
+                if (!iconWarnEl.isConnected) return;
                 refreshPendingImportedUnitIconAssignments();
+                if (hasPendingImportedUnitIconWarning(entry)) {
+                  iconWarnEl.textContent = 'Imported unit icon needs manual setup. Create or update this scenario\'s Art/Units/units_32.pcx, then choose the correct Icon Index.';
+                  iconWarnEl.classList.remove('hidden');
+                  return;
+                }
+                if (!metrics) return;
                 const idx = getUnitIconValidationIndex(entry);
                 if (!Number.isFinite(idx) || idx < 0) return;
                 if (Math.floor(idx / metrics.cols) >= metrics.rows) {
+                  iconWarnEl.textContent = 'Icon index is out of range for the available units_32.pcx — this unit\'s icon will be missing at runtime.';
                   iconWarnEl.classList.remove('hidden');
                 }
               }).catch(() => {});
@@ -18605,6 +18924,7 @@ function renderReferenceTab(tab, tabKey) {
   window.requestAnimationFrame(() => {
     listPane.scrollTop = savedListTop;
     detailPane.scrollTop = savedDetailTop;
+    updateInlineHistoryNavVisibility();
     window.requestAnimationFrame(() => {
       if (!listPane.isConnected) return;
       const activeBtn = listPane.querySelector('.entry-list-item.active');
@@ -18624,6 +18944,7 @@ function renderReferenceTab(tab, tabKey) {
         search.setSelectionRange(caret.start, caret.end);
       }
     }
+    updateInlineHistoryNavVisibility();
   });
   return wrap;
 }
@@ -25495,7 +25816,11 @@ function renderDistrictRepresentativePreviewCard(section, previewWrap, titleForF
     .filter(Boolean);
   const numBuildings = depImprovs.length;
 
-  const ERA_NAMES = ['Ancient', 'Middle Ages', 'Industrial', 'Modern'];
+  const erasSection = isScenarioMode() ? getBiqSectionByCode('ERAS') : null;
+  const dynamicEraNames = erasSection
+    ? (erasSection.records || []).map((r, i) => String(r && (r.name || r.eraName) || '').trim() || `Era ${i + 1}`)
+    : null;
+  const ERA_NAMES = dynamicEraNames || ['Ancient', 'Middle Ages', 'Industrial', 'Modern'];
   const CULTURE_NAMES = ['American', 'European', 'Roman', 'Mideast', 'Asian'];
 
   const sel = { eraIndex: 0, cultureIndex: 0, buildingCol: 0 };
@@ -27378,7 +27703,9 @@ async function loadBundleAndRender(options = {}) {
     const preserveDirtyState = options && options.preserveDirtyState
       ? {
           cleanSnapshot: String(options.preserveDirtyState.cleanSnapshot || 'null'),
-          undoSnapshot: options.preserveDirtyState.undoSnapshot ? String(options.preserveDirtyState.undoSnapshot) : null
+          undoHistory: Array.isArray(options.preserveDirtyState.undoHistory)
+            ? options.preserveDirtyState.undoHistory.map((entry) => String(entry || 'null'))
+            : []
         }
       : null;
     const bundle = await window.c3xManager.loadBundle({
@@ -27416,7 +27743,7 @@ async function loadBundleAndRender(options = {}) {
     state.filesReadEntriesCache = null;
     state.filesReadEntriesCacheDirty = true;
     state.isDirty = false;
-    state.undoSnapshot = null;
+    state.undoHistory = [];
     clearDirtyTabCounts();
     refreshDirtyUi();
     state.activeTab = bundle.tabs[previousActiveTab]
@@ -27478,7 +27805,7 @@ async function loadBundleAndRender(options = {}) {
       if (preserveDirtyState) {
         state.cleanSnapshot = preserveDirtyState.cleanSnapshot;
         state.cleanTabsCache = parseSnapshotTabs(preserveDirtyState.cleanSnapshot);
-        state.undoSnapshot = preserveDirtyState.undoSnapshot;
+        state.undoHistory = preserveDirtyState.undoHistory;
         clearDirtyTabCounts();
         state.isDirty = snapshotTabs() !== state.cleanSnapshot;
         if (state.isDirty) {
@@ -27491,7 +27818,7 @@ async function loadBundleAndRender(options = {}) {
       } else if (state.settings.mode === 'scenario' && scenarioSearchFolderOverride) {
         state.cleanSnapshot = cleanSnapshotForLoadedBundle;
         state.cleanTabsCache = parseSnapshotTabs(cleanSnapshotForLoadedBundle);
-        state.undoSnapshot = cleanSnapshotForLoadedBundle;
+        state.undoHistory = [cleanSnapshotForLoadedBundle];
         state.trackDirty = true;
       } else {
         captureCleanSnapshot();
@@ -28330,6 +28657,21 @@ function resolveUnsavedChangesModal(choice) {
   if (typeof resolver === 'function') resolver(choice || 'cancel');
 }
 
+function hideUndoAllModal() {
+  state.undoAllModal.open = false;
+  if (el.undoAllModalOverlay) {
+    el.undoAllModalOverlay.classList.add('hidden');
+    el.undoAllModalOverlay.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function resolveUndoAllModal(confirmed) {
+  const resolver = state.undoAllModal.resolve;
+  state.undoAllModal.resolve = null;
+  hideUndoAllModal();
+  if (typeof resolver === 'function') resolver(!!confirmed);
+}
+
 function promptUnsavedChanges(actionLabel) {
   if (!el.unsavedModalOverlay) return Promise.resolve('cancel');
   const label = String(actionLabel || 'continue');
@@ -28349,6 +28691,21 @@ function promptUnsavedChanges(actionLabel) {
   });
 }
 
+function promptUndoAllModal() {
+  if (!el.undoAllModalOverlay) return Promise.resolve(false);
+  state.undoAllModal.open = true;
+  el.undoAllModalOverlay.classList.remove('hidden');
+  el.undoAllModalOverlay.setAttribute('aria-hidden', 'false');
+  window.setTimeout(() => {
+    if (el.undoAllModalConfirm) {
+      el.undoAllModalConfirm.focus({ preventScroll: true });
+    }
+  }, 0);
+  return new Promise((resolve) => {
+    state.undoAllModal.resolve = resolve;
+  });
+}
+
 async function confirmResolveUnsavedChanges(actionLabel) {
   if (!state.isDirty) return true;
   const choice = await promptUnsavedChanges(actionLabel || 'continuing');
@@ -28362,57 +28719,91 @@ async function confirmResolveUnsavedChanges(actionLabel) {
   return false;
 }
 
+async function restoreEditableSnapshot(targetSnapshot, options = {}) {
+  if (!state.bundle) {
+    return false;
+  }
+  const restoredEditableTabs = parseSnapshotTabs(targetSnapshot);
+  const restoredSnapshot = String(targetSnapshot || 'null');
+  const nextUndoHistory = Array.isArray(options.undoHistory) ? options.undoHistory.slice() : [];
+  const restoredSearchFolder = getScenarioSearchFolderValueFromTabs(restoredEditableTabs);
+  if (state.settings && state.settings.mode === 'scenario' && state.settings.scenarioPath) {
+    state.previewCache.clear();
+    await loadBundleAndRender({
+      loadingText: options.loadingText || 'Restoring changes...',
+      scenarioSearchFolderOverride: restoredSearchFolder,
+      preserveDirtyState: {
+        cleanSnapshot: state.cleanSnapshot || 'null',
+        undoHistory: nextUndoHistory
+      },
+      usePersistedView: true
+    });
+  }
+  const currentTabs = state.bundle && state.bundle.tabs ? state.bundle.tabs : {};
+  const mergedTabs = Object.assign({}, currentTabs);
+  EDITABLE_TAB_KEYS.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(restoredEditableTabs, key)) {
+      mergedTabs[key] = restoredEditableTabs[key];
+    } else {
+      delete mergedTabs[key];
+    }
+  });
+  state.bundle.tabs = mergedTabs;
+  state.cleanTabsCache = parseSnapshotTabs(state.cleanSnapshot);
+  state.undoHistory = nextUndoHistory;
+  state.civilopediaEditorOpen = {};
+  state.civilopediaPreviewVisible = {};
+  state.isDirty = restoredSnapshot !== state.cleanSnapshot;
+  clearDirtyTabCounts();
+  if (state.isDirty) {
+    updateActiveDirtyCaches();
+  }
+  markFilesReadEntriesDirty();
+  recomputeFilesReadIssueCount();
+  refreshDirtyUi();
+  renderTabs();
+  renderActiveTab({ preserveTabScroll: true });
+  if (el.filesReadModalOverlay && !el.filesReadModalOverlay.classList.contains('hidden')) {
+    renderFilesReadModal();
+  }
+  if (options.statusMessage) {
+    setStatus(options.statusMessage);
+  }
+  return true;
+}
+
 async function undoOneStep() {
-  if (!state.bundle || !state.undoSnapshot) {
+  const undoSnapshot = getLatestUndoSnapshot();
+  if (!state.bundle || !undoSnapshot) {
     setStatus('No unsaved changes to undo.');
     return;
   }
   try {
-    const restoredEditableTabs = JSON.parse(state.undoSnapshot);
-    const restoredSnapshot = String(state.undoSnapshot || 'null');
-    const restoredSearchFolder = getScenarioSearchFolderValueFromTabs(restoredEditableTabs);
-    if (state.settings && state.settings.mode === 'scenario' && state.settings.scenarioPath) {
-      state.previewCache.clear();
-      await loadBundleAndRender({
-        loadingText: 'Restoring scenario...',
-        scenarioSearchFolderOverride: restoredSearchFolder,
-        preserveDirtyState: {
-          cleanSnapshot: restoredSnapshot,
-          undoSnapshot: null
-        },
-        usePersistedView: true
-      });
-    }
-    const currentTabs = state.bundle && state.bundle.tabs ? state.bundle.tabs : {};
-    const mergedTabs = Object.assign({}, currentTabs);
-    EDITABLE_TAB_KEYS.forEach((key) => {
-      if (Object.prototype.hasOwnProperty.call(restoredEditableTabs, key)) {
-        mergedTabs[key] = restoredEditableTabs[key];
-      } else {
-        delete mergedTabs[key];
-      }
+    await restoreEditableSnapshot(undoSnapshot, {
+      undoHistory: state.undoHistory.slice(0, -1),
+      loadingText: 'Restoring previous change...',
+      statusMessage: 'Undid the last change.'
     });
-    state.bundle.tabs = mergedTabs;
-    state.cleanSnapshot = restoredSnapshot;
-    state.cleanTabsCache = parseSnapshotTabs(restoredSnapshot);
-    state.undoSnapshot = null;
-    state.civilopediaEditorOpen = {};
-    state.civilopediaPreviewVisible = {};
-    // Undo restores the captured pre-edit snapshot (current single-step model),
-    // so we can mark clean directly and avoid expensive whole-bundle diffs.
-    state.isDirty = false;
-    clearDirtyTabCounts();
-    markFilesReadEntriesDirty();
-    recomputeFilesReadIssueCount();
-    refreshDirtyUi();
-    renderTabs();
-    renderActiveTab({ preserveTabScroll: true });
-    if (el.filesReadModalOverlay && !el.filesReadModalOverlay.classList.contains('hidden')) {
-      renderFilesReadModal();
-    }
-    setStatus('Undid unsaved changes.');
   } catch (err) {
     setStatus('Undo failed.', true);
+  }
+}
+
+async function undoAllChanges() {
+  if (!state.bundle || !state.isDirty) {
+    setStatus('No unsaved changes to undo.');
+    return;
+  }
+  const confirmed = await promptUndoAllModal();
+  if (!confirmed) return;
+  try {
+    await restoreEditableSnapshot(state.cleanSnapshot || 'null', {
+      undoHistory: [],
+      loadingText: 'Restoring clean state...',
+      statusMessage: 'Undid all unsaved changes.'
+    });
+  } catch (_err) {
+    setStatus('Undo all failed.', true);
   }
 }
 
@@ -28573,6 +28964,7 @@ async function init() {
       appendDebugLog(`[${entry.level}][${entry.category}] ${entry.msg}`);
     });
   }
+  window.addEventListener('resize', updateInlineHistoryNavVisibility);
 
   [el.c3xPath, el.civ3Path, el.scenarioPath].forEach((input) => {
     input.addEventListener('input', () => {
@@ -28609,8 +29001,14 @@ async function init() {
   }
 
   el.saveBtn.addEventListener('click', saveCurrentBundle);
+  if (el.saveAsBtn) {
+    el.saveAsBtn.addEventListener('click', saveCurrentScenarioAs);
+  }
   if (el.undoBtn) {
     el.undoBtn.addEventListener('click', undoOneStep);
+  }
+  if (el.undoAllBtn) {
+    el.undoAllBtn.addEventListener('click', undoAllChanges);
   }
   if (el.backBtn) {
     el.backBtn.addEventListener('click', navigateBack);
@@ -28770,6 +29168,23 @@ async function init() {
       }
     });
   }
+  if (el.undoAllModalConfirm) {
+    el.undoAllModalConfirm.addEventListener('click', () => {
+      resolveUndoAllModal(true);
+    });
+  }
+  if (el.undoAllModalCancel) {
+    el.undoAllModalCancel.addEventListener('click', () => {
+      resolveUndoAllModal(false);
+    });
+  }
+  if (el.undoAllModalOverlay) {
+    el.undoAllModalOverlay.addEventListener('click', (ev) => {
+      if (ev.target === el.undoAllModalOverlay) {
+        resolveUndoAllModal(false);
+      }
+    });
+  }
   if (el.scenarioSearchFolderModalConfirm) {
     el.scenarioSearchFolderModalConfirm.addEventListener('click', () => {
       resolveScenarioSearchFolderModal(true);
@@ -28826,6 +29241,12 @@ async function init() {
     }
     if (state.unsavedModal.open && ev.key === 'Escape') {
       resolveUnsavedChangesModal('cancel');
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+    if (state.undoAllModal.open && ev.key === 'Escape') {
+      resolveUndoAllModal(false);
       ev.preventDefault();
       ev.stopPropagation();
       return;

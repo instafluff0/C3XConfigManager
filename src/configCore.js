@@ -842,7 +842,7 @@ function enrichBridgeSections(sections) {
           else if (k === 'unitclass') {
             const unitClassMap = { '0': 'Land (0)', '1': 'Sea (1)', '2': 'Air (2)' };
             field.value = unitClassMap[v] || v;
-          } else if (k === 'requiressupport' || k === 'bombardeffects' || k === 'createscraters' || k === 'hitpointbonus' || k === 'zoneofcontrol') {
+          } else if (k === 'requiressupport' || k === 'bombardeffects' || k === 'createscraters' || k === 'zoneofcontrol') {
             field.value = toBoolStringFromInt(v);
           }
         } else if (code === 'BLDG') {
@@ -4841,34 +4841,9 @@ function resolveArtFileFromRoots(relPath, searchRoots) {
   return null;
 }
 
-// Build a 256-entry lookup table remapping palette indices from srcPalette to the
-// closest-color entry in dstPalette (by squared RGB distance).
-function buildPaletteRemap(srcPalette, dstPalette) {
-  const remap = new Uint8Array(256);
-  for (let si = 0; si < 256; si++) {
-    const sr = srcPalette[si * 3];
-    const sg = srcPalette[si * 3 + 1];
-    const sb = srcPalette[si * 3 + 2];
-    let bestIdx = 0;
-    let bestDist = Infinity;
-    for (let di = 0; di < 256; di++) {
-      const dr = dstPalette[di * 3] - sr;
-      const dg = dstPalette[di * 3 + 1] - sg;
-      const db = dstPalette[di * 3 + 2] - sb;
-      const dist = dr * dr + dg * dg + db * db;
-      if (dist < bestDist) { bestDist = dist; bestIdx = di; }
-    }
-    remap[si] = bestIdx;
-  }
-  return remap;
-}
-
-// For each PRTO import op whose iconIndex is out of range in the target scenario's
-// units_32.pcx, extract that sprite from the source atlas and splice it into the target
-// atlas at the next available index, updating the entry's biqFields iconindex value.
-// The modified atlas is pushed into plannedWrites so it is written atomically with the BIQ.
-// Must be called before collectBiqReferenceEdits so the mutated field value is picked up.
-function spliceImportedUnitIconsIntoAtlas({ tabs, targetContentRoot, civ3Path, plannedWrites, saveReport }) {
+// Imported units always start at icon index 0. The target scenario's units_32.pcx
+// is never rewritten automatically because atlas layout is mod-specific.
+function spliceImportedUnitIconsIntoAtlas({ tabs }) {
   const unitsTab = tabs && tabs.units;
   if (!unitsTab || !Array.isArray(unitsTab.recordOps) || !Array.isArray(unitsTab.entries)) return;
 
@@ -4878,72 +4853,9 @@ function spliceImportedUnitIconsIntoAtlas({ tabs, targetContentRoot, civ3Path, p
   );
   if (importOps.length === 0) return;
 
-  // Locate the target scenario's units_32.pcx, or fall back to the standard game atlas.
-  const atlasRelPath = path.join('Art', 'Units', 'units_32.pcx');
-  const targetAtlasPath = path.join(targetContentRoot, atlasRelPath);
-  let targetAtlasBuffer = null;
-  try { targetAtlasBuffer = fs.readFileSync(targetAtlasPath); } catch (_e) { /* not present yet */ }
-  if (!targetAtlasBuffer) {
-    const fallbacks = [
-      path.join(civ3Path, 'Conquests', 'Art', 'Units', 'units_32.pcx'),
-      path.join(civ3Path, 'Art', 'Units', 'units_32.pcx')
-    ];
-    for (const fp of fallbacks) {
-      try { targetAtlasBuffer = fs.readFileSync(fp); break; } catch (_e) { /* try next */ }
-    }
-  }
-  if (!targetAtlasBuffer) return;
-
-  let targetAtlas;
-  try { targetAtlas = decodePcx(targetAtlasBuffer, { returnIndexed: true }); } catch (_e) { return; }
-
-  const gutter = 1;
-  const spriteSize = 32;
-  const stride = 33;
-
-  const atlasCols = Math.max(1, Math.floor((targetAtlas.width - gutter) / stride));
-  const atlasRows = Math.max(1, Math.floor((targetAtlas.height - gutter) / stride));
-
-  // Find the highest iconIndex currently in use within the target atlas bounds.
-  // New icons are placed at maxUsedIndex + 1, filling existing empty slots before
-  // extending the atlas with a new row.
-  let maxUsedIndex = -1;
-  for (const entry of unitsTab.entries) {
-    if (!Array.isArray(entry.biqFields)) continue;
-    const f = entry.biqFields.find((f) => String(f && (f.baseKey || f.key) || '').toLowerCase() === 'iconindex');
-    const idx = f ? parseInt(f.value, 10) : NaN;
-    if (!Number.isFinite(idx) || idx < 0) continue;
-    if (Math.floor(idx / atlasCols) < atlasRows && idx > maxUsedIndex) maxUsedIndex = idx;
-  }
-
-  let atlasIndices = new Uint8Array(targetAtlas.indices);
-  const atlasPalette = targetAtlas.palette;
-  const atlasWidth = targetAtlas.width;
-  let atlasHeight = targetAtlas.height;
-  let currentRows = atlasRows;
-  let nextIconIdx = maxUsedIndex + 1;
-  let atlasDirty = false;
-
-  // Mirror the source-roots resolution used by collectImportArtCopies.
-  const sourceRootsCache = new Map();
-  const getSourceRoots = (sourceBiqPath) => {
-    if (sourceRootsCache.has(sourceBiqPath)) return sourceRootsCache.get(sourceBiqPath);
-    let roots = [];
-    try {
-      const sourceBiqTab = loadBiqTab({ mode: 'scenario', civ3Path, scenarioPath: sourceBiqPath });
-      const ctx = deriveScenarioPathContext({ scenarioPath: sourceBiqPath, civ3Path, biqTab: sourceBiqTab });
-      roots = dedupePathList([ctx.biqRoot, ...ctx.searchRoots, civ3Path].filter(Boolean));
-    } catch (_err) {
-      roots = dedupePathList([path.dirname(sourceBiqPath), civ3Path].filter(Boolean));
-    }
-    sourceRootsCache.set(sourceBiqPath, roots);
-    return roots;
-  };
-
   for (const op of importOps) {
     const newRef = String(op.newRecordRef || '').trim().toUpperCase();
-    const sourceBiqPath = String(op.importArtFrom || '').trim();
-    if (!newRef || !sourceBiqPath) continue;
+    if (!newRef) continue;
 
     const entry = unitsTab.entries.find(
       (e) => String(e && e.civilopediaKey || '').toUpperCase() === newRef
@@ -4954,87 +4866,7 @@ function spliceImportedUnitIconsIntoAtlas({ tabs, targetContentRoot, civ3Path, p
       (f) => String(f && (f.baseKey || f.key) || '').toLowerCase() === 'iconindex'
     );
     if (!iconField) continue;
-
-    const pendingImportIcon = entry._pendingImportedUnitIcon && typeof entry._pendingImportedUnitIcon === 'object'
-      ? entry._pendingImportedUnitIcon
-      : null;
-    const sourceIconIdx = pendingImportIcon && Number.isFinite(Number(pendingImportIcon.sourceIconIndex))
-      ? Number(pendingImportIcon.sourceIconIndex)
-      : parseInt(iconField.value, 10);
-    if (!Number.isFinite(sourceIconIdx) || sourceIconIdx < 0) continue;
-
-    const requiresAtlasSplice = pendingImportIcon
-      ? pendingImportIcon.requiresAtlasSplice !== false
-      : Math.floor(sourceIconIdx / atlasCols) >= currentRows;
-    if (!requiresAtlasSplice) continue;
-
-    // Find the source atlas via the source scenario's full search roots.
-    const sourceAtlasPath = resolveArtFileFromRoots(atlasRelPath, getSourceRoots(sourceBiqPath));
-    if (!sourceAtlasPath) continue;
-
-    let sourceAtlas;
-    try {
-      sourceAtlas = decodePcx(fs.readFileSync(sourceAtlasPath), { returnIndexed: true });
-    } catch (_e) { continue; }
-
-    const srcCols = Math.max(1, Math.floor((sourceAtlas.width - gutter) / stride));
-    const srcRows = Math.max(1, Math.floor((sourceAtlas.height - gutter) / stride));
-    const srcIconRow = Math.floor(sourceIconIdx / srcCols);
-    const srcIconCol = sourceIconIdx % srcCols;
-    if (srcIconRow >= srcRows) continue; // icon out of range in source too
-
-    // Extract the 32×32 sprite from the source atlas.
-    const sprite = new Uint8Array(spriteSize * spriteSize);
-    const srcX0 = gutter + srcIconCol * stride;
-    const srcY0 = gutter + srcIconRow * stride;
-    for (let sy = 0; sy < spriteSize; sy++) {
-      for (let sx = 0; sx < spriteSize; sx++) {
-        sprite[sy * spriteSize + sx] = sourceAtlas.indices[(srcY0 + sy) * sourceAtlas.width + (srcX0 + sx)];
-      }
-    }
-
-    // Remap sprite palette indices to match the target atlas palette.
-    const remap = buildPaletteRemap(sourceAtlas.palette, atlasPalette);
-    for (let i = 0; i < sprite.length; i++) sprite[i] = remap[sprite[i]];
-
-    // Place sprite at the next available index, extending the atlas by one row if needed.
-    const newIconCol = nextIconIdx % atlasCols;
-    const newIconRow = Math.floor(nextIconIdx / atlasCols);
-    if (newIconRow >= currentRows) {
-      const newHeight = atlasHeight + stride;
-      const newIndices = new Uint8Array(atlasWidth * newHeight);
-      newIndices.set(atlasIndices, 0);
-      atlasIndices = newIndices;
-      atlasHeight = newHeight;
-      currentRows += 1;
-    }
-
-    const dstX0 = gutter + newIconCol * stride;
-    const dstY0 = gutter + newIconRow * stride;
-    for (let sy = 0; sy < spriteSize; sy++) {
-      for (let sx = 0; sx < spriteSize; sx++) {
-        atlasIndices[(dstY0 + sy) * atlasWidth + (dstX0 + sx)] = sprite[sy * spriteSize + sx];
-      }
-    }
-
-    atlasDirty = true;
-    iconField.value = String(nextIconIdx);
-    nextIconIdx += 1;
-  }
-
-  if (!atlasDirty) return;
-
-  let newPcxBuffer;
-  try {
-    newPcxBuffer = encodePcx(atlasIndices, atlasPalette, atlasWidth, atlasHeight);
-  } catch (_e) { return; }
-
-  const existing = plannedWrites.findIndex((w) => w.path === targetAtlasPath);
-  if (existing >= 0) {
-    plannedWrites[existing].data = newPcxBuffer;
-  } else {
-    plannedWrites.push({ kind: 'art', path: targetAtlasPath, data: newPcxBuffer });
-    saveReport.push({ kind: 'art', path: targetAtlasPath });
+    iconField.value = '0';
   }
 }
 
@@ -5257,14 +5089,9 @@ function buildSavePlan(payload) {
     const protectErr = failIfProtected(scenarioPath, 'scenario BIQ target');
     if (protectErr) return { ok: false, error: protectErr };
 
-    // Splice imported unit icons into the target units_32.pcx before collecting BIQ edits,
-    // so the updated iconindex field values are picked up by collectBiqReferenceEdits below.
+    // Imported units always start at icon index 0; units_32.pcx edits stay manual.
     spliceImportedUnitIconsIntoAtlas({
-      tabs: payload.tabs || {},
-      targetContentRoot: scenarioContext.contentWriteRoot || scenarioDir,
-      civ3Path,
-      plannedWrites,
-      saveReport
+      tabs: payload.tabs || {}
     });
 
     const biqRecordOps = resolveExternalImportedPrtoRecordOps(

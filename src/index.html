@@ -44,7 +44,9 @@
         <button id="back-btn" class="ghost nav-btn" type="button" aria-label="Back" title="Back">←</button>
         <button id="forward-btn" class="ghost nav-btn" type="button" aria-label="Forward" title="Forward">→</button>
         <button id="save-btn" class="secondary"><span class="btn-icon">💾</span>Save</button>
-        <button id="undo-btn" class="ghost"><span class="btn-icon">↶</span>Undo Changes</button>
+        <button id="save-as-btn" class="ghost" type="button"><span class="btn-icon">📁</span>Save As</button>
+        <button id="undo-btn" class="ghost" type="button"><span class="btn-icon">↶</span>Undo</button>
+        <button id="undo-all-btn" class="ghost" type="button"><span class="btn-icon">↺</span>Undo All</button>
       </div>
 
       <div class="path-grid-wrap" id="paths-body">
@@ -200,6 +202,22 @@
       </div>
     </div>
 
+    <div id="undo-all-modal-overlay" class="confirm-modal-overlay hidden" aria-hidden="true">
+      <div class="confirm-modal undo-all-modal" role="dialog" aria-modal="true" aria-labelledby="undo-all-modal-title" aria-describedby="undo-all-modal-body">
+        <div class="undo-all-modal-hero">
+          <div class="undo-all-modal-icon" aria-hidden="true">↺</div>
+          <div class="undo-all-modal-head">
+            <h3 id="undo-all-modal-title">Undo All Unsaved Changes</h3>
+            <p id="undo-all-modal-body">Are you sure you want to undo all of your unsaved changes? This will remove your unsaved changes and return everything to the last saved or loaded state.</p>
+          </div>
+        </div>
+        <div class="confirm-modal-actions">
+          <button id="undo-all-modal-cancel" class="ghost" type="button"><span class="btn-icon">✕</span>Keep Editing</button>
+          <button id="undo-all-modal-confirm" class="danger" type="button"><span class="btn-icon">↺</span>Undo All</button>
+        </div>
+      </div>
+    </div>
+
     <div id="scenario-search-folder-modal-overlay" class="confirm-modal-overlay hidden" aria-hidden="true">
       <div class="confirm-modal scenario-search-folder-modal" role="dialog" aria-modal="true" aria-labelledby="scenario-search-folder-modal-title" aria-describedby="scenario-search-folder-modal-body">
         <div class="scenario-search-folder-modal-hero">
@@ -244,14 +262,14 @@
       </div>
     </div>
 
-    <button id="about-btn" class="app-version app-version-btn" type="button" aria-label="About this app">BETA R26.1</button>
+    <div class="app-version">BETA R26.2</div>
 
     <div id="about-modal-overlay" class="confirm-modal-overlay hidden" aria-hidden="true">
       <div class="confirm-modal about-modal" role="dialog" aria-modal="true" aria-labelledby="about-modal-title">
         <h3 id="about-modal-title">Civ 3 | C3X Modern Configuration Manager</h3>
-        <p class="about-version">BETA R26.1</p>
+        <p class="about-version">BETA R26.2</p>
         <p class="about-desc">A modern editor for Civilization III Conquests and C3X global and scenario settings.</p>
-        <p class="about-colophon">Developed by <a href="https://forums.civfanatics.com/members/instafluff.349796/" target="_blank" rel="noopener noreferrer">@instafluff</a> and AI, with AI writing most code tests, and Instafluff reviewing code, guiding feature development, UI design, and core logic. This app is a compendium and knowledge base built from decades of accumulated knowledge and hard work by the Civ 3 CivFanatics community, and would not be possible had they not graciously open-sourced code and shared with the community.</p>
+        <p class="about-colophon">Developed by <a href="https://forums.civfanatics.com/members/instafluff.349796/" target="_blank" rel="noopener noreferrer">@instafluff</a> and AI, with AI writing most code and tests, and Instafluff reviewing code, guiding feature development, UI design, and core logic. This app is essentially a compendium built from decades of accumulated knowledge and hard work by the Civ 3 CivFanatics community, and would not be possible had they not graciously open-sourced code and shared with the community.</p>
         <h4 class="about-thanks-heading">Special Thanks</h4>
         <ul class="about-thanks-list">
           <li>
@@ -288,7 +306,7 @@
     <footer class="app-credit" aria-label="App credits">
       Made with <span class="app-credit-heart" aria-hidden="true">♥</span> by
       <a href="https://forums.civfanatics.com/members/instafluff.349796/" target="_blank" rel="noopener noreferrer">@instafluff</a>,
-      AI, and the CivFanatics Community
+      AI, and <button id="about-btn" class="app-credit-community-btn" type="button" aria-label="About this app">the CivFanatics Community</button>
     </footer>
 
     <script src="./civilopediaText.js"></script>

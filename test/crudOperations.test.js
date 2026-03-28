@@ -1020,6 +1020,22 @@ test('Import Unit from Tides: no baggage — no extra sections added', (t) => {
   }
 });
 
+test('Import Unit from Tides: icon index resets to 0 and does not rewrite units_32.pcx', (t) => {
+  const r = runTidesImport(t, 'units', 'PRTO', 'PRTO_', null);
+  if (!r) return;
+  assert.equal(r.saveResult.ok, true, String(r.saveResult.error || 'save failed'));
+
+  const reloaded = getEntry(r.after, 'units', r.newKey);
+  assert.ok(reloaded, 'expected reloaded unit entry');
+  assert.equal(fieldVal(reloaded, 'iconindex'), '0');
+
+  const units32Writes = (r.saveResult.saveReport || []).filter((item) =>
+    String(item && item.kind || '') === 'art' &&
+    /art[\\/]+units[\\/]+units_32\.pcx$/i.test(String(item && item.path || ''))
+  );
+  assert.equal(units32Writes.length, 0, 'unit import should not rewrite units_32.pcx');
+});
+
 test('Delete civ shifts unit Available To bitmasks', (t) => {
   const ctx = setupScenario(BASE_BIQ);
   if (!ctx) return t.skip(`Source BIQ not found: ${BASE_BIQ}`);
