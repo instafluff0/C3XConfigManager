@@ -23,6 +23,14 @@ function boolNumberString(value) {
   return value ? '1' : '0';
 }
 
+function parseBoolishIntString(raw, fallback = 0) {
+  const text = String(raw == null ? '' : raw).trim().toLowerCase();
+  if (!text) return fallback;
+  if (text === 'true' || text === 'yes' || text === 'on') return 1;
+  if (text === 'false' || text === 'no' || text === 'off') return 0;
+  return parseIntLoose(raw, fallback);
+}
+
 function isTruthy(raw) {
   const text = String(raw == null ? '' : raw).trim().toLowerCase();
   return text === '1' || text === 'true' || text === 'yes' || text === 'on';
@@ -63,7 +71,6 @@ const DIRECT_FIELD_SPECS = [
   { uiKey: 'questionmark5', rawKey: 'questionMark5', defaultValue: '1' },
   { uiKey: 'questionmark6', rawKey: 'questionMark6', defaultValue: '1' },
   { uiKey: 'questionmark8', rawKey: 'questionMark8', defaultValue: '0' },
-  { uiKey: 'unknown', rawKey: 'unknown', defaultValue: '0' },
   { uiKey: 'standardordersspecialactions', rawKey: 'standardOrdersSpecialActions', defaultValue: '0' },
   { uiKey: 'airmissions', rawKey: 'airMissions', defaultValue: '0' },
   { uiKey: 'ptwactionsmix', rawKey: 'PTWActionsMix', defaultValue: '0' },
@@ -260,7 +267,12 @@ function projectUnitBiqFields({ rawFields, civilopediaEntry }) {
 
   BOOL_INT_FIELDS.forEach((spec) => {
     const raw = readRawField(lookup, spec.rawKey, '0');
-    pushField(spec.uiKey, boolString(parseIntLoose(raw.value, 0) !== 0), boolString(parseIntLoose(raw.originalValue, 0) !== 0), raw.editable);
+    pushField(
+      spec.uiKey,
+      boolString(parseBoolishIntString(raw.value, 0) !== 0),
+      boolString(parseBoolishIntString(raw.originalValue, 0) !== 0),
+      raw.editable
+    );
   });
 
   const abilityBits = parseIntLoose(readRawField(lookup, 'unitAbilities', 0).value, 0);

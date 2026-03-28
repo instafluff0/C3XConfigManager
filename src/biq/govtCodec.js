@@ -64,10 +64,10 @@ function projectGovernmentBiqFields({ rawFields, civilopediaEntry, governmentNam
   pushFromRaw('freeunitspermetropolis', 'permetropolis');
   pushFromRaw('hurrying', 'hurrying');
   pushFromRaw('warweariness', 'warweariness');
-  pushFromRaw('questionmarkone', 'questionmarkone');
-  pushFromRaw('questionmarktwo', 'questionmarktwo');
-  pushFromRaw('questionmarkthree', 'questionmarkthree');
-  pushFromRaw('questionmarkfour', 'questionmarkfour');
+  pushFromRaw('questionmarkone', 'questionMark1');
+  pushFromRaw('questionmarktwo', 'qm2');
+  pushFromRaw('questionmarkthree', 'qm3');
+  pushFromRaw('questionmarkfour', 'qm4');
   pushFromRaw('rulertitlepairsused', 'rulertitlepairsused');
   pushFromRaw('malerulertitle1', 'maletitleera1');
   pushFromRaw('femalerulertitle1', 'femaletitleera1');

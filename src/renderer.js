@@ -3567,7 +3567,11 @@ function captureViewSnapshot() {
   return {
     activeTab,
     tabContentScrollTop: el.tabContent ? el.tabContent.scrollTop : state.tabContentScrollTop,
+    sectionListScrollTop: cloneStateMap(state.sectionListScrollTop),
+    sectionDetailScrollTop: cloneStateMap(state.sectionDetailScrollTop),
     sectionSelection: cloneStateMap(state.sectionSelection),
+    referenceListScrollTop: cloneStateMap(state.referenceListScrollTop),
+    referenceDetailScrollTop: cloneStateMap(state.referenceDetailScrollTop),
     referenceSelection: cloneStateMap(state.referenceSelection),
     referenceFilter: cloneStateMap(state.referenceFilter),
     referenceImprovementKind: cloneStateMap(state.referenceImprovementKind),
@@ -3701,7 +3705,11 @@ function applyViewSnapshot(snapshot) {
   const tabs = state.bundle.tabs;
   const fallbackTab = Object.keys(tabs)[0] || 'base';
   state.activeTab = tabs[snapshot.activeTab] ? snapshot.activeTab : fallbackTab;
+  state.sectionListScrollTop = Object.assign({}, state.sectionListScrollTop, cloneStateMap(snapshot.sectionListScrollTop));
+  state.sectionDetailScrollTop = Object.assign({}, state.sectionDetailScrollTop, cloneStateMap(snapshot.sectionDetailScrollTop));
   state.sectionSelection = Object.assign({}, state.sectionSelection, cloneStateMap(snapshot.sectionSelection));
+  state.referenceListScrollTop = cloneStateMap(snapshot.referenceListScrollTop);
+  state.referenceDetailScrollTop = cloneStateMap(snapshot.referenceDetailScrollTop);
   state.referenceSelection = cloneStateMap(snapshot.referenceSelection);
   state.referenceFilter = cloneStateMap(snapshot.referenceFilter);
   state.referenceImprovementKind = cloneStateMap(snapshot.referenceImprovementKind);
@@ -27751,7 +27759,11 @@ async function loadBundleAndRender(options = {}) {
       : (Object.keys(bundle.tabs)[0] || 'base');
     if (persistedView && bundle.tabs[persistedView.activeTab]) {
       state.activeTab = persistedView.activeTab;
+      state.sectionListScrollTop = Object.assign({}, state.sectionListScrollTop, cloneStateMap(persistedView.sectionListScrollTop));
+      state.sectionDetailScrollTop = Object.assign({}, state.sectionDetailScrollTop, cloneStateMap(persistedView.sectionDetailScrollTop));
       state.sectionSelection = Object.assign({}, state.sectionSelection, cloneStateMap(persistedView.sectionSelection));
+      state.referenceListScrollTop = cloneStateMap(persistedView.referenceListScrollTop);
+      state.referenceDetailScrollTop = cloneStateMap(persistedView.referenceDetailScrollTop);
       state.referenceSelection = cloneStateMap(persistedView.referenceSelection);
       state.referenceFilter = cloneStateMap(persistedView.referenceFilter);
       state.referenceImprovementKind = cloneStateMap(persistedView.referenceImprovementKind);

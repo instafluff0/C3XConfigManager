@@ -214,6 +214,88 @@ function getScenarioSettingsRecord(bundle) {
   return section && Array.isArray(section.records) ? section.records[0] : null;
 }
 
+function getFieldCollection(holder) {
+  if (holder && Array.isArray(holder.biqFields)) return holder.biqFields;
+  if (holder && Array.isArray(holder.fields)) return holder.fields;
+  return [];
+}
+
+function getNthFieldByBaseKey(holder, key, occurrence = 0) {
+  const target = String(key || '').trim().toLowerCase();
+  const matches = getFieldCollection(holder).filter((field) => {
+    return String(field && (field.baseKey || field.key) || '').trim().toLowerCase() === target;
+  });
+  return matches[occurrence] || null;
+}
+
+function computeGenericRoundtripMutation(field, occurrence = 0) {
+  const raw = String(field && field.value || '').trim();
+  const lower = raw.toLowerCase();
+  if (lower === 'true' || lower === 'false') {
+    const expected = lower === 'true' ? 'false' : 'true';
+    return { kind: 'boolText', assigned: expected, expected };
+  }
+
+  const parsed = parseDisplayedReferenceIndex(raw, NaN);
+  if (Number.isFinite(parsed) || /^none$/i.test(raw)) {
+    const hasLetters = /[A-Za-z]/.test(raw) || /^none$/i.test(raw);
+    if (hasLetters) {
+      const expected = parsed === 1 ? 2 : 1;
+      return { kind: 'numeric', assigned: String(expected), expected };
+    }
+    if (raw === '0' || raw === '1') {
+      const expected = raw === '0' ? 1 : 0;
+      return { kind: 'numeric', assigned: String(expected), expected };
+    }
+    const expected = Number.isFinite(parsed) ? parsed + 1 : 1;
+    return { kind: 'numeric', assigned: String(expected), expected };
+  }
+
+  const suffix = occurrence > 0 ? `_${occurrence + 1}` : '';
+  const expected = `${String(field && (field.baseKey || field.key) || 'FIELD').toUpperCase()}_ROUNDTRIP${suffix}`;
+  return { kind: 'string', assigned: expected, expected };
+}
+
+function mutateEditableFieldsForRoundtrip(holder, { exclude } = {}) {
+  const expectations = [];
+  const occurrenceByBaseKey = new Map();
+
+  getFieldCollection(holder).forEach((field) => {
+    if (!field || !field.editable) return;
+    const baseKey = String(field.baseKey || field.key || '').trim().toLowerCase();
+    if (!baseKey) return;
+    if (typeof exclude === 'function' && exclude(field, baseKey)) return;
+    const occurrence = occurrenceByBaseKey.get(baseKey) || 0;
+    occurrenceByBaseKey.set(baseKey, occurrence + 1);
+    const mutation = computeGenericRoundtripMutation(field, occurrence);
+    field.value = mutation.assigned;
+    expectations.push({
+      baseKey,
+      occurrence,
+      kind: mutation.kind,
+      expected: mutation.expected
+    });
+  });
+
+  return expectations;
+}
+
+function assertEditableFieldRoundtrip(holder, expectations, label) {
+  expectations.forEach(({ baseKey, occurrence, kind, expected }) => {
+    const field = getNthFieldByBaseKey(holder, baseKey, occurrence);
+    assert.ok(field, `expected ${label} field ${baseKey}[${occurrence}] after reload`);
+    if (kind === 'boolText') {
+      assert.equal(String(field.value || '').trim().toLowerCase(), expected, `expected ${label} field ${baseKey}[${occurrence}] to persist`);
+      return;
+    }
+    if (kind === 'string') {
+      assert.equal(String(field.value || ''), expected, `expected ${label} field ${baseKey}[${occurrence}] to persist`);
+      return;
+    }
+    assert.equal(parseDisplayedReferenceIndex(field.value, NaN), expected, `expected ${label} field ${baseKey}[${occurrence}] to persist`);
+  });
+}
+
 function parseDisplayIndex(value) {
   const text = String(value || '').trim();
   const match = text.match(/\((-?\d+)\)\s*$/) || text.match(/^-?\d+/);
@@ -669,6 +751,254 @@ test('BIQ round-trip supports add/copy/delete record ops for technology section'
   const afterDelete = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
   assert.equal(biqSectionHasCivilopediaKey(afterDelete, 'TECH', importedRef), false);
   assert.equal(biqSectionHasCivilopediaKey(afterDelete, 'TECH', copiedRef), false);
+});
+
+test('BIQ round-trip persists editable government fields from fixture BIQ', () => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'government-roundtrip.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const govEntry = ((bundle.tabs.governments && bundle.tabs.governments.entries) || []).find((entry) => {
+    const fields = Array.isArray(entry && entry.biqFields) ? entry.biqFields : [];
+    return fields.some((field) => field && field.editable);
+  });
+  assert.ok(govEntry, 'expected editable government entry');
+
+  const techEntries = ((bundle.tabs.technologies && bundle.tabs.technologies.entries) || []);
+  const exprSection = getSection(bundle.tabs.rules, 'EXPR');
+  const espnSection = getSection(bundle.tabs.rules, 'ESPN');
+  const exprCount = Array.isArray(exprSection && exprSection.records) ? exprSection.records.length : 0;
+  const espnCount = Array.isArray(espnSection && espnSection.records) ? espnSection.records.length : 0;
+  const expectedByField = new Map();
+  const boolFields = new Set(['defaulttype', 'transitiontype', 'requiresmaintenance', 'tilepenalty', 'commercebonus', 'xenophobic', 'forceresettlement']);
+  const textBoolFields = new Set(['requiresmaintenance', 'xenophobic', 'forceresettlement']);
+  const stringFields = new Set(['name', 'malerulertitle1', 'femalerulertitle1', 'malerulertitle2', 'femalerulertitle2', 'malerulertitle3', 'femalerulertitle3', 'malerulertitle4', 'femalerulertitle4']);
+
+  (govEntry.biqFields || []).forEach((field) => {
+    if (!field || !field.editable) return;
+    const baseKey = String(field.baseKey || field.key || '').toLowerCase();
+    if (!baseKey || baseKey === 'civilopediaentry' || /^performance_of_this_government_versus_government_\d+$/.test(baseKey)) return;
+
+    let nextValue = null;
+    let expectedKind = 'number';
+    if (boolFields.has(baseKey)) {
+      const normalized = String(field.value || '').trim().toLowerCase();
+      const isTrue = normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on' || normalized === 'enabled';
+      nextValue = isTrue ? 'false' : 'true';
+      expectedKind = textBoolFields.has(baseKey) ? 'boolText' : 'boolNumeric';
+    } else if (stringFields.has(baseKey)) {
+      nextValue = `${baseKey.toUpperCase()}_ROUNDTRIP`;
+      expectedKind = 'string';
+    } else if (baseKey === 'prerequisitetechnology') {
+      const tech = techEntries.find((entry) => Number.isFinite(entry && entry.biqIndex) && Number(entry.biqIndex) >= 0);
+      nextValue = tech ? String(tech.biqIndex) : '-1';
+    } else if (baseKey === 'immuneto') {
+      nextValue = espnCount > 0 ? String(Math.min(1, espnCount - 1)) : '-1';
+    } else if (baseKey === 'diplomatlevel' || baseKey === 'spylevel') {
+      nextValue = exprCount > 0 ? String(Math.min(1, exprCount - 1)) : '0';
+    } else {
+      const parsed = parseDisplayedReferenceIndex(field.value, NaN);
+      const current = Number.isFinite(parsed) ? parsed : 0;
+      nextValue = String(current + 1);
+    }
+
+    field.value = nextValue;
+    expectedByField.set(baseKey, { kind: expectedKind, value: nextValue });
+  });
+
+  assert.ok(expectedByField.size > 0, 'expected at least one editable government field mutation');
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedGov = getEntryByCivKey(reloaded.tabs.governments.entries, govEntry.civilopediaKey);
+  assert.ok(reloadedGov, 'expected reloaded government entry');
+
+  expectedByField.forEach((expected, baseKey) => {
+    const field = findField(reloadedGov, baseKey);
+    assert.ok(field, `expected reloaded government field ${baseKey}`);
+    if (expected.kind === 'boolText') {
+      assert.equal(String(field.value || '').trim().toLowerCase(), expected.value, `expected ${baseKey} boolean value to persist`);
+      return;
+    }
+    if (expected.kind === 'boolNumeric') {
+      assert.equal(parseDisplayedReferenceIndex(field.value, NaN), expected.value === 'true' ? 1 : 0, `expected ${baseKey} numeric boolean value to persist`);
+      return;
+    }
+    if (expected.kind === 'string') {
+      assert.equal(String(field.value || ''), expected.value, `expected ${baseKey} string value to persist`);
+      return;
+    }
+    assert.equal(parseDisplayedReferenceIndex(field.value, NaN), Number.parseInt(expected.value, 10), `expected ${baseKey} numeric value to persist`);
+  });
+});
+
+test('BIQ round-trip persists editable reference-tab fields across the other core BIQ tabs', () => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'reference-tabs-roundtrip.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const cases = [
+    {
+      tabKey: 'civilizations',
+      entry: (bundle.tabs.civilizations.entries || [])[0],
+      exclude: (_field, baseKey) => baseKey === 'civilopediaentry' || baseKey === 'uniquecivcounter'
+    },
+    {
+      tabKey: 'technologies',
+      entry: (bundle.tabs.technologies.entries || [])[0],
+      exclude: (_field, baseKey) => baseKey === 'civilopediaentry'
+    },
+    {
+      tabKey: 'resources',
+      entry: (bundle.tabs.resources.entries || [])[0],
+      exclude: (_field, baseKey) => baseKey === 'civilopediaentry'
+    },
+    {
+      tabKey: 'improvements',
+      entry: (bundle.tabs.improvements.entries || [])[0],
+      exclude: (_field, baseKey) => baseKey === 'civilopediaentry'
+    },
+    {
+      tabKey: 'units',
+      entry: (bundle.tabs.units.entries || [])[0],
+      exclude: (_field, baseKey) => (
+        baseKey === 'civilopediaentry'
+        || baseKey === 'numstealthtargets'
+        || baseKey === 'numlegalunittelepads'
+        || baseKey === 'numlegalbuildingtelepads'
+      )
+    }
+  ];
+
+  const expectedByTab = new Map();
+  cases.forEach(({ tabKey, entry, exclude }) => {
+    assert.ok(entry && entry.civilopediaKey, `expected ${tabKey} fixture entry`);
+    const expectations = mutateEditableFieldsForRoundtrip(entry, { exclude });
+    assert.ok(expectations.length > 0, `expected editable ${tabKey} fields to mutate`);
+    expectedByTab.set(tabKey, { civKey: entry.civilopediaKey, expectations });
+  });
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  expectedByTab.forEach(({ civKey, expectations }, tabKey) => {
+    const reloadedEntry = getEntryByCivKey(reloaded.tabs[tabKey].entries, civKey);
+    assert.ok(reloadedEntry, `expected reloaded ${tabKey} entry ${civKey}`);
+    assertEditableFieldRoundtrip(reloadedEntry, expectations, `${tabKey}:${civKey}`);
+  });
+});
+
+test('BIQ round-trip persists editable GAME, LEAD, RULE, TERR, and TFRM fields from fixture BIQ', () => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'structured-sections-roundtrip.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const cases = [
+    {
+      label: 'GAME',
+      getRecord: (loaded) => getScenarioSettingsRecord(loaded),
+      exclude: (_field, baseKey) => /^playable_civ(?:_\d+)?$/.test(baseKey) || baseKey === 'numberofplayablecivs' || baseKey === 'number_of_playable_civs'
+    },
+    {
+      label: 'LEAD',
+      getRecord: (loaded) => {
+        const section = getSection(loaded.tabs.players, 'LEAD');
+        return section && section.records ? section.records[0] : null;
+      }
+    },
+    {
+      label: 'RULE',
+      getRecord: (loaded) => {
+        const section = getSection(loaded.tabs.rules, 'RULE');
+        return section && section.records ? section.records[0] : null;
+      }
+    },
+    {
+      label: 'TERR',
+      getRecord: (loaded) => {
+        const section = getSection(loaded.tabs.terrain, 'TERR');
+        return section && section.records ? section.records[0] : null;
+      }
+    },
+    {
+      label: 'TFRM',
+      getRecord: (loaded) => {
+        const section = getSection(loaded.tabs.terrain, 'TFRM');
+        return section && section.records ? section.records[0] : null;
+      },
+      exclude: (_field, baseKey) => baseKey === 'civilopediaentry'
+    }
+  ];
+
+  const expectedByLabel = new Map();
+  cases.forEach(({ label, getRecord, exclude }) => {
+    const record = getRecord(bundle);
+    assert.ok(record, `expected ${label} fixture record`);
+    const expectations = mutateEditableFieldsForRoundtrip(record, { exclude });
+    assert.ok(expectations.length > 0, `expected editable ${label} fields to mutate`);
+    expectedByLabel.set(label, { expectations, getRecord });
+  });
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  expectedByLabel.forEach(({ expectations, getRecord }, label) => {
+    const record = getRecord(reloaded);
+    assert.ok(record, `expected reloaded ${label} record`);
+    assertEditableFieldRoundtrip(record, expectations, label);
+  });
 });
 
 test('BIQ matrix set test persists edits across core reference sections', (t) => {

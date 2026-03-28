@@ -318,6 +318,10 @@ function toEnglishGOVT(rec, io) {
     ['prerequisiteTechnology', String(rec.prerequisiteTechnology | 0)],
     ['scienceCap', String(rec.scienceCap | 0)],
     ['workerRate', String(rec.workerRate | 0)],
+    ['questionMark1', String(rec.questionMark1 | 0)],
+    ['qm2', String(rec.qm2 | 0)],
+    ['qm3', String(rec.qm3 | 0)],
+    ['qm4', String(rec.qm4 | 0)],
     ['freeUnits', String(rec.freeUnits | 0)],
     ['perTown', String(rec.perTown | 0)],
     ['perCity', String(rec.perCity | 0)],
@@ -509,6 +513,7 @@ function toEnglishRACE(rec, io) {
   }
   if (io.isConquests) {
     pairs.push(['flavors', String(rec.flavors | 0)]);
+    pairs.push(['questionMark', String(rec.questionMark | 0)]);
     pairs.push(['diplomacyTextIndex', String(rec.diplomacyTextIndex | 0)]);
     const sl = Array.isArray(rec.scientificLeaderNames) ? rec.scientificLeaderNames : [];
     pairs.push(['numScientificLeaders', String(sl.length)]);
@@ -517,7 +522,7 @@ function toEnglishRACE(rec, io) {
   return lines(pairs);
 }
 
-const WRITABLE_RACE = ['name', 'leader_title', 'adjective', 'civilization_name', 'noun', 'culture_group', 'leader_gender', 'civilization_gender', 'aggression_level', 'favorite_government', 'shunned_government', 'default_color', 'unique_color', 'unique_civ_counter', 'governor_settings', 'bonuses', 'build_never', 'build_often', 'plurality', 'free_tech1', 'free_tech2', 'free_tech3', 'free_tech4', 'king_unit'];
+const WRITABLE_RACE = ['name', 'leader_title', 'adjective', 'civilization_name', 'noun', 'culture_group', 'leader_gender', 'civilization_gender', 'aggression_level', 'favorite_government', 'shunned_government', 'default_color', 'unique_color', 'unique_civ_counter', 'governor_settings', 'bonuses', 'build_never', 'build_often', 'plurality', 'free_tech1', 'free_tech2', 'free_tech3', 'free_tech4', 'king_unit', 'flavors', 'question_mark', 'diplomacy_text_index'];
 
 // ---------------------------------------------------------------------------
 // PRTO (Unit Types)
@@ -565,12 +570,16 @@ function cloneIntList(values) {
 }
 
 function parseEditInt(value, fallback = NaN) {
-  let n = Number.parseInt(String(value), 10);
+  const raw = String(value).trim();
+  const lowered = raw.toLowerCase();
+  if (lowered === 'true' || lowered === 'yes' || lowered === 'on' || lowered === 'enabled') return 1;
+  if (lowered === 'false' || lowered === 'no' || lowered === 'off' || lowered === 'disabled') return 0;
+  let n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n)) {
-    const match = String(value).match(/\((-?\d+)\)$/);
+    const match = raw.match(/\((-?\d+)\)$/);
     if (match) n = Number.parseInt(match[1], 10);
   }
-  if (!Number.isFinite(n) && String(value).trim() === 'None') n = -1;
+  if (!Number.isFinite(n) && raw === 'None') n = -1;
   return Number.isFinite(n) ? n : fallback;
 }
 
