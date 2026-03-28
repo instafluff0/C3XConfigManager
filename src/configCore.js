@@ -4660,8 +4660,15 @@ function writeAtomicFileSync(targetPath, data, options = {}) {
 
     try {
       const fd = fs.openSync(tempPath, 'r');
-      fs.fsyncSync(fd);
-      fs.closeSync(fd);
+      try {
+        fs.fsyncSync(fd);
+      } finally {
+        try {
+          fs.closeSync(fd);
+        } catch (_closeErr) {
+          // best effort cleanup
+        }
+      }
     } catch (_err) {
       // best effort durability
     }
@@ -4671,8 +4678,15 @@ function writeAtomicFileSync(targetPath, data, options = {}) {
 
     try {
       const dfd = fs.openSync(dir, 'r');
-      fs.fsyncSync(dfd);
-      fs.closeSync(dfd);
+      try {
+        fs.fsyncSync(dfd);
+      } finally {
+        try {
+          fs.closeSync(dfd);
+        } catch (_closeErr) {
+          // best effort cleanup
+        }
+      }
     } catch (_err) {
       // best effort durability
     }

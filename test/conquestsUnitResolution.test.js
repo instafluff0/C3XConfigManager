@@ -175,10 +175,12 @@ function collectResolutionSnapshot(conquestsRoot) {
 }
 
 function normalizeTidesScenarioVariant(entry) {
-  return String(entry || '').replace(
+  return String(entry || '')
+    .replace(/\\/g, '/')
+    .replace(
     /^Scenarios\/TIDES OF CRIMSON 2\.93\//,
     'Scenarios/Tides of Crimson/'
-  );
+    );
 }
 
 function uniqueNormalizedEntries(values) {
