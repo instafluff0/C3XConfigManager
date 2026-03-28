@@ -64,6 +64,7 @@ const state = {
   biqRecordFilter: {},
   referenceSearchCaret: {},
   referenceSearchFocusedTab: null,
+  tabSearchRenderTimer: null,
   referenceNotice: null,
   biqSectionSelectionByTab: {},
   biqRecordSelection: {},
@@ -188,6 +189,8 @@ const state = {
     statusRisk: false
   }
 };
+
+const TAB_SEARCH_RENDER_DELAY_MS = 120;
 const mapCore = (typeof window !== 'undefined' && window.MapEditorCore) ? window.MapEditorCore : null;
 const mapGeneratorCore = (typeof window !== 'undefined' && window.MapGeneratorCore) ? window.MapGeneratorCore : null;
 const richTooltip = {
@@ -1557,6 +1560,21 @@ function scheduleFilesReadModalRender(delayMs = 0) {
     state.filesReadRenderTimer = null;
     renderFilesReadModal();
   }, Math.max(0, Number(delayMs) || 0));
+}
+
+function scheduleTabSearchRender(tabKey, renderFn, options = {}) {
+  const delayMs = Math.max(0, Number(options.delayMs) || 0);
+  const afterRender = typeof options.afterRender === 'function' ? options.afterRender : null;
+  if (state.tabSearchRenderTimer) {
+    window.clearTimeout(state.tabSearchRenderTimer);
+    state.tabSearchRenderTimer = null;
+  }
+  state.tabSearchRenderTimer = window.setTimeout(() => {
+    state.tabSearchRenderTimer = null;
+    if (state.activeTab !== tabKey) return;
+    if (typeof renderFn === 'function') renderFn();
+    if (afterRender) afterRender();
+  }, delayMs);
 }
 
 function shouldWarnForAccessIssue(entry, classification, access) {
@@ -18006,13 +18024,23 @@ function renderReferenceTab(tab, tabKey) {
   }
   wrap.appendChild(controls);
 
+  const bodyHost = document.createElement('div');
+  wrap.appendChild(bodyHost);
+
   if (tabKey === 'units' && (!units32AtlasMetricsCache || units32AtlasMetricsCacheKey !== getUnits32TargetAtlasCacheKey())) {
     ensureCurrentUnits32AtlasMetrics().then((metrics) => {
       if (!metrics) return;
       refreshPendingImportedUnitIconAssignments(tab);
-      renderActiveTab({ preserveTabScroll: true });
+      renderReferenceBody();
     }).catch(() => {});
   }
+
+  function renderReferenceBody() {
+    if (state.referenceSectionNavCleanup) {
+      try { state.referenceSectionNavCleanup(); } catch (_err) {}
+      state.referenceSectionNavCleanup = null;
+    }
+    bodyHost.innerHTML = '';
 
   const filteredEntries = allEntries
     .map((entry, baseIndex) => ({ entry, baseIndex }))
@@ -18160,31 +18188,6 @@ function renderReferenceTab(tab, tabKey) {
   detailPane.addEventListener('scroll', () => {
     state.referenceDetailScrollTop[tabKey] = detailPane.scrollTop;
   });
-
-  search.addEventListener('input', () => {
-    state.referenceFilter[tabKey] = search.value;
-    state.referenceListScrollTop[tabKey] = 0;
-    state.referenceSearchFocusedTab = tabKey;
-    state.referenceSearchCaret[tabKey] = {
-      start: search.selectionStart ?? search.value.length,
-      end: search.selectionEnd ?? search.value.length
-    };
-    renderActiveTab({ preserveTabScroll: true });
-  });
-  if (kindFilter) {
-    kindFilter.addEventListener('change', () => {
-      state.referenceImprovementKind[tabKey] = kindFilter.value;
-      state.referenceListScrollTop[tabKey] = 0;
-      renderActiveTab({ preserveTabScroll: true });
-    });
-  }
-  if (unitSortSelect) {
-    unitSortSelect.addEventListener('change', () => {
-      state.referenceUnitSort[tabKey] = unitSortSelect.value;
-      state.referenceListScrollTop[tabKey] = 0;
-      renderActiveTab({ preserveTabScroll: true });
-    });
-  }
 
   if (filteredEntries.length === 0) {
     const empty = document.createElement('div');
@@ -18892,7 +18895,7 @@ function renderReferenceTab(tab, tabKey) {
   }
 
   layout.appendChild(detailPane);
-  wrap.appendChild(layout);
+  bodyHost.appendChild(layout);
   const savedListTop = state.referenceListScrollTop[tabKey] || 0;
   const savedDetailTop = state.referenceDetailScrollTop[tabKey] || 0;
   window.requestAnimationFrame(() => {
@@ -18920,6 +18923,36 @@ function renderReferenceTab(tab, tabKey) {
     }
     updateInlineHistoryNavVisibility();
   });
+  }
+
+  search.addEventListener('input', () => {
+    state.referenceFilter[tabKey] = search.value;
+    state.referenceListScrollTop[tabKey] = 0;
+    state.referenceSearchFocusedTab = tabKey;
+    state.referenceSearchCaret[tabKey] = {
+      start: search.selectionStart ?? search.value.length,
+      end: search.selectionEnd ?? search.value.length
+    };
+    scheduleTabSearchRender(tabKey, renderReferenceBody, {
+      delayMs: TAB_SEARCH_RENDER_DELAY_MS
+    });
+  });
+  if (kindFilter) {
+    kindFilter.addEventListener('change', () => {
+      state.referenceImprovementKind[tabKey] = kindFilter.value;
+      state.referenceListScrollTop[tabKey] = 0;
+      renderReferenceBody();
+    });
+  }
+  if (unitSortSelect) {
+    unitSortSelect.addEventListener('change', () => {
+      state.referenceUnitSort[tabKey] = unitSortSelect.value;
+      state.referenceListScrollTop[tabKey] = 0;
+      renderReferenceBody();
+    });
+  }
+
+  renderReferenceBody();
   return wrap;
 }
 
@@ -27112,6 +27145,12 @@ function renderSectionTab(tab, tabKey) {
   listFilterRow.appendChild(listSearch);
   wrap.appendChild(listFilterRow);
 
+  const bodyHost = document.createElement('div');
+  wrap.appendChild(bodyHost);
+
+  function renderSectionBody() {
+    bodyHost.innerHTML = '';
+
   const selectedIndex = Math.max(0, Math.min(state.sectionSelection[tabKey] || 0, Math.max(0, tab.model.sections.length - 1)));
   state.sectionSelection[tabKey] = selectedIndex;
 
@@ -27254,17 +27293,6 @@ function renderSectionTab(tab, tabKey) {
       }, { preserveTabScroll: true });
     });
     listPane.appendChild(itemBtn);
-  });
-  listSearch.addEventListener('input', () => {
-    state.sectionFilter[tabKey] = listSearch.value;
-    state.sectionListScrollTop[tabKey] = 0;
-    renderActiveTab({ preserveTabScroll: true });
-    const newSearch = el.tabContent.querySelector('.app-search-input');
-    if (newSearch) {
-      newSearch.focus();
-      const len = newSearch.value.length;
-      newSearch.setSelectionRange(len, len);
-    }
   });
   layout.appendChild(listPane);
   requestAnimationFrame(() => hydrateVisibleSectionThumbs(28));
@@ -27513,12 +27541,22 @@ function renderSectionTab(tab, tabKey) {
   }
 
   layout.appendChild(detailPane);
-  wrap.appendChild(layout);
+  bodyHost.appendChild(layout);
   window.requestAnimationFrame(() => {
     listPane.scrollTop = savedListTop;
     detailPane.scrollTop = savedDetailTop;
   });
+  }
 
+  listSearch.addEventListener('input', () => {
+    state.sectionFilter[tabKey] = listSearch.value;
+    state.sectionListScrollTop[tabKey] = 0;
+    scheduleTabSearchRender(tabKey, renderSectionBody, {
+      delayMs: TAB_SEARCH_RENDER_DELAY_MS
+    });
+  });
+
+  renderSectionBody();
   syncSectionStickyOffsets(wrap, header);
   return wrap;
 }
@@ -27576,6 +27614,10 @@ function renderTabs() {
 }
 
 function renderActiveTab(options = {}) {
+  if (state.tabSearchRenderTimer) {
+    window.clearTimeout(state.tabSearchRenderTimer);
+    state.tabSearchRenderTimer = null;
+  }
   const preserveTabScroll = !!options.preserveTabScroll;
   const resetScrollToTop = !!options.resetScrollToTop;
   const targetTop = resetScrollToTop
