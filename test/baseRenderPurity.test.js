@@ -42,3 +42,26 @@ test('tech era dropdown uses BIQ era names when available', () => {
     'Tech reference resolver should prefer BIQ era labels before falling back'
   );
 });
+
+test('civilization playable toggle is read-only for barbarians', () => {
+  const rendererPath = path.join(__dirname, '..', 'src', 'renderer.js');
+  const text = fs.readFileSync(rendererPath, 'utf8');
+
+  assert.match(
+    text,
+    /function isBarbarianCivilizationEntry\(entry\)/,
+    'Renderer should expose a barbarian-civilization guard for the Civs playable toggle'
+  );
+
+  assert.match(
+    text,
+    /if \(isBarbarianCivilizationEntry\(entry\)\) return false;/,
+    'Playable state writes should refuse barbarian civilization entries'
+  );
+
+  assert.match(
+    text,
+    /const playableReadonly = !referenceEditable \|\| isBarbarianCivilizationEntry\(entry\);/,
+    'Playable checkbox should render read-only for barbarian civilization entries'
+  );
+});

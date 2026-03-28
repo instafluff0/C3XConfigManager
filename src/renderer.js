@@ -16328,9 +16328,17 @@ function isCivilizationPlayableEntry(entry) {
   return getPlayableCivilizationIdSet().has(civIdx);
 }
 
+function isBarbarianCivilizationEntry(entry) {
+  const civilopediaKey = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+  if (civilopediaKey === 'RACE_BARBARIANS') return true;
+  const civIdx = getPredictedReferenceRecordIndex('civilizations', entry);
+  return Number.isFinite(civIdx) && civIdx === 0;
+}
+
 function setCivilizationPlayableState(entry, nextPlayable) {
   const gameRecord = getScenarioGameRecord();
   if (!gameRecord) return false;
+  if (isBarbarianCivilizationEntry(entry)) return false;
   const civIdx = getPredictedReferenceRecordIndex('civilizations', entry);
   if (!Number.isFinite(civIdx) || civIdx < 0) return false;
   const selectedIds = getPlayableCivilizationIdSet();
@@ -18383,13 +18391,14 @@ function renderReferenceTab(tab, tabKey) {
       const toggle = document.createElement('label');
       toggle.className = 'bool-toggle bool-row-toggle';
       const check = document.createElement('input');
+      const playableReadonly = !referenceEditable || isBarbarianCivilizationEntry(entry);
       check.type = 'checkbox';
       check.checked = isCivilizationPlayableEntry(entry);
-      check.disabled = !referenceEditable;
+      check.disabled = playableReadonly;
       const checkText = document.createElement('span');
       checkText.textContent = check.checked ? 'Playable' : '';
       check.addEventListener('change', () => {
-        if (!referenceEditable) return;
+        if (playableReadonly) return;
         rememberUndoSnapshot();
         const changed = setCivilizationPlayableState(entry, check.checked);
         if (!changed) {
@@ -18404,7 +18413,12 @@ function renderReferenceTab(tab, tabKey) {
       playableControl.appendChild(toggle);
       playableRow.appendChild(playableLabel);
       playableRow.appendChild(playableControl);
-      attachRichTooltip(playableRow, 'Source: BIQ\nFile: Scenario Setup (GAME)\nField: playable_civ_*');
+      attachRichTooltip(
+        playableRow,
+        playableReadonly && isBarbarianCivilizationEntry(entry)
+          ? 'Source: BIQ\nFile: Scenario Setup (GAME)\nField: playable_civ_*\nBarbarians are always read-only here and can never be marked playable.'
+          : 'Source: BIQ\nFile: Scenario Setup (GAME)\nField: playable_civ_*'
+      );
       identityGrid.appendChild(playableRow);
     }
     const depsLine = document.createElement('div');

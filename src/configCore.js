@@ -2881,13 +2881,6 @@ function collectNonBarbarianRaceKeys(biqTab) {
   return filtered.size > 0 ? filtered : raceKeys;
 }
 
-function isBarbarianCivilizationSeed(entry) {
-  if (!entry) return false;
-  const civilopediaKey = String(entry.civilopediaKey || '').trim().toUpperCase();
-  const biqIndex = Number(entry.biqIndex);
-  return civilopediaKey === 'RACE_BARBARIANS' || (Number.isFinite(biqIndex) && biqIndex === 0);
-}
-
 function collectScenarioReferenceKeySets(biqTab) {
   return {
     civilizations: collectNonBarbarianRaceKeys(biqTab),
@@ -2902,7 +2895,7 @@ function collectScenarioReferenceKeySets(biqTab) {
 
 function collectStandardReferenceKeySets(biqTab) {
   return {
-    civilizations: collectNonBarbarianRaceKeys(biqTab),
+    civilizations: collectCivilopediaKeysBySection(biqTab, 'RACE', 'RACE_'),
     technologies: collectCivilopediaKeysBySection(biqTab, 'TECH', 'TECH_'),
     resources: collectCivilopediaKeysBySection(biqTab, 'GOOD', 'GOOD_'),
     improvements: collectCivilopediaKeysBySection(biqTab, 'BLDG', 'BLDG_'),
@@ -3330,18 +3323,12 @@ function buildReferenceTabs(civ3Path, options = {}) {
           biqIndex: Number.isFinite(idx) ? idx : null
         });
       });
-      if (tabSpec.key === 'civilizations') {
-        const filteredSeeds = entrySeeds.filter((entry) => !isBarbarianCivilizationSeed(entry));
-        entrySeeds.length = 0;
-        entrySeeds.push(...filteredSeeds);
-      }
       const allowedKeys = biqKeySets && biqKeySets[tabSpec.key] instanceof Set ? biqKeySets[tabSpec.key] : null;
       if (allowedKeys && allowedKeys.size > 0) {
         const seenExactKeys = new Set(entrySeeds.map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase()).filter(Boolean));
         const maybeAppendPediaSeed = (candidateKey) => {
           const civilopediaKey = String(candidateKey || '').toUpperCase();
           if (!civilopediaKey || seenExactKeys.has(civilopediaKey)) return;
-          if (tabSpec.key === 'civilizations' && civilopediaKey === 'RACE_BARBARIANS') return;
           if (!allowedKeys.has(civilopediaKey)) {
             if (!(tabSpec.key === 'units' && civilopediaKey.startsWith('PRTO_') && civilopediaKey.includes('_ERAS_') && allowedKeys.has(civilopediaKey.split('_ERAS_')[0]))) {
               return;
@@ -3395,11 +3382,6 @@ function buildReferenceTabs(civ3Path, options = {}) {
           }
         });
       entrySeeds.push(...Array.from(entriesByKey.values()));
-      if (tabSpec.key === 'civilizations') {
-        const filteredSeeds = entrySeeds.filter((entry) => !isBarbarianCivilizationSeed(entry));
-        entrySeeds.length = 0;
-        entrySeeds.push(...filteredSeeds);
-      }
     }
 
     let entries = entrySeeds

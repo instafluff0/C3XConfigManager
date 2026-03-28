@@ -76,8 +76,8 @@ test('base game loads without error', () => {
 
 // --- Counts -----------------------------------------------------------------
 
-test('base game civ count is exactly 31', () => {
-  assert.equal(getBase().tabs.civilizations.entries.length, 31);
+test('base game civ count is exactly 32', () => {
+  assert.equal(getBase().tabs.civilizations.entries.length, 32);
 });
 test('base game tech count is exactly 83', () => {
   assert.equal(getBase().tabs.technologies.entries.length, 83);
@@ -355,9 +355,9 @@ test('Sengoku scenario search path resolves to the Sengoku art/text directory', 
 
 // --- Counts -----------------------------------------------------------------
 
-test('Sengoku civ count is exactly 18', (t) => {
+test('Sengoku civ count is exactly 19', (t) => {
   if (!fs.existsSync(SENGOKU_BIQ)) t.skip();
-  assert.equal(getSeng().tabs.civilizations.entries.length, 18);
+  assert.equal(getSeng().tabs.civilizations.entries.length, 19);
 });
 test('Sengoku tech count is exactly 39', (t) => {
   if (!fs.existsSync(SENGOKU_BIQ)) t.skip();
@@ -610,9 +610,9 @@ test('Tides scenario search path resolves to the Tides of Crimson art/text direc
 
 // --- Counts -----------------------------------------------------------------
 
-test('Tides civ count is exactly 26', (t) => {
+test('Tides civ count is exactly 27', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
-  assert.equal(getTides().tabs.civilizations.entries.length, 26);
+  assert.equal(getTides().tabs.civilizations.entries.length, 27);
 });
 test('Tides tech count is exactly 207', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
@@ -942,11 +942,11 @@ test('base game: RACE_BARBARIANS is raw RACE record 0', () => {
     'Expected RACE_BARBARIANS at RACE record index 0');
 });
 
-test('base game: RACE_BARBARIANS does not appear in the civilizations tab', () => {
+test('base game: RACE_BARBARIANS appears in the civilizations tab', () => {
   const found = getBase().tabs.civilizations.entries.find(
     (e) => String(e.civilopediaKey || '').toUpperCase().includes('BARBAR')
   );
-  assert.equal(found, undefined, 'Barbarian entry must not appear in civilizations tab');
+  assert.ok(found, 'Barbarian entry should appear in civilizations tab');
 });
 
 test('Sengoku: RACE_BARBARIANS is raw RACE record 0', (t) => {
@@ -961,12 +961,12 @@ test('Sengoku: RACE_BARBARIANS is raw RACE record 0', (t) => {
     'Expected RACE_BARBARIANS at RACE record index 0');
 });
 
-test('Sengoku: RACE_BARBARIANS does not appear in the civilizations tab', (t) => {
+test('Sengoku: RACE_BARBARIANS appears in the civilizations tab', (t) => {
   if (!fs.existsSync(SENGOKU_BIQ)) t.skip();
   const found = getSeng().tabs.civilizations.entries.find(
     (e) => String(e.civilopediaKey || '').toUpperCase().includes('BARBAR')
   );
-  assert.equal(found, undefined, 'Barbarian entry must not appear in civilizations tab');
+  assert.ok(found, 'Barbarian entry should appear in civilizations tab');
 });
 
 test('Tides: RACE_BARBARIANS is raw RACE record 0', (t) => {
@@ -981,12 +981,12 @@ test('Tides: RACE_BARBARIANS is raw RACE record 0', (t) => {
     'Expected RACE_BARBARIANS at RACE record index 0');
 });
 
-test('Tides: RACE_BARBARIANS does not appear in the civilizations tab', (t) => {
+test('Tides: RACE_BARBARIANS appears in the civilizations tab', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
   const found = getTides().tabs.civilizations.entries.find(
     (e) => String(e.civilopediaKey || '').toUpperCase().includes('BARBAR')
   );
-  assert.equal(found, undefined, 'Barbarian entry must not appear in civilizations tab');
+  assert.ok(found, 'Barbarian entry should appear in civilizations tab');
 });
 
 test('base game contains NO Sengoku-specific techs', () => {
@@ -1025,11 +1025,11 @@ test('Mesoamerica: RACE_BARBARIANS is raw RACE record 0', (t) => {
     'Expected RACE_BARBARIANS at RACE record index 0');
 });
 
-test('Mesoamerica: RACE_BARBARIANS does not appear in the civilizations tab', (t) => {
+test('Mesoamerica: RACE_BARBARIANS appears in the civilizations tab', (t) => {
   if (!fs.existsSync(MESO_BIQ)) t.skip(`Scenario fixture not present: ${MESO_BIQ}`);
   const found = getMeso().tabs.civilizations.entries.find(
     (e) => String(e.civilopediaKey || '').toUpperCase().includes('BARBAR')
       || String(e.name || '').toLowerCase().includes('barbarian')
   );
-  assert.equal(found, undefined, 'Barbarian entry must not appear in civilizations tab');
+  assert.ok(found, 'Barbarian entry should appear in civilizations tab');
 });
