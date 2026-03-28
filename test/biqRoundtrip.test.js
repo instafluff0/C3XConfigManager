@@ -122,6 +122,19 @@ function getEntryByCivKey(entries, civKey) {
   return (Array.isArray(entries) ? entries : []).find((entry) => String(entry.civilopediaKey || '').trim().toUpperCase() === target) || null;
 }
 
+function getRawPrtoRecordsByCivKey(parsed, civKey) {
+  const target = String(civKey || '').trim().toUpperCase();
+  const prto = (parsed.sections || []).find((section) => String(section && section.code || '').toUpperCase() === 'PRTO');
+  const records = Array.isArray(prto && prto.records) ? prto.records : [];
+  return records.filter((record) => String(record && record.civilopediaEntry || '').trim().toUpperCase() === target);
+}
+
+function parseBiqFileForRawSections(filePath) {
+  const raw = fs.readFileSync(filePath);
+  const inflated = decompress(raw);
+  return parseAllSections(inflated.ok ? inflated.data : raw);
+}
+
 function parseDisplayedReferenceIndex(value, fallback = -1) {
   const text = String(value == null ? '' : value).trim();
   if (!text) return fallback;
@@ -850,6 +863,115 @@ test('BIQ round-trip persists editable government fields from fixture BIQ', () =
   });
 });
 
+test('BIQ round-trip persists unit AI strategy bit toggles from fixture BIQ', () => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'unit-ai-strategy-roundtrip.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const unitEntry = ((bundle.tabs.units && bundle.tabs.units.entries) || []).find((entry) => {
+    return findField(entry, 'explorestrategy') && findField(entry, 'explorestrategy').editable;
+  });
+  assert.ok(unitEntry, 'expected editable unit entry with explorestrategy');
+
+  const exploreField = findField(unitEntry, 'explorestrategy');
+  const originalValue = String(exploreField.value || '').trim().toLowerCase();
+  const expectedValue = originalValue === 'true' ? 'false' : 'true';
+  exploreField.value = expectedValue;
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedUnit = getEntryByCivKey(reloaded.tabs.units.entries, unitEntry.civilopediaKey);
+  assert.ok(reloadedUnit, `expected reloaded unit entry ${unitEntry.civilopediaKey}`);
+  assert.equal(
+    String((findField(reloadedUnit, 'explorestrategy') || {}).value || '').trim().toLowerCase(),
+    expectedValue,
+    'expected explorestrategy bit to persist'
+  );
+});
+
+test('BIQ round-trip follows Quint PRTO strategy-map handling for duplicate-strategy units', () => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'unit-ai-quint-roundtrip.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const unitKey = 'PRTO_CHASQUIS_SCOUT';
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const unitEntry = getEntryByCivKey(bundle.tabs.units.entries, unitKey);
+  assert.ok(unitEntry, `expected ${unitKey} unit entry`);
+  assert.equal(String(findField(unitEntry, 'offence')?.value || '').trim().toLowerCase(), 'true');
+  assert.equal(String(findField(unitEntry, 'explorestrategy')?.value || '').trim().toLowerCase(), 'true');
+
+  findField(unitEntry, 'explorestrategy').value = 'false';
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const reloadedUnit = getEntryByCivKey(reloaded.tabs.units.entries, unitKey);
+  assert.ok(reloadedUnit, `expected reloaded ${unitKey} unit entry`);
+  assert.equal(String(findField(reloadedUnit, 'offence')?.value || '').trim().toLowerCase(), 'true');
+  assert.equal(String(findField(reloadedUnit, 'explorestrategy')?.value || '').trim().toLowerCase(), 'false');
+
+  const parsed = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(parsed.ok, true, String(parsed.error || 'parse failed'));
+  const rawRecords = getRawPrtoRecordsByCivKey(parsed, unitKey);
+  assert.equal(rawRecords.length, 1, 'expected Quint-style output to collapse to one Firaxis PRTO record when one strategy remains');
+  assert.equal(Number(rawRecords[0].otherStrategy), -1);
+  assert.equal(Number(rawRecords[0].AIStrategy), 1);
+
+  findField(reloadedUnit, 'explorestrategy').value = 'true';
+  const secondSave = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: reloaded.tabs
+  });
+  assert.equal(secondSave.ok, true, String(secondSave.error || 'second save failed'));
+
+  const reparsed = parseBiqFileForRawSections(scenarioBiq);
+  assert.equal(reparsed.ok, true, String(reparsed.error || 'reparse failed'));
+  const reparsedRecords = getRawPrtoRecordsByCivKey(reparsed, unitKey);
+  assert.equal(reparsedRecords.length, 2, 'expected Quint-style output to emit one duplicate PRTO record per extra strategy');
+  assert.deepEqual(
+    reparsedRecords.map((record) => ({ other: Number(record.otherStrategy), ai: Number(record.AIStrategy) })),
+    [{ other: -1, ai: 1 }, { other: 12, ai: 8 }]
+  );
+});
+
 test('BIQ round-trip persists editable reference-tab fields across the other core BIQ tabs', () => {
   const sampleBiq = getStablePlayableCivsFixturePath();
   assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
@@ -998,6 +1120,62 @@ test('BIQ round-trip persists editable GAME, LEAD, RULE, TERR, and TFRM fields f
     const record = getRecord(reloaded);
     assert.ok(record, `expected reloaded ${label} record`);
     assertEditableFieldRoundtrip(record, expectations, label);
+  });
+});
+
+test('BIQ round-trip persists editable remaining structured BIQ section fields from fixture BIQ', () => {
+  const sampleBiq = getStablePlayableCivsFixturePath();
+  assert.ok(fs.existsSync(sampleBiq), `Fixture missing: ${sampleBiq}`);
+
+  const civ3Root = getStableFixtureCiv3Root();
+  const tmp = mkTmpDir();
+  const c3x = path.join(tmp, 'c3x');
+  fs.mkdirSync(c3x, { recursive: true });
+  ensureDefaultC3xFiles(c3x);
+
+  const scenarioBiq = path.join(tmp, 'remaining-structured-sections-roundtrip.biq');
+  fs.copyFileSync(sampleBiq, scenarioBiq);
+  fs.chmodSync(scenarioBiq, 0o644);
+
+  const bundle = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  const cases = [
+    { label: 'CTZN', getSection: (loaded) => getSection(loaded.tabs.rules, 'CTZN') },
+    { label: 'CULT', getSection: (loaded) => getSection(loaded.tabs.rules, 'CULT') },
+    { label: 'DIFF', getSection: (loaded) => getSection(loaded.tabs.rules, 'DIFF') },
+    { label: 'ERAS', getSection: (loaded) => getSection(loaded.tabs.world, 'ERAS') },
+    { label: 'ESPN', getSection: (loaded) => getSection(loaded.tabs.rules, 'ESPN') },
+    { label: 'EXPR', getSection: (loaded) => getSection(loaded.tabs.rules, 'EXPR') },
+    { label: 'FLAV', getSection: (loaded) => getSection(loaded.tabs.rules, 'FLAV') },
+    { label: 'WSIZ', getSection: (loaded) => getSection(loaded.tabs.world, 'WSIZ') },
+    { label: 'WCHR', getSection: (loaded) => getSection(loaded.tabs.world, 'WCHR') },
+    { label: 'WMAP', getSection: (loaded) => getSection(loaded.tabs.map, 'WMAP') }
+  ];
+
+  const expectedByLabel = new Map();
+  cases.forEach(({ label, getSection }) => {
+    const section = getSection(bundle);
+    assert.ok(section && Array.isArray(section.records) && section.records.length > 0, `expected ${label} fixture section`);
+    section.records.forEach((record, index) => {
+      const expectations = mutateEditableFieldsForRoundtrip(record);
+      assert.ok(expectations.length > 0, `expected editable ${label} record ${index} fields to mutate`);
+      expectedByLabel.set(`${label}:${index}`, { expectations, getSection, index });
+    });
+  });
+
+  const saveResult = saveBundle({
+    mode: 'scenario',
+    c3xPath: c3x,
+    civ3Path: civ3Root,
+    scenarioPath: scenarioBiq,
+    tabs: bundle.tabs
+  });
+  assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
+
+  const reloaded = loadBundle({ mode: 'scenario', c3xPath: c3x, civ3Path: civ3Root, scenarioPath: scenarioBiq });
+  expectedByLabel.forEach(({ expectations, getSection, index }, label) => {
+    const section = getSection(reloaded);
+    assert.ok(section && Array.isArray(section.records) && section.records[index], `expected reloaded ${label} record`);
+    assertEditableFieldRoundtrip(section.records[index], expectations, label);
   });
 });
 

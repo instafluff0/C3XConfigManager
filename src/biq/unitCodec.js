@@ -262,7 +262,8 @@ function projectUnitBiqFields({ rawFields, civilopediaEntry }) {
 
   DIRECT_FIELD_SPECS.forEach((spec) => {
     const raw = readRawField(lookup, spec.rawKey, spec.defaultValue);
-    pushField(spec.uiKey, raw.value || spec.defaultValue, raw.originalValue || spec.defaultValue, raw.editable);
+    const editable = spec.uiKey === 'otherstrategy' ? false : raw.editable;
+    pushField(spec.uiKey, raw.value || spec.defaultValue, raw.originalValue || spec.defaultValue, editable);
   });
 
   BOOL_INT_FIELDS.forEach((spec) => {
@@ -367,18 +368,18 @@ function collapseUnitBiqFields(fields, valueKey = 'value') {
   raw.PTWAirMissions = toSignedIntString(encodeBits(PTW_AIR_MISSION_BITS));
 
   const stealthTargets = readList('stealth_target');
-  raw.numStealthTargets = readText('numstealthtargets', String(stealthTargets.length));
+  raw.numStealthTargets = String(stealthTargets.length);
   raw.stealthTarget = stealthTargets;
 
   const ignoreMovementCost = readList('ignore_movement_cost');
   raw.ignoreMovementCost = ignoreMovementCost;
 
   const legalUnitTelepads = readList('legal_unit_telepad');
-  raw.numLegalUnitTelepads = readText('numlegalunittelepads', String(legalUnitTelepads.length));
+  raw.numLegalUnitTelepads = String(legalUnitTelepads.length);
   raw.legalUnitTelepad = legalUnitTelepads;
 
   const legalBuildingTelepads = readList('legal_building_telepad');
-  raw.numLegalBuildingTelepads = readText('numlegalbuildingtelepads', String(legalBuildingTelepads.length));
+  raw.numLegalBuildingTelepads = String(legalBuildingTelepads.length);
   raw.legalBuildingTelepad = legalBuildingTelepads;
 
   return raw;

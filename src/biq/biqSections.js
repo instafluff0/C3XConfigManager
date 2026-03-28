@@ -2589,7 +2589,7 @@ function parseAllSections(buf) {
 function serializeSection(section, io) {
   const code = section.code;
   const reg = SECTION_REGISTRY[code];
-  const records = section.records || [];
+  const records = code === 'PRTO' ? buildQuintPrtoOutputRecords(section.records || []) : (section.records || []);
 
   // FLAV: special non-standard serialization
   if (code === 'FLAV') {
@@ -2657,6 +2657,65 @@ function serializeSection(section, io) {
   return w.toBuffer();
 }
 
+function getPrtoStrategyBits(value) {
+  const bits = [];
+  const raw = Number(value) | 0;
+  for (let bit = 0; bit < 20; bit += 1) {
+    const mask = 1 << bit;
+    if ((raw & mask) === mask) bits.push(mask);
+  }
+  return bits;
+}
+
+function buildQuintPrtoOutputRecords(records) {
+  const source = Array.isArray(records) ? records : [];
+  const duplicatesByPrimary = new Map();
+  source.forEach((rec) => {
+    const primaryIdx = Number(rec && rec.otherStrategy);
+    if (!Number.isFinite(primaryIdx) || primaryIdx < 0) return;
+    if (!duplicatesByPrimary.has(primaryIdx)) duplicatesByPrimary.set(primaryIdx, []);
+    duplicatesByPrimary.get(primaryIdx).push(rec);
+  });
+  const baseRecords = source.filter((rec) => !Number.isFinite(Number(rec && rec.otherStrategy)) || Number(rec.otherStrategy) < 0);
+  const output = [];
+
+  baseRecords.forEach((rec, logicalIndex) => {
+    let mergedAi = Number(rec && rec.AIStrategy) | 0;
+    const duplicates = duplicatesByPrimary.get(Number(rec && rec.index)) || [];
+    duplicates.forEach((dupRec) => {
+      mergedAi |= Number(dupRec && dupRec.AIStrategy) | 0;
+    });
+    const strategyBits = getPrtoStrategyBits(mergedAi);
+    const primaryStrategy = strategyBits[0] || 0;
+    output.push({
+      ...rec,
+      index: logicalIndex,
+      otherStrategy: -1,
+      AIStrategy: primaryStrategy
+    });
+  });
+
+  baseRecords.forEach((rec, logicalIndex) => {
+    let mergedAi = Number(rec && rec.AIStrategy) | 0;
+    const duplicates = duplicatesByPrimary.get(Number(rec && rec.index)) || [];
+    duplicates.forEach((dupRec) => {
+      mergedAi |= Number(dupRec && dupRec.AIStrategy) | 0;
+    });
+    const strategyBits = getPrtoStrategyBits(mergedAi);
+    if (strategyBits.length <= 1) return;
+    for (let i = 1; i < strategyBits.length; i += 1) {
+      output.push({
+        ...rec,
+        index: output.length,
+        otherStrategy: logicalIndex,
+        AIStrategy: strategyBits[i]
+      });
+    }
+  });
+
+  return output;
+}
+
 // ---------------------------------------------------------------------------
 // buildBiqBuffer: assemble complete BIQ binary from parsed structure
 // ---------------------------------------------------------------------------
@@ -2696,6 +2755,21 @@ function findRecordByRef(records, recordRef) {
     const ce = String(r.civilopediaEntry || '').trim().toUpperCase();
     return ce === upper;
   }) || null;
+}
+
+function dropPrtoStrategyMapDuplicates(records, primaryIndex, keepRecord) {
+  if (!Array.isArray(records) || !Number.isFinite(primaryIndex) || primaryIndex < 0) return false;
+  let changed = false;
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const record = records[i];
+    if (!record || record === keepRecord) continue;
+    const otherStrategy = Number(record && record.otherStrategy);
+    if (!Number.isFinite(otherStrategy) || otherStrategy !== primaryIndex) continue;
+    records.splice(i, 1);
+    changed = true;
+  }
+  if (changed) records.forEach((record, idx) => { if (record) record.index = idx; });
+  return changed;
 }
 
 function applySetToRecord(rec, fieldKey, value, code, io) {
@@ -2806,6 +2880,12 @@ function applySetToRecord(rec, fieldKey, value, code, io) {
       rec.numGovts = rec.relations.length;
       return true;
     }
+  }
+
+  if (code === 'ERAS' && ck === 'name') {
+    rec.name = String(value);
+    rec.eraName = String(value);
+    return true;
   }
 
   // TILE: surgical raw edit
@@ -3832,11 +3912,13 @@ function applyEdits(buf, edits) {
         if (src) {
           newRec = copyRecord(src);
           newRec.civilopediaEntry = newRef;
+          if (newRec._rawData) delete newRec._rawData;
           if (newRec._rawRecord) delete newRec._rawRecord; // force re-serialize
           log.debug('BiqApplyEdits', `op=copy ${code}: ${sourceRef} -> ${newRef} (from local BIQ)`);
         } else if (externalRecord) {
           newRec = copyRecord(externalRecord);
           newRec.civilopediaEntry = newRef;
+          if (newRec._rawData) delete newRec._rawData;
           if (newRec._rawRecord) delete newRec._rawRecord; // force re-serialize
           log.debug('BiqApplyEdits', `op=copy ${code}: external record -> ${newRef}`);
         } else {
@@ -3901,6 +3983,13 @@ function applyEdits(buf, edits) {
 
     const ok = applySetToRecord(rec, fieldKey, value, code, io);
     if (ok) {
+      if (code === 'PRTO' && canonicalKey(fieldKey) === 'aistrategy') {
+        const primaryIndex = Number(rec && rec.index);
+        const isPrimary = !Number.isFinite(Number(rec && rec.otherStrategy)) || Number(rec && rec.otherStrategy) < 0;
+        if (isPrimary && dropPrtoStrategyMapDuplicates(section.records, primaryIndex, rec)) {
+          log.debug('BiqApplyEdits', `op=set ${code}[${edit.recordRef}].${fieldKey}: dropped stale strategy-map duplicate records for primary index ${primaryIndex}`);
+        }
+      }
       section._modified = true;
       applied++;
       const displayVal = value.length > 40 ? value.slice(0, 40) + '…' : value;

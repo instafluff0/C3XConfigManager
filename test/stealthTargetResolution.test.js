@@ -387,11 +387,10 @@ test('Tides of Crimson: primary unit records 399 and 401 have strategy-map dupli
   assert.ok(aliasesTo401.length >= 1, 'At least one strategy-map duplicate must point to primary 401');
 });
 
-test('Tides of Crimson: strategy-map duplicates for 399 and 401 have entries in the units tab', (t) => {
+test('Tides of Crimson: strategy-map duplicates for 399 and 401 are deduped out of the units tab', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip(`Fixture not present: ${TIDES_BIQ}`);
   const bundle = loadBundle({ mode: 'scenario', civ3Path: CIV3_ROOT, scenarioPath: TIDES_BIQ });
   const aliases = buildPrtoStrategyMapAliases(bundle.biq && bundle.biq.sections);
-  // For each alias pointing to 399 or 401, at least one dup index must be in entries
   function anyDupInEntries(targetPrimary) {
     let found = false;
     aliases.forEach((primaryIdx, dupIdx) => {
@@ -399,8 +398,8 @@ test('Tides of Crimson: strategy-map duplicates for 399 and 401 have entries in 
     });
     return found;
   }
-  assert.ok(anyDupInEntries(399), 'At least one strategy-map duplicate of unit 399 must be in units tab');
-  assert.ok(anyDupInEntries(401), 'At least one strategy-map duplicate of unit 401 must be in units tab');
+  assert.equal(anyDupInEntries(399), false, 'Quint-style logical units should not expose duplicate record 399 aliases in the units tab');
+  assert.equal(anyDupInEntries(401), false, 'Quint-style logical units should not expose duplicate record 401 aliases in the units tab');
 });
 
 test('Tides of Crimson: extended map resolves stealth target indices 399 and 401 to unit names', (t) => {
@@ -460,19 +459,16 @@ test('Tides of Crimson: every resolvable stealth target is resolved by extended 
     `Resolvable targets missing from extended map:\n${issues.join('\n')}`);
 });
 
-test('Tides of Crimson: units tab entries are deduplicated by civilopedia key', (t) => {
+test('Tides of Crimson: units tab excludes Quint strategy-map duplicate PRTO rows', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip(`Fixture not present: ${TIDES_BIQ}`);
   const bundle = loadBundle({ mode: 'scenario', civ3Path: CIV3_ROOT, scenarioPath: TIDES_BIQ });
   const entries = bundle.tabs.units.entries;
-  // Because indexBiqRecordsByCivilopediaKey uses last-wins, each civilopedia key
-  // appears at most once in the entries tab — even if multiple PRTO records share it.
-  const keyCount = new Map();
-  entries.forEach((e) => {
-    const key = String(e.civilopediaKey || '');
-    keyCount.set(key, (keyCount.get(key) || 0) + 1);
-  });
-  const duplicates = [...keyCount.entries()].filter(([k, n]) => n > 1 && k).map(([k, n]) => `${k} (${n}x)`);
-  assert.deepEqual(duplicates, [], `Duplicate civilopedia keys in Tides units tab: ${duplicates.join(', ')}`);
+  const aliases = buildPrtoStrategyMapAliases(bundle.biq && bundle.biq.sections);
+  const duplicateIndexes = new Set(Array.from(aliases.keys()));
+  const leaked = entries
+    .map((entry) => Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : NaN)
+    .filter((idx) => Number.isFinite(idx) && duplicateIndexes.has(String(idx)));
+  assert.deepEqual(leaked, [], `Strategy-map duplicate PRTO indices leaked into Tides units tab: ${leaked.join(', ')}`);
 });
 
 test('Tides of Crimson: extended map resolves every alias whose dup is in entries', (t) => {
@@ -524,38 +520,36 @@ test('Standard game: all stealth-target-bearing units resolve fully via extended
     `Unresolved stealth targets in standard game:\n${issues.join('\n')}`);
 });
 
-test('Standard game: every primary index covered by an alias has a resolvable label', (t) => {
+test('Standard game: every primary index covered by an alias resolves via the extended unit map', (t) => {
   if (!fs.existsSync(STANDARD_BIQ)) t.skip(`Fixture not present: ${STANDARD_BIQ}`);
   const bundle = loadBundle({ mode: 'global', civ3Path: CIV3_ROOT });
   const aliases = buildPrtoStrategyMapAliases(bundle.biq && bundle.biq.sections);
-  const entries = bundle.tabs.units.entries;
-  const entryByBiqIndex = new Map(entries.map((e, i) => [String(Number.isFinite(e.biqIndex) ? e.biqIndex : i), e]));
+  const map = buildUnitIndexMap(bundle);
   const unresolvable = [];
-  // For every primaryIdx, at least one dupIdx in entries must exist
   const primaryToDups = new Map();
   aliases.forEach((primaryIdx, dupIdx) => {
     if (!primaryToDups.has(primaryIdx)) primaryToDups.set(primaryIdx, []);
     primaryToDups.get(primaryIdx).push(dupIdx);
   });
   primaryToDups.forEach((dups, primaryIdx) => {
-    const hasLabel = dups.some((dupIdx) => entryByBiqIndex.has(dupIdx));
-    if (!hasLabel) unresolvable.push(`primaryIdx=${primaryIdx} has dups [${dups.join(',')}] but none are in entries`);
+    if (!map.has(String(primaryIdx))) {
+      unresolvable.push(`primaryIdx=${primaryIdx} has dups [${dups.join(',')}] but the extended map has no label`);
+    }
   });
   assert.deepEqual(unresolvable, [],
     `Standard game: aliases with no resolvable label:\n${unresolvable.join('\n')}`);
 });
 
-test('Standard game: units tab entries are deduplicated by civilopedia key', (t) => {
+test('Standard game: units tab excludes Quint strategy-map duplicate PRTO rows', (t) => {
   if (!fs.existsSync(STANDARD_BIQ)) t.skip(`Fixture not present: ${STANDARD_BIQ}`);
   const bundle = loadBundle({ mode: 'global', civ3Path: CIV3_ROOT });
   const entries = bundle.tabs.units.entries;
-  const keyCount = new Map();
-  entries.forEach((e) => {
-    const key = String(e.civilopediaKey || '');
-    keyCount.set(key, (keyCount.get(key) || 0) + 1);
-  });
-  const duplicates = [...keyCount.entries()].filter(([k, n]) => n > 1 && k).map(([k, n]) => `${k} (${n}x)`);
-  assert.deepEqual(duplicates, [], `Duplicate civilopedia keys in standard game units tab: ${duplicates.join(', ')}`);
+  const aliases = buildPrtoStrategyMapAliases(bundle.biq && bundle.biq.sections);
+  const duplicateIndexes = new Set(Array.from(aliases.keys()));
+  const leaked = entries
+    .map((entry) => Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : NaN)
+    .filter((idx) => Number.isFinite(idx) && duplicateIndexes.has(String(idx)));
+  assert.deepEqual(leaked, [], `Strategy-map duplicate PRTO indices leaked into standard units tab: ${leaked.join(', ')}`);
 });
 
 // ---------------------------------------------------------------------------

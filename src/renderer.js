@@ -16604,6 +16604,10 @@ function buildNewReferenceEntryFromTemplate({ tabKey, sourceEntry, civilopediaKe
         : ''
     }));
     normalizeImportedReferenceFields(tabKey, entry);
+    if (tabKey === 'units') {
+      const iconField = getBiqFieldByBaseKey(entry, 'iconindex');
+      if (iconField) iconField.value = '0';
+    }
   } else {
     entry.biqFields = entry.biqFields.map((field) => ({
       ...field,
@@ -18080,12 +18084,6 @@ function renderReferenceTab(tab, tabKey) {
     const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
     return tabKey === 'units' && key.startsWith('PRTO_') && key.includes('_ERAS_');
   };
-  const getUnitFamilyKey = (entry) => {
-    const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
-    if (tabKey !== 'units') return key;
-    const eraIdx = key.indexOf('_ERAS_');
-    return eraIdx > 0 ? key.slice(0, eraIdx) : key;
-  };
 
   const addListButton = ({ entry, baseIndex, isChild = false }) => {
     const itemBtn = document.createElement('button');
@@ -18145,53 +18143,7 @@ function renderReferenceTab(tab, tabKey) {
     listPane.appendChild(itemBtn);
   };
 
-  if (tabKey !== 'units') {
-    filteredEntries.forEach(({ entry, baseIndex }) => addListButton({ entry, baseIndex }));
-  } else {
-    const byKey = new Map(
-      allEntries.map((entry, idx) => [String(entry && entry.civilopediaKey || '').trim().toUpperCase(), { entry, baseIndex: idx }])
-    );
-    const groups = [];
-    const groupByFamily = new Map();
-    filteredEntries.forEach((item) => {
-      const familyKey = getUnitFamilyKey(item.entry);
-      if (!groupByFamily.has(familyKey)) {
-        const group = { familyKey, parent: null, children: [] };
-        groupByFamily.set(familyKey, group);
-        groups.push(group);
-      }
-      const group = groupByFamily.get(familyKey);
-      const key = String(item.entry && item.entry.civilopediaKey || '').trim().toUpperCase();
-      if (key === familyKey) group.parent = item;
-      else group.children.push(item);
-    });
-
-    groups.forEach((group) => {
-      const groupWrap = document.createElement('div');
-      groupWrap.className = 'entry-list-group';
-      if (group.parent) {
-        addListButton({ entry: group.parent.entry, baseIndex: group.parent.baseIndex, isChild: false });
-        const parentBtn = listPane.lastElementChild;
-        if (parentBtn) groupWrap.appendChild(parentBtn);
-      } else {
-        const base = byKey.get(group.familyKey);
-        if (base && base.entry) {
-          const parentLabel = document.createElement('div');
-          parentLabel.className = 'entry-list-item entry-list-item-parent-label no-thumb';
-          const title = document.createElement('strong');
-          title.textContent = String(base.entry.name || base.entry.civilopediaKey || group.familyKey);
-          parentLabel.appendChild(title);
-          groupWrap.appendChild(parentLabel);
-        }
-      }
-      group.children.forEach((child) => {
-        addListButton({ entry: child.entry, baseIndex: child.baseIndex, isChild: true });
-        const childBtn = listPane.lastElementChild;
-        if (childBtn) groupWrap.appendChild(childBtn);
-      });
-      if (groupWrap.children.length > 0) listPane.appendChild(groupWrap);
-    });
-  }
+  filteredEntries.forEach(({ entry, baseIndex }) => addListButton({ entry, baseIndex }));
   layout.appendChild(listPane);
   requestAnimationFrame(() => hydrateVisibleReferenceListThumbs(hasFilterText ? 56 : 32));
 
@@ -27612,6 +27564,9 @@ function renderTabs() {
 function renderActiveTab(options = {}) {
   const preserveTabScroll = !!options.preserveTabScroll;
   const resetScrollToTop = !!options.resetScrollToTop;
+  const targetTop = resetScrollToTop
+    ? 0
+    : (preserveTabScroll ? Number(state.tabContentScrollTop || 0) : 0);
   if (state.referenceSectionNavCleanup) {
     try { state.referenceSectionNavCleanup(); } catch (_err) {}
     state.referenceSectionNavCleanup = null;
@@ -27651,9 +27606,9 @@ function renderActiveTab(options = {}) {
   }
   state.isRendering = false;
   updateSaveButtonLabel();
-  const targetTop = state.tabContentScrollTop || 0;
   window.requestAnimationFrame(() => {
     el.tabContent.scrollTop = targetTop;
+    state.tabContentScrollTop = targetTop;
     updateScrollTopFab();
   });
 }
@@ -27745,8 +27700,11 @@ async function loadBundleAndRender(options = {}) {
     }
 
     const previousActiveTab = state.activeTab;
-    const shouldUsePersistedView = options && options.usePersistedView === true;
-    const persistedView = shouldUsePersistedView ? loadPersistedViewSnapshot() : null;
+    const explicitViewSnapshot = options && options.viewSnapshot && typeof options.viewSnapshot === 'object'
+      ? options.viewSnapshot
+      : null;
+    const shouldUsePersistedView = !explicitViewSnapshot && options && options.usePersistedView === true;
+    const persistedView = explicitViewSnapshot || (shouldUsePersistedView ? loadPersistedViewSnapshot() : null);
     state.bundle = bundle;
     state.filesReadEntriesCache = null;
     state.filesReadEntriesCacheDirty = true;
@@ -27811,7 +27769,7 @@ async function loadBundleAndRender(options = {}) {
       state.cleanTabsCache = parseSnapshotTabs(cleanSnapshotForLoadedBundle);
     }
     renderTabs();
-    renderActiveTab(shouldUsePersistedView ? { preserveTabScroll: true } : {});
+    renderActiveTab(persistedView ? { preserveTabScroll: true } : {});
     resetNavigationHistory();
     window.setTimeout(() => {
       if (preserveDirtyState) {
@@ -28405,6 +28363,7 @@ async function saveCurrentBundle() {
 
     const paths = res.saveReport.map((r) => _dbgRelPath(r.path)).join(' | ');
     const biqReport = res.saveReport.find((r) => r.kind === 'biq');
+    const currentViewSnapshot = captureViewSnapshot();
     const referenceSelectionKeys = {};
     if (state.bundle && state.bundle.tabs) {
       Object.entries(state.referenceSelection).forEach(([tabKey, idx]) => {
@@ -28419,7 +28378,7 @@ async function saveCurrentBundle() {
     }
     invalidatePreviewStateForReload();
     await loadBundleAndRender({
-      usePersistedView: true,
+      viewSnapshot: currentViewSnapshot,
       referenceSelectionKeys,
       loadingText: 'Refreshing saved data...'
     });
@@ -28431,7 +28390,10 @@ async function saveCurrentBundle() {
       setStatus(`Saved ${res.saveReport.length} file(s): ${paths}`);
     }
     if ((scenarioSearchFolderChanged || shouldReloadForAutoScenarioSearchFolder) && state.settings.mode === 'scenario') {
-      await loadBundleAndRender({ loadingText: 'Reloading scenario from updated search folder...' });
+      await loadBundleAndRender({
+        viewSnapshot: currentViewSnapshot,
+        loadingText: 'Reloading scenario from updated search folder...'
+      });
     }
     return true;
   } catch (err) {
@@ -29226,6 +29188,7 @@ async function init() {
       el.tabContent.scrollTo({ top: 0, behavior: 'smooth' });
     });
     el.tabContent.addEventListener('scroll', () => {
+      if (state.isRendering) return;
       state.tabContentScrollTop = el.tabContent.scrollTop;
       persistCurrentViewSnapshot();
       updateScrollTopFab();

@@ -2929,6 +2929,79 @@ function indexBiqRecordsByCivilopediaKey(biqTab, sectionCode) {
   return out;
 }
 
+function listBiqRecordsBySectionOrder(biqTab, sectionCode) {
+  if (!biqTab || !Array.isArray(biqTab.sections)) return [];
+  const section = biqTab.sections.find((s) => String(s && s.code || '').toUpperCase() === String(sectionCode || '').toUpperCase());
+  const records = Array.isArray(section && section.records) ? section.records : [];
+  return records
+    .map((record) => {
+      const idx = Number(record && record.index);
+      return Number.isFinite(idx) ? { ...record, index: idx } : null;
+    })
+    .filter(Boolean);
+}
+
+function cloneRecordField(field) {
+  return {
+    ...field,
+    value: field && field.value != null ? String(field.value) : '',
+    originalValue: field && field.originalValue != null
+      ? String(field.originalValue)
+      : String(field && field.value != null ? field.value : '')
+  };
+}
+
+function mergePrtoStrategyMapRecords(biqTab) {
+  const out = [];
+  if (!biqTab || !Array.isArray(biqTab.sections)) return out;
+  const section = biqTab.sections.find((s) => String(s && s.code || '').toUpperCase() === 'PRTO');
+  const records = Array.isArray(section && section.records) ? section.records : [];
+  if (records.length === 0) return out;
+
+  const duplicatesByPrimary = new Map();
+  const parseAiBits = (value, fallback = 0) => parseIntLoose(String(value == null ? '' : value), fallback);
+
+  records.forEach((record) => {
+    const otherRaw = getRecordFieldValue(record, 'PRTO', 'otherStrategy');
+    const primaryIdx = parseReferenceIdFromFieldValue(otherRaw);
+    if (!Number.isFinite(primaryIdx) || primaryIdx < 0) return;
+    if (!duplicatesByPrimary.has(primaryIdx)) duplicatesByPrimary.set(primaryIdx, []);
+    duplicatesByPrimary.get(primaryIdx).push(record);
+  });
+
+  records.forEach((record) => {
+    const idx = Number(record && record.index);
+    if (!Number.isFinite(idx)) return;
+    const otherRaw = getRecordFieldValue(record, 'PRTO', 'otherStrategy');
+    const primaryIdx = parseReferenceIdFromFieldValue(otherRaw);
+    if (Number.isFinite(primaryIdx) && primaryIdx >= 0) return;
+
+    const baseFields = Array.isArray(record.fields) ? record.fields.map(cloneRecordField) : [];
+    const aiField = baseFields.find((field) => String(field && (field.baseKey || field.key) || '').toLowerCase() === 'aistrategy');
+    let mergedValue = parseAiBits(aiField && aiField.value, 0);
+    let mergedOriginal = parseAiBits(aiField && aiField.originalValue, mergedValue);
+    const duplicates = duplicatesByPrimary.get(idx) || [];
+    duplicates.forEach((dupRecord) => {
+      mergedValue |= parseAiBits(getRecordFieldValue(dupRecord, 'PRTO', 'AIStrategy'), 0);
+      const dupAiField = Array.isArray(dupRecord && dupRecord.fields)
+        ? dupRecord.fields.find((field) => String(field && (field.baseKey || field.key) || '').toLowerCase() === 'aistrategy')
+        : null;
+      mergedOriginal |= parseAiBits(dupAiField && dupAiField.originalValue, parseAiBits(dupAiField && dupAiField.value, 0));
+    });
+    if (aiField) {
+      aiField.value = String(mergedValue | 0);
+      aiField.originalValue = String(mergedOriginal | 0);
+    }
+
+    out.push({
+      ...record,
+      fields: baseFields,
+      index: idx
+    });
+  });
+  return out;
+}
+
 function getRecordFieldsForSection(record, sectionCode) {
   if (record && Array.isArray(record.fields) && record.fields.length > 0) return record.fields;
   const english = String(record && record.english || '');
@@ -3227,41 +3300,98 @@ function buildReferenceTabs(civ3Path, options = {}) {
   const tabs = {};
   for (const tabSpec of REFERENCE_TAB_SPECS) {
     const biqSectionCode = getSectionCodeForReferencePrefix(tabSpec.prefix);
-    const biqRecordByCivilopediaKey = indexBiqRecordsByCivilopediaKey(options.biqTab, biqSectionCode);
-    const entriesByKey = new Map();
+    const biqRecordsInOrder = tabSpec.key === 'units'
+      ? mergePrtoStrategyMapRecords(options.biqTab)
+      : listBiqRecordsBySectionOrder(options.biqTab, biqSectionCode);
+    const hasOrderedBiqSeeds = biqRecordsInOrder.length > 0;
+    const biqRecordByCivilopediaKey = hasOrderedBiqSeeds
+      ? new Map()
+      : (tabSpec.key === 'units'
+        ? new Map()
+        : indexBiqRecordsByCivilopediaKey(options.biqTab, biqSectionCode));
+    const entrySeeds = [];
     const prefix = tabSpec.prefix;
 
     const canonicalPrefix = prefix.toUpperCase();
-    Object.keys(civilopediaSections)
-      .filter((key) => key.startsWith(canonicalPrefix))
-      .forEach((civilopediaKey) => entriesByKey.set(civilopediaKey, { civilopediaKey }));
-
-    Object.keys(pediaBlocks)
-      .filter((key) => key.startsWith(`ICON_${canonicalPrefix}`)
-        || key.startsWith(`ANIMNAME_${canonicalPrefix}`)
-        || key.startsWith(`ICON_RACE_`)
-        || (canonicalPrefix === 'RACE_' && key.startsWith(canonicalPrefix))
-        || (tabSpec.key === 'technologies' && key.startsWith(canonicalPrefix)))
-      .forEach((key) => {
-        let civilopediaKey = key.startsWith('ICON_') ? key.slice(5) : key.startsWith('ANIMNAME_') ? key.slice(9) : key;
-        if (canonicalPrefix === 'RACE_' && key.startsWith('ICON_RACE_')) {
-          civilopediaKey = `RACE_${key.slice('ICON_RACE_'.length)}`;
-        }
-        if (tabSpec.key === 'technologies' && civilopediaKey.startsWith('TECH_') && civilopediaKey.endsWith('_LARGE')) {
-          civilopediaKey = civilopediaKey.slice(0, -6);
-        }
-        if (civilopediaKey.startsWith(canonicalPrefix)) {
-          entriesByKey.set(civilopediaKey, { civilopediaKey });
-        }
+    if (hasOrderedBiqSeeds) {
+      biqRecordsInOrder.forEach((record) => {
+        const idx = Number(record && record.index);
+        const civilopediaKey = String(getRecordFieldValue(record, biqSectionCode, 'civilopediaentry') || '').toUpperCase();
+        entrySeeds.push({
+          civilopediaKey,
+          biqRecord: record,
+          biqIndex: Number.isFinite(idx) ? idx : null
+        });
       });
+      const allowedKeys = biqKeySets && biqKeySets[tabSpec.key] instanceof Set ? biqKeySets[tabSpec.key] : null;
+      if (allowedKeys && allowedKeys.size > 0) {
+        const seenExactKeys = new Set(entrySeeds.map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase()).filter(Boolean));
+        const maybeAppendPediaSeed = (candidateKey) => {
+          const civilopediaKey = String(candidateKey || '').toUpperCase();
+          if (!civilopediaKey || seenExactKeys.has(civilopediaKey)) return;
+          if (!allowedKeys.has(civilopediaKey)) {
+            if (!(tabSpec.key === 'units' && civilopediaKey.startsWith('PRTO_') && civilopediaKey.includes('_ERAS_') && allowedKeys.has(civilopediaKey.split('_ERAS_')[0]))) {
+              return;
+            }
+          }
+          seenExactKeys.add(civilopediaKey);
+          entrySeeds.push({ civilopediaKey, biqRecord: null, biqIndex: null });
+        };
+        Object.keys(civilopediaSections)
+          .filter((key) => key.startsWith(canonicalPrefix))
+          .forEach(maybeAppendPediaSeed);
+        Object.keys(pediaBlocks)
+          .filter((key) => key.startsWith(`ICON_${canonicalPrefix}`)
+            || key.startsWith(`ANIMNAME_${canonicalPrefix}`)
+            || key.startsWith(`ICON_RACE_`)
+            || (canonicalPrefix === 'RACE_' && key.startsWith(canonicalPrefix))
+            || (tabSpec.key === 'technologies' && key.startsWith(canonicalPrefix)))
+          .forEach((key) => {
+            let civilopediaKey = key.startsWith('ICON_') ? key.slice(5) : key.startsWith('ANIMNAME_') ? key.slice(9) : key;
+            if (canonicalPrefix === 'RACE_' && key.startsWith('ICON_RACE_')) {
+              civilopediaKey = `RACE_${key.slice('ICON_RACE_'.length)}`;
+            }
+            if (tabSpec.key === 'technologies' && civilopediaKey.startsWith('TECH_') && civilopediaKey.endsWith('_LARGE')) {
+              civilopediaKey = civilopediaKey.slice(0, -6);
+            }
+            if (civilopediaKey.startsWith(canonicalPrefix)) maybeAppendPediaSeed(civilopediaKey);
+          });
+      }
+    } else {
+      const entriesByKey = new Map();
+      Object.keys(civilopediaSections)
+        .filter((key) => key.startsWith(canonicalPrefix))
+        .forEach((civilopediaKey) => entriesByKey.set(civilopediaKey, { civilopediaKey }));
 
-    let entries = Array.from(entriesByKey.values())
+      Object.keys(pediaBlocks)
+        .filter((key) => key.startsWith(`ICON_${canonicalPrefix}`)
+          || key.startsWith(`ANIMNAME_${canonicalPrefix}`)
+          || key.startsWith(`ICON_RACE_`)
+          || (canonicalPrefix === 'RACE_' && key.startsWith(canonicalPrefix))
+          || (tabSpec.key === 'technologies' && key.startsWith(canonicalPrefix)))
+        .forEach((key) => {
+          let civilopediaKey = key.startsWith('ICON_') ? key.slice(5) : key.startsWith('ANIMNAME_') ? key.slice(9) : key;
+          if (canonicalPrefix === 'RACE_' && key.startsWith('ICON_RACE_')) {
+            civilopediaKey = `RACE_${key.slice('ICON_RACE_'.length)}`;
+          }
+          if (tabSpec.key === 'technologies' && civilopediaKey.startsWith('TECH_') && civilopediaKey.endsWith('_LARGE')) {
+            civilopediaKey = civilopediaKey.slice(0, -6);
+          }
+          if (civilopediaKey.startsWith(canonicalPrefix)) {
+            entriesByKey.set(civilopediaKey, { civilopediaKey });
+          }
+        });
+      entrySeeds.push(...Array.from(entriesByKey.values()));
+    }
+
+    let entries = entrySeeds
       .map((entry) => {
-        const civilopediaSection = (civilopediaSections[entry.civilopediaKey] && civilopediaSections[entry.civilopediaKey].value) || null;
-        const descSection = (civilopediaSections[`DESC_${entry.civilopediaKey}`] && civilopediaSections[`DESC_${entry.civilopediaKey}`].value) || null;
-        const shortKey = entry.civilopediaKey.slice(prefix.length);
+        const civilopediaKey = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+        const civilopediaSection = (civilopediaKey && civilopediaSections[civilopediaKey] && civilopediaSections[civilopediaKey].value) || null;
+        const descSection = (civilopediaKey && civilopediaSections[`DESC_${civilopediaKey}`] && civilopediaSections[`DESC_${civilopediaKey}`].value) || null;
+        const shortKey = civilopediaKey.startsWith(prefix) ? civilopediaKey.slice(prefix.length) : '';
         const inferredDisplayName = inferDisplayNameFromKey(shortKey);
-        const pedia = mapPediaIconsForKey(pediaBlocks, entry.civilopediaKey);
+        const pedia = civilopediaKey ? mapPediaIconsForKey(pediaBlocks, civilopediaKey) : { iconPaths: [], animationName: '', racePaths: [] };
         const section1Lines = parseBodyFromCivilopediaSection(civilopediaSection, { displayName: inferredDisplayName });
         const section2Lines = parseBodyFromCivilopediaSection(descSection, { displayName: inferredDisplayName });
         const section1RawText = (civilopediaSection && Array.isArray(civilopediaSection.rawLines))
@@ -3275,20 +3405,34 @@ function buildReferenceTabs(civ3Path, options = {}) {
             ? (pedia.iconPaths[0] || pedia.racePaths[0] || pedia.iconPaths[pedia.iconPaths.length - 1] || '')
             : (pedia.iconPaths[pedia.iconPaths.length - 1] || pedia.iconPaths[0] || '');
 
-        const section1SourcePath = findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, entry.civilopediaKey, layerOrder);
-        const section2SourcePath = findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, `DESC_${entry.civilopediaKey}`, layerOrder)
-          || section1SourcePath;
-        const iconBlockSourcePath = findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ICON_${entry.civilopediaKey}`, layerOrder)
-          || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, entry.civilopediaKey, layerOrder)
-          || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `${entry.civilopediaKey}_LARGE`, layerOrder)
-          || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ICON_RACE_${entry.civilopediaKey.replace(/^RACE_/, '')}`, layerOrder);
-        const eraAnimFallbackKey = String(entry.civilopediaKey || '').includes('_ERAS_')
-          ? `ANIMNAME_${String(entry.civilopediaKey || '').split('_ERAS_')[0]}`
+        const section1SourcePath = civilopediaKey
+          ? findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, civilopediaKey, layerOrder)
           : '';
-        const animSourcePath = findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ANIMNAME_${entry.civilopediaKey}`, layerOrder)
+        const section2SourcePath = civilopediaKey
+          ? (
+            findLayerPathForKey(civilopediaSectionsByLayer, civilopediaLayers, `DESC_${civilopediaKey}`, layerOrder)
+            || section1SourcePath
+          )
+          : '';
+        const iconBlockSourcePath = civilopediaKey
+          ? (
+            findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ICON_${civilopediaKey}`, layerOrder)
+            || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, civilopediaKey, layerOrder)
+            || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `${civilopediaKey}_LARGE`, layerOrder)
+            || findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ICON_RACE_${civilopediaKey.replace(/^RACE_/, '')}`, layerOrder)
+          )
+          : '';
+        const eraAnimFallbackKey = civilopediaKey.includes('_ERAS_')
+          ? `ANIMNAME_${String(civilopediaKey || '').split('_ERAS_')[0]}`
+          : '';
+        const animSourcePath = civilopediaKey
+          ? findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, `ANIMNAME_${civilopediaKey}`, layerOrder)
           || (eraAnimFallbackKey ? findLayerPathForKey(pediaBlocksByLayer, pediaIconLayers, eraAnimFallbackKey, layerOrder) : '')
-          || iconBlockSourcePath;
-        const biqRecord = biqRecordByCivilopediaKey.get(entry.civilopediaKey);
+          || iconBlockSourcePath
+          : '';
+        const biqRecord = entry && entry.biqRecord
+          ? entry.biqRecord
+          : biqRecordByCivilopediaKey.get(civilopediaKey);
         const rawBiqFields = (biqRecord && Array.isArray(biqRecord.fields))
           ? biqRecord.fields.filter((f) => String(f.key || '').toLowerCase() !== 'civilopediaentry').map((f) => ({
             key: f.key,
@@ -3304,36 +3448,36 @@ function buildReferenceTabs(civ3Path, options = {}) {
         if (tabSpec.key === 'improvements') {
           biqFields = projectImprovementBiqFields({
             rawFields: rawBiqFields,
-            civilopediaEntry: entry.civilopediaKey,
+            civilopediaEntry: civilopediaKey,
             flavorCount
           });
         } else if (tabSpec.key === 'resources') {
           biqFields = projectResourceBiqFields({
             rawFields: rawBiqFields,
-            civilopediaEntry: entry.civilopediaKey
+            civilopediaEntry: civilopediaKey
           });
         } else if (tabSpec.key === 'civilizations') {
           biqFields = projectCivilizationBiqFields({
             rawFields: rawBiqFields,
-            civilopediaEntry: entry.civilopediaKey,
+            civilopediaEntry: civilopediaKey,
             flavorCount
           });
         } else if (tabSpec.key === 'governments') {
           biqFields = projectGovernmentBiqFields({
             rawFields: rawBiqFields,
-            civilopediaEntry: entry.civilopediaKey,
+            civilopediaEntry: civilopediaKey,
             governmentNames
           });
         } else if (tabSpec.key === 'technologies') {
           biqFields = projectTechnologyBiqFields({
             rawFields: rawBiqFields,
-            civilopediaEntry: entry.civilopediaKey,
+            civilopediaEntry: civilopediaKey,
             flavorCount
           });
         } else if (tabSpec.key === 'units') {
           biqFields = projectUnitBiqFields({
             rawFields: rawBiqFields,
-            civilopediaEntry: entry.civilopediaKey
+            civilopediaEntry: civilopediaKey
           });
         }
         const preferredNameBaseKey = tabSpec.key === 'civilizations' ? 'civilizationname' : 'name';
@@ -3352,9 +3496,13 @@ function buildReferenceTabs(civ3Path, options = {}) {
         }
 
         return {
-          id: shortKey,
-          civilopediaKey: entry.civilopediaKey,
-          biqIndex: biqRecord ? Number(biqRecord.index) : null,
+          id: Number.isFinite(entry && entry.biqIndex)
+            ? `biq-${String(biqSectionCode || '').toLowerCase()}-${Number(entry.biqIndex)}`
+            : (civilopediaKey || `${tabSpec.key}-${entrySeeds.indexOf(entry)}`),
+          civilopediaKey,
+          biqIndex: Number.isFinite(entry && entry.biqIndex)
+            ? Number(entry.biqIndex)
+            : (biqRecord ? Number(biqRecord.index) : null),
           name: displayName,
           civilopediaSection1: section1RawText,
           originalCivilopediaSection1: section1RawText,
@@ -3387,10 +3535,13 @@ function buildReferenceTabs(civ3Path, options = {}) {
             }
           }
         };
-      })
-      .sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+      });
 
-    if (biqKeySets && biqKeySets[tabSpec.key] instanceof Set && biqKeySets[tabSpec.key].size > 0) {
+    if (!hasOrderedBiqSeeds) {
+      entries.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
+    }
+
+    if (!hasOrderedBiqSeeds && biqKeySets && biqKeySets[tabSpec.key] instanceof Set && biqKeySets[tabSpec.key].size > 0) {
       const allowedKeys = biqKeySets[tabSpec.key];
       entries = entries.filter((entry) => {
         const key = String(entry.civilopediaKey || '').toUpperCase();
@@ -3403,13 +3554,17 @@ function buildReferenceTabs(civ3Path, options = {}) {
       });
     }
 
-    if ((tabSpec.key === 'civilizations' || tabSpec.key === 'resources') && options.biqTab && Array.isArray(options.biqTab.sections)) {
+    if (!hasOrderedBiqSeeds && (tabSpec.key === 'civilizations' || tabSpec.key === 'resources') && options.biqTab && Array.isArray(options.biqTab.sections)) {
       const syntheticSectionCode = tabSpec.key === 'civilizations' ? 'RACE' : 'GOOD';
       const syntheticSection = options.biqTab.sections.find((s) => String(s && s.code || '').toUpperCase() === syntheticSectionCode);
       const syntheticRecords = Array.isArray(syntheticSection && syntheticSection.fullRecords)
         ? syntheticSection.fullRecords
         : (syntheticSection && Array.isArray(syntheticSection.records) ? syntheticSection.records : []);
-      const seenSyntheticIndexes = new Set(entries.map((entry) => Number(entry && entry.biqIndex)).filter((n) => Number.isFinite(n)));
+      const seenSyntheticIndexes = new Set(
+        entries
+          .map((entry) => (Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : NaN))
+          .filter((n) => Number.isFinite(n))
+      );
       const seenSyntheticKeys = new Set(entries.map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase()).filter(Boolean));
       syntheticRecords.forEach((record) => {
         const idx = Number(record && record.index);
@@ -3492,12 +3647,16 @@ function buildReferenceTabs(civ3Path, options = {}) {
       entries.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }));
     }
 
-    if (tabSpec.key === 'units' && options.biqTab && Array.isArray(options.biqTab.sections)) {
+    if (!hasOrderedBiqSeeds && tabSpec.key === 'units' && options.biqTab && Array.isArray(options.biqTab.sections)) {
       const prtoSection = options.biqTab.sections.find((section) => String(section && section.code || '').toUpperCase() === 'PRTO');
       const prtoRecords = Array.isArray(prtoSection && prtoSection.fullRecords)
         ? prtoSection.fullRecords
         : (prtoSection && Array.isArray(prtoSection.records) ? prtoSection.records : []);
-      const seenIndexes = new Set(entries.map((entry) => Number(entry && entry.biqIndex)).filter((n) => Number.isFinite(n)));
+      const seenIndexes = new Set(
+        entries
+          .map((entry) => (Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : NaN))
+          .filter((n) => Number.isFinite(n))
+      );
       const seenCivilopediaKeys = new Set(entries.map((entry) => String(entry && entry.civilopediaKey || '').toUpperCase()).filter(Boolean));
       prtoRecords.forEach((record) => {
         const idx = Number(record && record.index);
@@ -5667,6 +5826,15 @@ function getOriginalReferenceRecordInfo(biqTab, sectionCode, recordRef) {
   const targetRef = String(recordRef || '').trim().toUpperCase();
   if (!targetRef) return null;
   const records = getBiqRecordListForSection(biqTab, sectionCode);
+  if (targetRef.startsWith('@INDEX:')) {
+    const idx = Number.parseInt(targetRef.slice(7), 10);
+    const record = Number.isFinite(idx) ? records.find((item) => Number(item && item.index) === idx) : null;
+    if (!record) return null;
+    return {
+      index: idx,
+      name: getBiqRecordDisplayName(record, targetRef)
+    };
+  }
   for (const record of records) {
     const civKey = getBiqRecordCivilopediaKey(record);
     if (civKey !== targetRef) continue;
@@ -5684,9 +5852,11 @@ function getCurrentReferenceRecordInfo(tabs, sectionCode, recordRef) {
   const tab = tabKey ? tabs && tabs[tabKey] : null;
   const entries = Array.isArray(tab && tab.entries) ? tab.entries : [];
   const targetRef = String(recordRef || '').trim().toUpperCase();
-  const entry = entries.find((item) => String(item && item.civilopediaKey || '').trim().toUpperCase() === targetRef);
+  const entry = targetRef.startsWith('@INDEX:')
+    ? entries.find((item) => `@INDEX:${Number.isFinite(item && item.biqIndex) ? Number(item.biqIndex) : -1}` === targetRef)
+    : entries.find((item) => String(item && item.civilopediaKey || '').trim().toUpperCase() === targetRef);
   if (!entry) return null;
-  const idx = Number(entry && entry.biqIndex);
+  const idx = Number.isFinite(entry && entry.biqIndex) ? Number(entry.biqIndex) : NaN;
   return {
     index: Number.isFinite(idx) ? idx : -1,
     name: cleanDisplayText(entry && (entry.name || entry.civilopediaKey)) || targetRef
@@ -5870,6 +6040,9 @@ function collectBiqReferenceEdits(tabs) {
     const beforeCount = edits.length;
     tab.entries.forEach((entry) => {
       const civKey = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+      const recordRef = Number.isFinite(entry && entry.biqIndex)
+        ? `@INDEX:${Number(entry.biqIndex)}`
+        : civKey;
       if (!civKey || !Array.isArray(entry.biqFields)) return;
       if (spec.key === 'improvements') {
         const flavorCount = Number.isFinite(Number(entry && entry.improvementFlavorCount))
@@ -5883,7 +6056,7 @@ function collectBiqReferenceEdits(tabs) {
           if (value === originalValue) return;
           edits.push({
             sectionCode,
-            recordRef: civKey,
+            recordRef,
             fieldKey: rawKey,
             value
           });
@@ -5902,7 +6075,7 @@ function collectBiqReferenceEdits(tabs) {
           if (value === originalValue) return;
           edits.push({
             sectionCode,
-            recordRef: civKey,
+            recordRef,
             fieldKey: rawKey,
             value
           });
@@ -5918,7 +6091,7 @@ function collectBiqReferenceEdits(tabs) {
           if (value === originalValue) return;
           edits.push({
             sectionCode,
-            recordRef: civKey,
+            recordRef,
             fieldKey: rawKey,
             value
           });
@@ -5934,7 +6107,7 @@ function collectBiqReferenceEdits(tabs) {
           if (value === originalValue) return;
           edits.push({
             sectionCode,
-            recordRef: civKey,
+            recordRef,
             fieldKey: rawKey,
             value
           });
@@ -5953,7 +6126,7 @@ function collectBiqReferenceEdits(tabs) {
           if (value === originalValue) return;
           edits.push({
             sectionCode,
-            recordRef: civKey,
+            recordRef,
             fieldKey: rawKey,
             value
           });
@@ -5971,7 +6144,7 @@ function collectBiqReferenceEdits(tabs) {
           if (valueText === originalText) return;
           edits.push({
             sectionCode,
-            recordRef: civKey,
+            recordRef,
             fieldKey: rawKey,
             value: valueText
           });
@@ -5987,7 +6160,7 @@ function collectBiqReferenceEdits(tabs) {
         if (value === originalValue) return;
         edits.push({
           sectionCode,
-          recordRef: civKey,
+          recordRef,
           fieldKey: key,
           value
         });

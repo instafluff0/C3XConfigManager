@@ -76,8 +76,8 @@ test('base game loads without error', () => {
 
 // --- Counts -----------------------------------------------------------------
 
-test('base game civ count is exactly 31', () => {
-  assert.equal(getBase().tabs.civilizations.entries.length, 31);
+test('base game civ count is exactly 32', () => {
+  assert.equal(getBase().tabs.civilizations.entries.length, 32);
 });
 test('base game tech count is exactly 83', () => {
   assert.equal(getBase().tabs.technologies.entries.length, 83);
@@ -355,9 +355,9 @@ test('Sengoku scenario search path resolves to the Sengoku art/text directory', 
 
 // --- Counts -----------------------------------------------------------------
 
-test('Sengoku civ count is exactly 18', (t) => {
+test('Sengoku civ count is exactly 19', (t) => {
   if (!fs.existsSync(SENGOKU_BIQ)) t.skip();
-  assert.equal(getSeng().tabs.civilizations.entries.length, 18);
+  assert.equal(getSeng().tabs.civilizations.entries.length, 19);
 });
 test('Sengoku tech count is exactly 39', (t) => {
   if (!fs.existsSync(SENGOKU_BIQ)) t.skip();
@@ -371,13 +371,13 @@ test('Sengoku improvement count is exactly 32', (t) => {
   if (!fs.existsSync(SENGOKU_BIQ)) t.skip();
   assert.equal(getSeng().tabs.improvements.entries.length, 32);
 });
-test('Sengoku government count is exactly 8', (t) => {
+test('Sengoku government count is exactly 3', (t) => {
   if (!fs.existsSync(SENGOKU_BIQ)) t.skip();
-  assert.equal(getSeng().tabs.governments.entries.length, 8);
+  assert.equal(getSeng().tabs.governments.entries.length, 3);
 });
-test('Sengoku unit count is exactly 33', (t) => {
+test('Sengoku unit count is exactly 42', (t) => {
   if (!fs.existsSync(SENGOKU_BIQ)) t.skip();
-  assert.equal(getSeng().tabs.units.entries.length, 33);
+  assert.equal(getSeng().tabs.units.entries.length, 42);
 });
 
 // --- Complete key sets -------------------------------------------------------
@@ -421,8 +421,7 @@ const SENGOKU_IMPROVEMENTS = [
 ];
 
 const SENGOKU_GOVTS = [
-  'GOVT_ANARCHY','GOVT_COMMUNISM','GOVT_DEMOCRACY','GOVT_DESPOTISM',
-  'GOVT_FASCISM','GOVT_FEUDALISM','GOVT_MONARCHY','GOVT_REPUBLIC'
+  'GOVT_ANARCHY','GOVT_DESPOTISM','GOVT_FEUDALISM'
 ];
 
 const SENGOKU_UNITS = [
@@ -546,15 +545,17 @@ test('Sengoku RACE_ODA has 4 icon paths all resolvable under Sengoku or CIV3 roo
   });
 });
 
-test('Sengoku all 18 civs have non-empty iconPaths resolved from Sengoku or CIV3', (t) => {
+test('Sengoku non-barbarian civs have non-empty iconPaths resolved from Sengoku or CIV3', (t) => {
   if (!fs.existsSync(SENGOKU_BIQ)) t.skip();
-  getSeng().tabs.civilizations.entries.forEach((e) => {
+  getSeng().tabs.civilizations.entries
+    .filter((e) => String(e.civilopediaKey || '').toUpperCase() !== 'RACE_BARBARIANS')
+    .forEach((e) => {
     assert.ok((e.iconPaths || []).length > 0, `${e.civilopediaKey} has no iconPaths`);
     assert.ok(
       iconExists(e.iconPaths[0], SENGOKU_DIR, CIV3),
       `${e.civilopediaKey} large icon not on disk: ${e.iconPaths[0]}`
     );
-  });
+    });
 });
 
 test('Sengoku GOOD_IRON icon resolves from base CIV3 art (shared resource art)', (t) => {
@@ -609,29 +610,29 @@ test('Tides scenario search path resolves to the Tides of Crimson art/text direc
 
 // --- Counts -----------------------------------------------------------------
 
-test('Tides civ count is exactly 26', (t) => {
+test('Tides civ count is exactly 27', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
-  assert.equal(getTides().tabs.civilizations.entries.length, 26);
+  assert.equal(getTides().tabs.civilizations.entries.length, 27);
 });
-test('Tides tech count is exactly 205', (t) => {
+test('Tides tech count is exactly 207', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
-  assert.equal(getTides().tabs.technologies.entries.length, 205);
+  assert.equal(getTides().tabs.technologies.entries.length, 207);
 });
-test('Tides resource count is exactly 70', (t) => {
+test('Tides resource count is exactly 96', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
-  assert.equal(getTides().tabs.resources.entries.length, 70);
+  assert.equal(getTides().tabs.resources.entries.length, 96);
 });
-test('Tides improvement count is exactly 239', (t) => {
+test('Tides improvement count is exactly 241', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
-  assert.equal(getTides().tabs.improvements.entries.length, 239);
+  assert.equal(getTides().tabs.improvements.entries.length, 241);
 });
-test('Tides government count is exactly 21', (t) => {
+test('Tides government count is exactly 14', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
-  assert.equal(getTides().tabs.governments.entries.length, 21);
+  assert.equal(getTides().tabs.governments.entries.length, 14);
 });
-test('Tides unit count is exactly 750', (t) => {
+test('Tides unit count is exactly 798', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
-  assert.equal(getTides().tabs.units.entries.length, 750);
+  assert.equal(getTides().tabs.units.entries.length, 798);
 });
 
 // --- Complete key sets -------------------------------------------------------
@@ -646,11 +647,9 @@ const TIDES_CIVS = [
 ];
 
 const TIDES_GOVTS = [
-  'GOVT_AIR','GOVT_ANARCHY','GOVT_BALANCE','GOVT_CHAOS','GOVT_COMMUNISM',
-  'GOVT_COSMOS','GOVT_DEATH','GOVT_DEMOCRACY','GOVT_DESPOTISM','GOVT_EARTH',
-  'GOVT_FASCISM','GOVT_FEUDALISM','GOVT_FIRE','GOVT_ICE','GOVT_LIFE',
-  'GOVT_LIGHTNING','GOVT_MONARCHY','GOVT_NO_SPHERE','GOVT_POISON',
-  'GOVT_REPUBLIC','GOVT_WATER'
+  'GOVT_ANARCHY','GOVT_NO_SPHERE','GOVT_FIRE','GOVT_WATER','GOVT_AIR',
+  'GOVT_EARTH','GOVT_LIFE','GOVT_DEATH','GOVT_BALANCE','GOVT_COSMOS',
+  'GOVT_CHAOS','GOVT_ICE','GOVT_LIGHTNING','GOVT_POISON'
 ];
 
 // Spot-check a representative subset of the 70 resources
@@ -809,15 +808,17 @@ test('Tides RACE_ORCS has icon paths resolvable under Tides or CIV3 roots', (t) 
   assert.ok(iconExists(e.iconPaths[0], TIDES_DIR, CIV3), `Icon not found: ${e.iconPaths[0]}`);
 });
 
-test('Tides all 26 civs have non-empty iconPaths resolved from Tides or CIV3', (t) => {
+test('Tides non-barbarian civs have non-empty iconPaths resolved from Tides or CIV3', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
-  getTides().tabs.civilizations.entries.forEach((e) => {
+  getTides().tabs.civilizations.entries
+    .filter((e) => String(e.civilopediaKey || '').toUpperCase() !== 'RACE_BARBARIANS')
+    .forEach((e) => {
     assert.ok((e.iconPaths || []).length > 0, `${e.civilopediaKey} has no iconPaths`);
     assert.ok(
       iconExists(e.iconPaths[0], TIDES_DIR, CIV3),
       `${e.civilopediaKey} large icon not on disk: ${e.iconPaths[0]}`
     );
-  });
+    });
 });
 
 test('Tides PRTO_BARRAGE has icon paths resolvable under Tides or CIV3 roots', (t) => {
@@ -941,11 +942,11 @@ test('base game: RACE_BARBARIANS is raw RACE record 0', () => {
     'Expected RACE_BARBARIANS at RACE record index 0');
 });
 
-test('base game: RACE_BARBARIANS never appears in the civilizations tab', () => {
+test('base game: RACE_BARBARIANS appears in the civilizations tab', () => {
   const found = getBase().tabs.civilizations.entries.find(
     (e) => String(e.civilopediaKey || '').toUpperCase().includes('BARBAR')
   );
-  assert.equal(found, undefined, 'Barbarian entry must not appear in civilizations tab');
+  assert.ok(found, 'Barbarian entry should appear in civilizations tab');
 });
 
 test('Sengoku: RACE_BARBARIANS is raw RACE record 0', (t) => {
@@ -960,12 +961,12 @@ test('Sengoku: RACE_BARBARIANS is raw RACE record 0', (t) => {
     'Expected RACE_BARBARIANS at RACE record index 0');
 });
 
-test('Sengoku: RACE_BARBARIANS never appears in the civilizations tab', (t) => {
+test('Sengoku: RACE_BARBARIANS appears in the civilizations tab', (t) => {
   if (!fs.existsSync(SENGOKU_BIQ)) t.skip();
   const found = getSeng().tabs.civilizations.entries.find(
     (e) => String(e.civilopediaKey || '').toUpperCase().includes('BARBAR')
   );
-  assert.equal(found, undefined, 'Barbarian entry must not appear in civilizations tab');
+  assert.ok(found, 'Barbarian entry should appear in civilizations tab');
 });
 
 test('Tides: RACE_BARBARIANS is raw RACE record 0', (t) => {
@@ -980,12 +981,12 @@ test('Tides: RACE_BARBARIANS is raw RACE record 0', (t) => {
     'Expected RACE_BARBARIANS at RACE record index 0');
 });
 
-test('Tides: RACE_BARBARIANS never appears in the civilizations tab', (t) => {
+test('Tides: RACE_BARBARIANS appears in the civilizations tab', (t) => {
   if (!fs.existsSync(TIDES_BIQ)) t.skip();
   const found = getTides().tabs.civilizations.entries.find(
     (e) => String(e.civilopediaKey || '').toUpperCase().includes('BARBAR')
   );
-  assert.equal(found, undefined, 'Barbarian entry must not appear in civilizations tab');
+  assert.ok(found, 'Barbarian entry should appear in civilizations tab');
 });
 
 test('base game contains NO Sengoku-specific techs', () => {
@@ -1024,11 +1025,11 @@ test('Mesoamerica: RACE_BARBARIANS is raw RACE record 0', (t) => {
     'Expected RACE_BARBARIANS at RACE record index 0');
 });
 
-test('Mesoamerica: RACE_BARBARIANS never appears in the civilizations tab', (t) => {
+test('Mesoamerica: RACE_BARBARIANS appears in the civilizations tab', (t) => {
   if (!fs.existsSync(MESO_BIQ)) t.skip(`Scenario fixture not present: ${MESO_BIQ}`);
   const found = getMeso().tabs.civilizations.entries.find(
     (e) => String(e.civilopediaKey || '').toUpperCase().includes('BARBAR')
       || String(e.name || '').toLowerCase().includes('barbarian')
   );
-  assert.equal(found, undefined, 'Barbarian entry must not appear in civilizations tab');
+  assert.ok(found, 'Barbarian entry should appear in civilizations tab');
 });

@@ -40,6 +40,16 @@ function makeDiplomacy(contactLine, dealLine) {
   ].join('\n');
 }
 
+function makeField(baseKey, value, editable = true) {
+  return {
+    key: baseKey,
+    baseKey,
+    value: String(value),
+    originalValue: String(value),
+    editable
+  };
+}
+
 test('global mode uses Conquests override precedence over PTW/Vanilla', () => {
   const root = mkTmpDir();
 
@@ -214,4 +224,89 @@ test('unit era variant animation falls back to base ANIMNAME when era block is m
   const era = getEntryByKey(tabs.units.entries, 'PRTO_WORKER_ERAS_Industrial_Age');
   assert.ok(era, 'expected industrial-era worker variant entry');
   assert.equal(era.animationName, 'Worker');
+});
+
+test('BIQ-backed technologies follow Quint raw order and do not dedupe duplicate civilopedia keys', () => {
+  const root = mkTmpDir();
+  writeTextLayer(root, 'Conquests', 'Civilopedia.txt', '');
+  writeTextLayer(root, 'Conquests', 'PediaIcons.txt', '');
+  writeTextLayer(root, 'Conquests', 'diplomacy.txt', '');
+
+  const biqTab = {
+    sections: [
+      {
+        code: 'TECH',
+        records: [
+          {
+            index: 0,
+            fields: [makeField('civilopediaentry', 'TECH_DUPLICATE', false), makeField('name', 'Alpha Tech')]
+          },
+          {
+            index: 1,
+            fields: [makeField('civilopediaentry', 'TECH_DUPLICATE', false), makeField('name', 'Beta Tech')]
+          }
+        ]
+      }
+    ]
+  };
+
+  const tabs = buildReferenceTabs(root, { mode: 'global', biqTab });
+  const entries = tabs.technologies.entries;
+
+  assert.equal(entries.length, 2);
+  assert.deepEqual(entries.map((entry) => entry.name), ['Alpha Tech', 'Beta Tech']);
+  assert.deepEqual(entries.map((entry) => entry.biqIndex), [0, 1]);
+  assert.deepEqual(entries.map((entry) => entry.civilopediaKey), ['TECH_DUPLICATE', 'TECH_DUPLICATE']);
+});
+
+test('BIQ-backed units only fold Quint strategy-map duplicates, not same-civilopedia primary units', () => {
+  const root = mkTmpDir();
+  writeTextLayer(root, 'Conquests', 'Civilopedia.txt', '');
+  writeTextLayer(root, 'Conquests', 'PediaIcons.txt', '');
+  writeTextLayer(root, 'Conquests', 'diplomacy.txt', '');
+
+  const biqTab = {
+    sections: [
+      {
+        code: 'PRTO',
+        records: [
+          {
+            index: 0,
+            fields: [
+              makeField('civilopediaentry', 'PRTO_SHARED', false),
+              makeField('name', 'Shared Unit A'),
+              makeField('AIStrategy', '1'),
+              makeField('otherStrategy', '-1')
+            ]
+          },
+          {
+            index: 1,
+            fields: [
+              makeField('civilopediaentry', 'PRTO_SHARED', false),
+              makeField('name', 'Shared Unit A Strategy Map'),
+              makeField('AIStrategy', '2'),
+              makeField('otherStrategy', '0')
+            ]
+          },
+          {
+            index: 2,
+            fields: [
+              makeField('civilopediaentry', 'PRTO_SHARED', false),
+              makeField('name', 'Shared Unit B'),
+              makeField('AIStrategy', '4'),
+              makeField('otherStrategy', '-1')
+            ]
+          }
+        ]
+      }
+    ]
+  };
+
+  const tabs = buildReferenceTabs(root, { mode: 'global', biqTab });
+  const entries = tabs.units.entries;
+
+  assert.equal(entries.length, 2);
+  assert.deepEqual(entries.map((entry) => entry.name), ['Shared Unit A', 'Shared Unit B']);
+  assert.deepEqual(entries.map((entry) => entry.biqIndex), [0, 2]);
+  assert.deepEqual(entries.map((entry) => entry.civilopediaKey), ['PRTO_SHARED', 'PRTO_SHARED']);
 });

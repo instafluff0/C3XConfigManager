@@ -384,8 +384,9 @@ for (const { tabKey, sectionCode, prefix } of ADD_CASES) {
     assert.equal(saveResult.ok, true, String(saveResult.error || 'save failed'));
 
     const after = reload(c3xDir, biqPath);
-    assert.equal(countSection(after, sectionCode), countBefore + 1,
-      `expected exactly one new ${sectionCode} record`);
+    const expectedDelta = sectionCode === 'PRTO' ? 2 : 1;
+    assert.equal(countSection(after, sectionCode), countBefore + expectedDelta,
+      `expected exactly ${expectedDelta} new ${sectionCode} record${expectedDelta === 1 ? '' : 's'}`);
     assert.equal(biqHasKey(after, sectionCode, newKey), true,
       `expected new record ${newKey} to exist`);
 
@@ -416,18 +417,25 @@ test('Add blank PRTO uses Quint-style new-unit defaults for serialized fields', 
 
   const after = reload(c3xDir, biqPath);
   const section = getSection(after, 'PRTO');
-  const added = (section && Array.isArray(section.records) ? section.records : []).find((record) => {
+  const addedRecords = (section && Array.isArray(section.records) ? section.records : []).filter((record) => {
     const field = getRawRecordField(record, 'civilopediaentry');
     return String(field && field.value || '').trim().toUpperCase() === newKey;
   });
-  assert.ok(added, `expected new unit ${newKey}`);
+  assert.equal(addedRecords.length, 2, `expected Quint-style split PRTO records for ${newKey}`);
 
-  assert.equal(getRawRecordInt(added, 'movement'), 1);
-  assert.equal(getRawRecordInt(added, 'aistrategy'), 3);
-  assert.equal(getRawRecordInt(added, 'availableto'), -2);
-  assert.equal(getRawRecordInt(added, 'otherstrategy'), -1);
-  assert.equal(getRawRecordInt(added, 'ptwstandardorders'), 127);
-  assert.equal(getRawRecordInt(added, 'ptwspecialactions'), 781);
+  const primary = addedRecords.find((record) => getRawRecordInt(record, 'otherstrategy') === -1);
+  const duplicate = addedRecords.find((record) => getRawRecordInt(record, 'otherstrategy') >= 0);
+  assert.ok(primary, `expected primary PRTO record for ${newKey}`);
+  assert.ok(duplicate, `expected duplicate PRTO strategy-map record for ${newKey}`);
+
+  assert.equal(getRawRecordInt(primary, 'movement'), 1);
+  assert.equal(getRawRecordInt(primary, 'aistrategy'), 1);
+  assert.equal(getRawRecordInt(primary, 'availableto'), -2);
+  assert.equal(getRawRecordInt(primary, 'otherstrategy'), -1);
+  assert.equal(getRawRecordInt(primary, 'ptwstandardorders'), 127);
+  assert.equal(getRawRecordInt(primary, 'ptwspecialactions'), 781);
+  assert.equal(getRawRecordInt(duplicate, 'aistrategy'), 2);
+  assert.equal(getRawRecordInt(duplicate, 'otherstrategy') >= 0, true);
 });
 
 // ---------------------------------------------------------------------------
@@ -555,8 +563,9 @@ for (const { tabKey, sectionCode, prefix } of ADD_CASES) {
     const afterDel = reload(c3xDir, biqPath);
     assert.equal(biqHasKey(afterDel, sectionCode, newKey), false,
       `expected deleted record ${newKey} to be gone`);
-    assert.equal(countSection(afterDel, sectionCode), countAfterAdd - 1,
-      `expected count to decrease by 1 after delete`);
+    const expectedDelta = sectionCode === 'PRTO' ? 2 : 1;
+    assert.equal(countSection(afterDel, sectionCode), countAfterAdd - expectedDelta,
+      `expected count to decrease by ${expectedDelta} after delete`);
 
     // All survivors still present
     for (const key of survivorKeys) {
@@ -763,8 +772,9 @@ test('Import Tech from Tides: prerequisite tech fields are remapped by civiloped
     const sourceKey = sourceTechMap.get(srcIndex);
     const expectedTargetIndex = sourceKey ? targetTechMap.get(sourceKey) : undefined;
     const actual = String(fieldVal(reloaded, key) || '');
+    const actualNumeric = actual.match(/-?\d+/)?.[0] || actual;
     if (Number.isFinite(expectedTargetIndex)) {
-      assert.equal(actual, String(expectedTargetIndex), `expected ${key} to remap to ${expectedTargetIndex}`);
+      assert.equal(actualNumeric, String(expectedTargetIndex), `expected ${key} to remap to ${expectedTargetIndex}`);
     } else {
       assert.equal(actual, 'None', `expected ${key} to clear when source tech is absent`);
     }
@@ -953,7 +963,14 @@ test('Import Unit from Tides: save succeeds and new PRTO record present', (t) =>
 });
 
 test('Import Unit from Tides: attack/defense fields match source', (t) => {
-  const r = runTidesImport(t, 'units', 'PRTO', 'PRTO_', null);
+  const r = runTidesImport(
+    t,
+    'units',
+    'PRTO',
+    'PRTO_',
+    (bundle) => pickEntry(bundle, 'units', (entry) => String(entry && entry.civilopediaKey || '').toUpperCase() === 'PRTO_BARRAGE')
+      || bundle.tabs.units.entries[0]
+  );
   if (!r) return;
   assert.equal(r.saveResult.ok, true, String(r.saveResult.error || 'save failed'));
   const reloaded = getEntry(r.after, 'units', r.newKey);
@@ -1368,8 +1385,9 @@ test('Add to each uncapped section simultaneously in one save call', (t) => {
 
   const after = reload(c3xDir, biqPath);
   for (const { sectionCode } of cases) {
-    assert.equal(countSection(after, sectionCode), countsBefore[sectionCode] + 1,
-      `expected +1 in ${sectionCode}`);
+    const expectedDelta = sectionCode === 'PRTO' ? 2 : 1;
+    assert.equal(countSection(after, sectionCode), countsBefore[sectionCode] + expectedDelta,
+      `expected +${expectedDelta} in ${sectionCode}`);
     assert.equal(biqHasKey(after, sectionCode, newKeys[sectionCode]), true,
       `expected new key in ${sectionCode}`);
   }
