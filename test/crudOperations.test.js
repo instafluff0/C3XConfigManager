@@ -18,6 +18,7 @@ const os = require('node:os');
 const vm = require('node:vm');
 
 const { loadBundle, saveBundle } = require('../src/configCore');
+const { getReferenceEntryIdentity } = require('../src/referenceIdentity');
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -304,6 +305,28 @@ function simulateRendererImport(targetBundle, sourceBundle, tabKey, sourceEntry,
     mode: 'import',
     displayName: String(sourceEntry && sourceEntry.name || '')
   });
+}
+
+function computeDirtyReferenceIdentitySet(tabKey, currentEntries, cleanEntries) {
+  const current = Array.isArray(currentEntries) ? currentEntries : [];
+  const clean = Array.isArray(cleanEntries) ? cleanEntries : [];
+  const cleanByIdentity = new Map();
+  clean.forEach((entry, idx) => {
+    const identity = getReferenceEntryIdentity(tabKey, entry, idx);
+    if (identity) cleanByIdentity.set(identity, entry);
+  });
+  const dirty = new Set();
+  current.forEach((entry, idx) => {
+    const identity = getReferenceEntryIdentity(tabKey, entry, idx);
+    if (!identity) return;
+    const cleanEntry = cleanByIdentity.get(identity) || null;
+    if (JSON.stringify(entry == null ? null : entry) !== JSON.stringify(cleanEntry == null ? null : cleanEntry)) {
+      dirty.add(identity);
+    }
+    cleanByIdentity.delete(identity);
+  });
+  cleanByIdentity.forEach((_entry, identity) => dirty.add(identity));
+  return dirty;
 }
 
 /**
@@ -1051,6 +1074,54 @@ test('Import Unit from Tides: icon index resets to 0 and does not rewrite units_
     /art[\\/]+units[\\/]+units_32\.pcx$/i.test(String(item && item.path || ''))
   );
   assert.equal(units32Writes.length, 0, 'unit import should not rewrite units_32.pcx');
+});
+
+test('Import Unit into Tides: only the imported unit is dirty before save', (t) => {
+  const ctx = setupScenario(TIDES_BIQ);
+  if (!ctx) return t.skip(`Target BIQ not found: ${TIDES_BIQ}`);
+  if (!BASE_BIQ_EXISTS) return t.skip(`Source BIQ not found: ${BASE_BIQ}`);
+
+  const targetBefore = reload(ctx.c3xDir, ctx.biqPath);
+  const sourceBundle = loadBundle({
+    mode: 'scenario',
+    civ3Path: CIV3_ROOT,
+    scenarioPath: BASE_BIQ
+  });
+  const sourceEntry = pickEntry(
+    sourceBundle,
+    'units',
+    (entry) => String(entry && entry.civilopediaKey || '').toUpperCase() === 'PRTO_WARRIOR'
+  ) || sourceBundle.tabs.units.entries[0];
+  assert.ok(sourceEntry, 'expected a source unit to import');
+
+  const newKey = `PRTO_C3X_DIRTY_TEST_${Date.now()}`.toUpperCase();
+  const importedEntry = simulateRendererImport(targetBefore, sourceBundle, 'units', sourceEntry, newKey);
+  const currentEntries = [importedEntry].concat(targetBefore.tabs.units.entries || []);
+  const dirtyIds = computeDirtyReferenceIdentitySet('units', currentEntries, targetBefore.tabs.units.entries || []);
+  const importedId = getReferenceEntryIdentity('units', importedEntry, 0);
+
+  assert.equal(dirtyIds.size, 1, `expected only imported unit dirty, got: ${Array.from(dirtyIds).join(', ')}`);
+  assert.equal(dirtyIds.has(importedId), true, 'expected imported unit identity to be dirty');
+
+  const eraKeys = [
+    'PRTO_SETTLER_ERAS_INDUSTRIAL_AGE',
+    'PRTO_SETTLER_ERAS_MODERN_ERA',
+    'PRTO_WORKER_ERAS_INDUSTRIAL_AGE',
+    'PRTO_WORKER_ERAS_MODERN_ERA'
+  ];
+  eraKeys.forEach((key) => {
+    const entry = getEntry(targetBefore, 'units', key);
+    assert.ok(entry, `expected target Tides bundle to contain ${key}`);
+    const identity = getReferenceEntryIdentity('units', entry, targetBefore.tabs.units.entries.indexOf(entry));
+    assert.equal(dirtyIds.has(identity), false, `expected ${key} to remain clean after import`);
+  });
+
+  const reservedEntries = (targetBefore.tabs.units.entries || []).filter((entry) => /^zz_reserved\b/i.test(String(entry && entry.name || ''))).slice(0, 6);
+  assert.equal(reservedEntries.length, 6, 'expected sampled reserved unit rows in target Tides bundle');
+  reservedEntries.forEach((entry) => {
+    const identity = getReferenceEntryIdentity('units', entry, targetBefore.tabs.units.entries.indexOf(entry));
+    assert.equal(dirtyIds.has(identity), false, `expected reserved unit "${entry.name}" to remain clean after import`);
+  });
 });
 
 test('Delete civ shifts unit Available To bitmasks', (t) => {

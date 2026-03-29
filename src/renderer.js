@@ -20,6 +20,37 @@ function _dbgWarn(cat, msg)  { appendDebugLog(`[WRN][${cat}] ${msg}`); }
 function _dbgError(cat, msg) { appendDebugLog(`[ERR][${cat}] ${msg}`); }
 // ---------------------------------------------------------------------------
 
+const referenceIdentityApi = window.ReferenceIdentity || {};
+const getReferenceEntryIdentity = typeof referenceIdentityApi.getReferenceEntryIdentity === 'function'
+  ? referenceIdentityApi.getReferenceEntryIdentity
+  : ((tabKey, entry, fallbackIndex) => {
+    const fallback = Number(fallbackIndex);
+    if (String(tabKey || '').trim().toLowerCase() === 'units') {
+      const rawBiqIndex = entry && entry.biqIndex;
+      const biqIndex = rawBiqIndex === '' || rawBiqIndex == null ? NaN : Number(rawBiqIndex);
+      if (Number.isFinite(biqIndex) && biqIndex >= 0) return `biq:${biqIndex}`;
+      const unitId = String(entry && entry.id || '').trim();
+      if (unitId) return `id:${unitId}`;
+    }
+    const id = String(entry && entry.id || '').trim();
+    if (id) return `id:${id}`;
+    const key = String(entry && entry.civilopediaKey || '').trim().toUpperCase();
+    if (key) return `key:${key}`;
+    if (Number.isFinite(fallback) && fallback >= 0) return `idx:${fallback}`;
+    return '';
+  });
+const findCleanReferenceEntry = typeof referenceIdentityApi.findCleanReferenceEntry === 'function'
+  ? referenceIdentityApi.findCleanReferenceEntry
+  : ((entries, tabKey, entry, fallbackIndex) => {
+    const identity = getReferenceEntryIdentity(tabKey, entry, fallbackIndex);
+    if (!identity) return null;
+    const list = Array.isArray(entries) ? entries : [];
+    for (let i = 0; i < list.length; i += 1) {
+      if (getReferenceEntryIdentity(tabKey, list[i], i) === identity) return list[i];
+    }
+    return null;
+  });
+
 const state = {
   settings: null,
   bundle: null,
@@ -1294,9 +1325,8 @@ function collectPendingWritePathsFromDirtyTabs() {
       return;
     }
     if (tab.type !== 'reference' || !Array.isArray(tab.entries)) return;
-    tab.entries.forEach((entry) => {
-      const key = String((entry && entry.civilopediaKey) || '').toUpperCase();
-      const cleanEntry = key ? getCleanReferenceEntry(tabKey, key) : null;
+    tab.entries.forEach((entry, idx) => {
+      const cleanEntry = getCleanReferenceEntry(tabKey, entry, idx);
       if (!hasReferenceEntryChangedFromClean(entry, cleanEntry)) return;
       const meta = entry && entry.sourceMeta ? entry.sourceMeta : {};
       const changedCivilopediaSection1 = !isEqual(String(entry && entry.civilopediaSection1 || ''), String(cleanEntry && cleanEntry.civilopediaSection1 || ''));
@@ -2238,15 +2268,19 @@ function computeTabDirtyCount(tabKey) {
   if (currentTab.type === 'reference') {
     const cur = Array.isArray(currentTab.entries) ? currentTab.entries : [];
     const prev = cleanTab && Array.isArray(cleanTab.entries) ? cleanTab.entries : [];
-    const prevByKey = new Map(prev.map((e) => [String((e && e.civilopediaKey) || '').toUpperCase(), e]));
-    let changed = 0;
-    cur.forEach((entry) => {
-      const key = String((entry && entry.civilopediaKey) || '').toUpperCase();
-      if (!key) return;
-      if (hasReferenceEntryChangedFromClean(entry, prevByKey.get(key) || null)) changed += 1;
-      prevByKey.delete(key);
+    const prevByIdentity = new Map();
+    prev.forEach((entry, idx) => {
+      const identity = getReferenceEntryIdentity(tabKey, entry, idx);
+      if (identity) prevByIdentity.set(identity, entry);
     });
-    changed += prevByKey.size;
+    let changed = 0;
+    cur.forEach((entry, idx) => {
+      const identity = getReferenceEntryIdentity(tabKey, entry, idx);
+      if (!identity) return;
+      if (hasReferenceEntryChangedFromClean(entry, prevByIdentity.get(identity) || null)) changed += 1;
+      prevByIdentity.delete(identity);
+    });
+    changed += prevByIdentity.size;
     if (tabKey === 'civilizations') {
       changed += countCivilizationDiplomacySlotChanges(currentTab, cleanTab);
     }
@@ -2316,12 +2350,15 @@ function recomputeDirtyCountForTab(tabKey) {
   setTabDirtyCount(tabKey, computeTabDirtyCount(tabKey));
 }
 
-function getCleanReferenceEntry(tabKey, civilopediaKey) {
+function getCleanReferenceEntry(tabKey, entryOrKey, fallbackIndex) {
   const cleanTabs = getCleanTabsObject();
   const cleanTab = cleanTabs[tabKey];
   const cleanEntries = cleanTab && Array.isArray(cleanTab.entries) ? cleanTab.entries : [];
-  const key = String(civilopediaKey || '').toUpperCase();
-  return cleanEntries.find((e) => String((e && e.civilopediaKey) || '').toUpperCase() === key) || null;
+  if (entryOrKey && typeof entryOrKey === 'object') {
+    return findCleanReferenceEntry(cleanEntries, tabKey, entryOrKey, fallbackIndex);
+  }
+  const key = String(entryOrKey || '').toUpperCase();
+  return cleanEntries.find((e, idx) => getReferenceEntryIdentity(tabKey, e, idx) === `key:${key}`) || null;
 }
 
 function getCleanSectionByIndex(tabKey, sectionIndex) {
@@ -2351,11 +2388,12 @@ function updateActiveDirtyCaches() {
     const selectedIndex = Number(state.referenceSelection[tabKey] || 0);
     const entry = tab.entries[selectedIndex];
     if (!entry) return;
-    const key = String(entry.civilopediaKey || '').toUpperCase();
+    const identity = getReferenceEntryIdentity(tabKey, entry, selectedIndex);
+    if (!identity) return;
     const set = ensureReferenceDirtySet(tabKey);
-    const cleanEntry = getCleanReferenceEntry(tabKey, key);
-    if (hasReferenceEntryChangedFromClean(entry, cleanEntry)) set.add(key);
-    else set.delete(key);
+    const cleanEntry = getCleanReferenceEntry(tabKey, entry, selectedIndex);
+    if (hasReferenceEntryChangedFromClean(entry, cleanEntry)) set.add(identity);
+    else set.delete(identity);
     const cleanTabs = getCleanTabsObject();
     const cleanTab = cleanTabs[tabKey];
     const extra = tabKey === 'civilizations' ? countCivilizationDiplomacySlotChanges(tab, cleanTab) : 0;
@@ -2381,11 +2419,11 @@ function rebuildDirtyTabCounts() {
     if (!tab) return;
     if (tab.type === 'reference' && Array.isArray(tab.entries)) {
       const set = ensureReferenceDirtySet(tabKey);
-      tab.entries.forEach((entry) => {
-        const key = String((entry && entry.civilopediaKey) || '').toUpperCase();
-        if (!key) return;
-        const cleanEntry = getCleanReferenceEntry(tabKey, key);
-        if (hasReferenceEntryChangedFromClean(entry, cleanEntry)) set.add(key);
+      tab.entries.forEach((entry, idx) => {
+        const identity = getReferenceEntryIdentity(tabKey, entry, idx);
+        if (!identity) return;
+        const cleanEntry = getCleanReferenceEntry(tabKey, entry, idx);
+        if (hasReferenceEntryChangedFromClean(entry, cleanEntry)) set.add(identity);
       });
       const cleanTabs = getCleanTabsObject();
       const cleanTab = cleanTabs[tabKey];
@@ -2408,8 +2446,10 @@ function rebuildDirtyTabCounts() {
 
 function isReferenceEntryDirty(tabKey, entry) {
   if (!state.isDirty || !entry) return false;
-  const key = String(entry.civilopediaKey || '').toUpperCase();
-  const cleanEntry = getCleanReferenceEntry(tabKey, key);
+  const tab = state.bundle && state.bundle.tabs ? state.bundle.tabs[tabKey] : null;
+  const entries = tab && Array.isArray(tab.entries) ? tab.entries : [];
+  const fallbackIndex = entries.indexOf(entry);
+  const cleanEntry = getCleanReferenceEntry(tabKey, entry, fallbackIndex);
   return hasReferenceEntryChangedFromClean(entry, cleanEntry);
 }
 
@@ -2516,28 +2556,33 @@ function refreshActiveReferenceListDirtyBadges() {
   const tabKey = state.activeTab;
   const tab = state.bundle.tabs[tabKey];
   if (!tab || tab.type !== 'reference' || !Array.isArray(tab.entries)) return;
-  const listButtons = Array.from(el.tabContent.querySelectorAll('.entry-list-pane .entry-list-item[data-entry-key]'));
+  const listButtons = Array.from(el.tabContent.querySelectorAll('.entry-list-pane .entry-list-item[data-entry-id]'));
   if (listButtons.length === 0) return;
   const selectedIndex = Number(state.referenceSelection[tabKey] || 0);
   const activeEntry = tab.entries[selectedIndex] || null;
-  const activeKey = String(activeEntry && activeEntry.civilopediaKey || '').toUpperCase();
+  const activeIdentity = getReferenceEntryIdentity(tabKey, activeEntry, selectedIndex);
   const dirtySet = state.dirtyReferenceKeysByTab && state.dirtyReferenceKeysByTab[tabKey];
   const hasDirtySet = !!(dirtySet && typeof dirtySet.has === 'function' && typeof dirtySet.add === 'function' && typeof dirtySet.delete === 'function');
-  const byKey = new Map(tab.entries.map((entry) => [String((entry && entry.civilopediaKey) || '').toUpperCase(), entry]));
+  const byIdentity = new Map();
+  tab.entries.forEach((entry, idx) => {
+    const identity = getReferenceEntryIdentity(tabKey, entry, idx);
+    if (identity) byIdentity.set(identity, { entry, idx });
+  });
   listButtons.forEach((itemBtn) => {
-    const key = String(itemBtn.getAttribute('data-entry-key') || '').toUpperCase();
-    if (!key) return;
-    const entry = byKey.get(key);
+    const identity = String(itemBtn.getAttribute('data-entry-id') || '');
+    if (!identity) return;
+    const item = byIdentity.get(identity);
+    const entry = item && item.entry;
     let isDirty = false;
     if (hasDirtySet) {
       // Fast path for most rows: rely on the maintained dirty-key set.
-      isDirty = dirtySet.has(key);
+      isDirty = dirtySet.has(identity);
       // Keep active row precise during live typing.
-      if (entry && key === activeKey) {
-        const cleanEntry = getCleanReferenceEntry(tabKey, key);
+      if (entry && identity === activeIdentity) {
+        const cleanEntry = getCleanReferenceEntry(tabKey, entry, item && item.idx);
         isDirty = hasReferenceEntryChangedFromClean(entry, cleanEntry);
-        if (isDirty) dirtySet.add(key);
-        else dirtySet.delete(key);
+        if (isDirty) dirtySet.add(identity);
+        else dirtySet.delete(identity);
       }
     } else if (entry) {
       // Fallback for unexpected state; preserves previous behavior.
@@ -3132,8 +3177,8 @@ async function promptCopyScenarioAction(options = {}) {
   }
   if (el.entityModalBody) {
     el.entityModalBody.textContent = dialogMode === 'save_as'
-      ? 'Copy the current scenario into a new scenario folder and localize its BIQ search folders for the new copy.'
-      : 'Copy an existing scenario and localize its BIQ search folders for the new scenario.';
+      ? 'Copy the current scenario into a new scenario folder and new BIQ search folder.'
+      : 'Copy an existing scenario and BIQ search folder for the new scenario.';
   }
   if (el.entityModalConfirm) {
     el.entityModalConfirm.textContent = dialogMode === 'save_as' ? 'Save As' : 'Create Copy';
@@ -3172,7 +3217,7 @@ async function promptCopyScenarioAction(options = {}) {
   const searchFolderField = document.createElement('div');
   searchFolderField.className = 'entity-field';
   const searchFolderLabel = document.createElement('label');
-  searchFolderLabel.textContent = 'Localized Search Folder';
+  searchFolderLabel.textContent = 'New Search Folder';
   const searchFolderInput = document.createElement('input');
   searchFolderInput.type = 'text';
   searchFolderInput.placeholder = 'Defaults to the new scenario name';
@@ -4389,7 +4434,7 @@ function escapeRegex(text) {
   return String(text || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function appendBaseFieldDescriptionText(parent, text, knownKeys) {
+function appendBaseFieldDescriptionSegment(parent, text, knownKeys) {
   const desc = String(text || '');
   if (!desc) return;
   const keys = Array.from(knownKeys || [])
@@ -4429,6 +4474,30 @@ function appendBaseFieldDescriptionText(parent, text, knownKeys) {
 
   if (lastIndex < desc.length) {
     parent.appendChild(document.createTextNode(desc.slice(lastIndex)));
+  }
+}
+
+function appendBaseFieldDescriptionText(parent, text, knownKeys) {
+  const desc = String(text || '');
+  if (!desc) return;
+  const pattern = /https?:\/\/[^\s]+/gi;
+  let lastIndex = 0;
+  let match;
+  while ((match = pattern.exec(desc)) !== null) {
+    if (match.index > lastIndex) {
+      appendBaseFieldDescriptionSegment(parent, desc.slice(lastIndex, match.index), knownKeys);
+    }
+    const link = document.createElement('a');
+    link.href = match[0];
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = match[0];
+    parent.appendChild(link);
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < desc.length) {
+    appendBaseFieldDescriptionSegment(parent, desc.slice(lastIndex), knownKeys);
   }
 }
 
@@ -12957,6 +13026,7 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
         }
       });
       controlWrap.appendChild(editor);
+      controlWrap.appendChild(createStealthTargetsCopyControl(entry, stealthState));
     } else if (cfg.kind === 'ignoreMovement') {
       const editor = renderTerrainFlagEditor(entry, ignoreMoveState.values, (values) => {
         rememberUndoSnapshot();
@@ -12993,6 +13063,91 @@ function renderUnitBottomListsCard(entry, referenceEditable) {
   return card;
 }
 
+function createStealthTargetsCopyControl(entry, stealthState) {
+  const wrap = document.createElement('div');
+  wrap.className = 'structured-list';
+
+  const row = document.createElement('div');
+  row.className = 'kv-row compact';
+
+  const options = getStealthTargetCopySourceOptions(entry);
+  let selectedSource = '';
+
+  const picker = createReferencePicker({
+    options,
+    targetTabKey: 'units',
+    currentValue: '-1',
+    searchPlaceholder: 'Copy targets from unit...',
+    noneLabel: 'Copy targets from...',
+    onSelect: (next) => {
+      selectedSource = normalizeConfigToken(next);
+      syncButtonState();
+    }
+  });
+  row.appendChild(picker);
+
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.textContent = 'Copy';
+  copyBtn.disabled = true;
+  copyBtn.addEventListener('click', () => {
+    const source = options.find((opt) => normalizeConfigToken(opt && opt.value) === selectedSource);
+    if (!source || !source.entry) {
+      setStatus('Choose a unit to copy stealth targets from.', true);
+      return;
+    }
+    const sourceState = getUnitListFieldState(source.entry, ['stealth_target', 'stealthtarget'], 'stealth_target');
+    if (!Array.isArray(sourceState.values) || sourceState.values.length === 0) {
+      setStatus(`"${source.label}" has no stealth targets to copy.`, true);
+      return;
+    }
+    const currentValues = getUnitListFieldState(entry, ['stealth_target', 'stealthtarget'], 'stealth_target').values;
+    const merged = mergeStealthTargetValues(currentValues, sourceState.values);
+    const addedCount = merged.length - (Array.isArray(currentValues) ? currentValues.length : 0);
+    if (addedCount <= 0) {
+      setStatus(`No new stealth targets to add from "${source.label}".`);
+      return;
+    }
+    rememberUndoSnapshot();
+    setUnitListFieldValues(entry, stealthState.key, merged);
+    setDirty(true);
+    renderActiveTab({ preserveTabScroll: true });
+    setStatus(`Added ${addedCount} stealth target${addedCount === 1 ? '' : 's'} from "${source.label}".`);
+  });
+  row.appendChild(copyBtn);
+
+  const syncButtonState = () => {
+    copyBtn.disabled = !selectedSource || selectedSource === '-1';
+  };
+  syncButtonState();
+
+  wrap.appendChild(row);
+
+  const hint = document.createElement('div');
+  hint.className = 'field-meta';
+  hint.textContent = 'Adds the selected unit\'s stealth targets to this unit.';
+  wrap.appendChild(hint);
+
+  return wrap;
+}
+
+function getStealthTargetCopySourceOptions(entry) {
+  return makeIndexOptionsForTab('units').filter((opt) => {
+    if (!opt || !opt.entry) return false;
+    if (opt.entry === entry) return false;
+    if (String(opt.value || '') === String(entry && entry.biqIndex || '')) return false;
+    const sourceState = getUnitListFieldState(opt.entry, ['stealth_target', 'stealthtarget'], 'stealth_target');
+    return Array.isArray(sourceState.values) && sourceState.values.length > 0;
+  });
+}
+
+function mergeStealthTargetValues(currentValues, sourceValues) {
+  return Array.from(new Set([
+    ...(Array.isArray(currentValues) ? currentValues : []).map((value) => String(value || '').trim()).filter(Boolean),
+    ...(Array.isArray(sourceValues) ? sourceValues : []).map((value) => String(value || '').trim()).filter(Boolean)
+  ]));
+}
+
 function getReadableSetterReason(field) {
   const setter = String(field && field.expectedSetter || '').trim();
   if (!setter) return 'No writable BIQ bridge setter found.';
@@ -13008,6 +13163,21 @@ function makeIndexOptionsForTab(tabKey) {
     thumbPath: entry.thumbPath || '',
     entry
   }));
+}
+
+function shouldRestrictResourceReferenceOptions(tabKey, baseKey) {
+  const tab = String(tabKey || '').trim().toLowerCase();
+  const base = normalizeRuleLookupKey(baseKey);
+  if (tab === 'improvements') return base === 'reqresource1' || base === 'reqresource2';
+  if (tab === 'units') return base === 'requiredresource1' || base === 'requiredresource2' || base === 'requiredresource3';
+  return false;
+}
+
+function isLuxuryOrStrategicResourceOption(opt) {
+  const entry = opt && opt.entry;
+  const typeField = getBiqFieldByBaseKey(entry, 'type');
+  const typeValue = parseIntFromDisplayValue(typeField && typeField.value);
+  return typeValue === 1 || typeValue === 2;
 }
 
 // Builds a Map<string(biqIndex), string(unitName)> for all unit entries, extended
@@ -13065,7 +13235,11 @@ function getReferenceOptionsForField(tabKey, field) {
     const names = ['Ancient', 'Middle Ages', 'Industrial', 'Modern'];
     return names.map((name, idx) => ({ value: String(idx), label: `${name} (${idx})` }));
   }
-  return makeIndexOptionsForTab(target);
+  const options = makeIndexOptionsForTab(target);
+  if (target === 'resources' && shouldRestrictResourceReferenceOptions(tabKey, base)) {
+    return options.filter(isLuxuryOrStrategicResourceOption);
+  }
+  return options;
 }
 
 function getRuleSectionIndexOptions(sectionCode, { includeNone = false } = {}) {
@@ -16704,9 +16878,13 @@ function renameReferenceEntryKey(tab, tabKey, entry, desiredKeyRaw, { allowExist
     _dbgLog('INF', 'BiqCRUD', `reference rename: tabKey=${tabKey} ${oldKey} -> ${nextKey}`);
   }
   const set = state.dirtyReferenceKeysByTab && state.dirtyReferenceKeysByTab[tabKey];
-  if (set && set.has(oldKey)) {
-    set.delete(oldKey);
-    set.add(nextKey);
+  if (set) {
+    const oldIdentity = getReferenceEntryIdentity(tabKey, { civilopediaKey: oldKey, biqIndex: entry && entry.biqIndex }, NaN);
+    const nextIdentity = getReferenceEntryIdentity(tabKey, { civilopediaKey: nextKey, biqIndex: entry && entry.biqIndex }, NaN);
+    if (oldIdentity && set.has(oldIdentity)) {
+      set.delete(oldIdentity);
+      if (nextIdentity) set.add(nextIdentity);
+    }
   }
   return true;
 }
@@ -18126,7 +18304,7 @@ function renderReferenceTab(tab, tabKey) {
     itemBtn.className = 'entry-list-item';
     if (isChild) itemBtn.classList.add('entry-list-item-child');
     itemBtn.type = 'button';
-    itemBtn.setAttribute('data-entry-key', String(entry.civilopediaKey || '').toUpperCase());
+    itemBtn.setAttribute('data-entry-id', getReferenceEntryIdentity(tabKey, entry, baseIndex));
     itemBtn.classList.toggle('active', baseIndex === activeBaseIndex);
     const showListThumb = tabKey !== 'gameConcepts' && !isUnitEraVariantEntry(entry);
     if (!showListThumb) itemBtn.classList.add('no-thumb');
